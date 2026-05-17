@@ -1,0 +1,19 @@
+{
+  "name": "sandbox-runtime-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b packages/runtime-core packages/runtime-playground",
+    "hello-runtime": "tsx scripts/hello-runtime.ts",
+    "check": "npm run build && npm run hello-runtime -- ./examples/simple-plugin"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}
