@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
-import { createRuntime, type ArtifactBundle, type ExecutionResult, type RuntimeInfo, type RuntimePolicy } from "@chubes4/sandbox-runtime-core"
-import { createPlaygroundRuntimeBackend } from "@chubes4/sandbox-runtime-playground"
+import { basename, resolve } from "node:path"
+import { createRuntime, type ArtifactBundle, type ExecutionResult, type RuntimeInfo, type RuntimePolicy } from "@chubes4/wp-codebox-core"
+import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 
 interface RunOptions {
   mounts: Array<{ source: string; target: string; mode: "readonly" | "readwrite" }>
@@ -32,7 +32,7 @@ interface AgentRuntimeProbeOptions {
   agentsApiPath: string
   dataMachinePath: string
   dataMachineCodePath: string
-  openaiProviderPath: string
+  providerPluginPaths: string[]
   wpVersion?: string
   artifactsDirectory?: string
   secretEnvNames?: string[]
@@ -63,7 +63,7 @@ interface AgentSandboxBatchOptions extends AgentRuntimeProbeOptions {
 
 interface AgentSandboxBatchOutput {
   success: boolean
-  schema: "sandbox-runtime/agent-sandbox-batch/v1"
+  schema: "wp-codebox/agent-sandbox-batch/v1"
   concurrency: number
   total: number
   completed: number
@@ -94,7 +94,7 @@ async function main(args: string[]): Promise<number> {
 
   if (command === "agent-runtime-probe") {
     const options = parseAgentRuntimeProbeOptions(args)
-    const runOptions = agentRuntimeProbeRunOptions(options)
+    const runOptions = await agentRuntimeProbeRunOptions(options)
     const execute = () => run(runOptions)
 
     if (!options.json) {
@@ -163,14 +163,14 @@ async function main(args: string[]): Promise<number> {
   return output.success ? 0 : 1
 }
 
-function agentRuntimeProbeRunOptions(options: AgentRuntimeProbeOptions): RunOptions {
+async function agentRuntimeProbeRunOptions(options: AgentRuntimeProbeOptions): Promise<RunOptions> {
   return {
     mounts: agentRuntimeMounts(options),
     command: "wordpress.run-php",
-    args: [`code=${agentRuntimeProbeCode()}`],
+    args: [`code=${agentRuntimeProbeCode(providerPluginMounts(options))}`],
     wpVersion: options.wpVersion ?? "trunk",
     artifactsDirectory: options.artifactsDirectory,
-    ...runSecretEnvOptions(options),
+    ...await runSecretEnvOptions(options),
     json: options.json,
   }
 }
@@ -179,10 +179,10 @@ async function agentSandboxRunOptions(options: AgentSandboxRunOptions): Promise<
   return {
     mounts: agentRuntimeMounts(options),
     command: "wordpress.run-php",
-    args: [`code=${agentSandboxRunCode(options.task, await resolveSandboxTaskCode(options))}`],
+    args: [`code=${agentSandboxRunCode(options.task, await resolveSandboxTaskCode(options), providerPluginMounts(options))}`],
     wpVersion: options.wpVersion ?? "trunk",
     artifactsDirectory: options.artifactsDirectory,
-    ...runSecretEnvOptions(options),
+    ...await runSecretEnvOptions(options),
     json: options.json,
   }
 }
@@ -201,7 +201,7 @@ async function runAgentSandboxBatch(options: AgentSandboxBatchOptions): Promise<
 
   return {
     success: failed === 0,
-    schema: "sandbox-runtime/agent-sandbox-batch/v1",
+    schema: "wp-codebox/agent-sandbox-batch/v1",
     concurrency,
     total: runs.length,
     completed: runs.length - failed,
@@ -230,8 +230,19 @@ function agentRuntimeMounts(options: AgentRuntimeProbeOptions): RunOptions["moun
     { source: resolve(options.agentsApiPath), target: "/wordpress/wp-content/plugins/agents-api", mode: "readwrite" },
     { source: resolve(options.dataMachinePath), target: "/wordpress/wp-content/plugins/data-machine", mode: "readwrite" },
     { source: resolve(options.dataMachineCodePath), target: "/wordpress/wp-content/plugins/data-machine-code", mode: "readwrite" },
-    { source: resolve(options.openaiProviderPath), target: "/wordpress/wp-content/plugins/ai-provider-for-openai", mode: "readwrite" },
+    ...providerPluginMounts(options).map((plugin) => ({
+      source: plugin.source,
+      target: `/wordpress/wp-content/plugins/${plugin.slug}`,
+      mode: "readwrite" as const,
+    })),
   ]
+}
+
+function providerPluginMounts(options: AgentRuntimeProbeOptions): Array<{ source: string; slug: string }> {
+  return options.providerPluginPaths.map((pluginPath) => {
+    const source = resolve(pluginPath)
+    return { source, slug: basename(source) }
+  })
 }
 
 function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = []): AgentRuntimeProbeOptions {
@@ -262,8 +273,8 @@ function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = 
       case "--data-machine-code":
         options.dataMachineCodePath = value
         break
-      case "--openai-provider":
-        options.openaiProviderPath = value
+      case "--provider-plugin":
+        options.providerPluginPaths = [...(options.providerPluginPaths ?? []), value]
         break
       case "--wp":
         options.wpVersion = value
@@ -286,12 +297,13 @@ function parseAgentRuntimeProbeOptions(args: string[], extraOptions: string[] = 
     ["--agents-api", options.agentsApiPath],
     ["--data-machine", options.dataMachinePath],
     ["--data-machine-code", options.dataMachineCodePath],
-    ["--openai-provider", options.openaiProviderPath],
   ] as const) {
     if (!option) {
       throw new Error(`Missing required option: ${key}`)
     }
   }
+
+  options.providerPluginPaths = options.providerPluginPaths ?? []
 
   return options as AgentRuntimeProbeOptions
 }
@@ -445,7 +457,7 @@ function resolveSecretEnv(names: string[]): Record<string, string> {
   return secretEnv
 }
 
-function runSecretEnvOptions(options: AgentRuntimeProbeOptions): Pick<RunOptions, "policy" | "secretEnv"> {
+async function runSecretEnvOptions(options: AgentRuntimeProbeOptions): Promise<Pick<RunOptions, "policy" | "secretEnv">> {
   const secretEnv = resolveSecretEnv(options.secretEnvNames ?? [])
   if (Object.keys(secretEnv).length === 0) {
     return {}
@@ -468,7 +480,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
         backend: "wordpress-playground",
         environment: {
           kind: "wordpress",
-          name: "sandbox-runtime-cli",
+          name: "wp-codebox-cli",
           version: options.wpVersion ?? "latest",
           blueprint: { steps: [] },
         },
@@ -633,18 +645,18 @@ function serializeError(error: unknown): RunOutput["error"] {
 
 function printHumanOutput(output: RunOutput): void {
   if (!output.success) {
-    console.error(output.error?.message ?? "Sandbox Runtime failed")
+    console.error(output.error?.message ?? "WP Codebox failed")
     return
   }
 
-  console.log("Sandbox Runtime run")
+  console.log("WP Codebox run")
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Executed: ${output.execution?.command ?? "unknown"}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
 }
 
 function printBatchHumanOutput(output: AgentSandboxBatchOutput): void {
-  console.log("Sandbox Runtime batch")
+  console.log("WP Codebox batch")
   console.log(`Runs: ${output.completed}/${output.total} completed`)
   console.log(`Concurrency: ${output.concurrency}`)
   for (const run of output.runs) {
@@ -657,10 +669,10 @@ function printBatchHumanOutput(output: AgentSandboxBatchOutput): void {
 
 function printHelp(): void {
   console.log(`Usage:
-  sandbox-runtime run --mount <host>:<vfs> --command <id> [options]
-  sandbox-runtime agent-runtime-probe --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> [options]
-  sandbox-runtime agent-sandbox-run --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> --task <text> [options]
-  sandbox-runtime agent-sandbox-batch --agents-api <path> --data-machine <path> --data-machine-code <path> --openai-provider <path> --task <text> [--task <text> ...] [options]
+  wp-codebox run --mount <host>:<vfs> --command <id> [options]
+  wp-codebox agent-runtime-probe --agents-api <path> --data-machine <path> --data-machine-code <path> [options]
+  wp-codebox agent-sandbox-run --agents-api <path> --data-machine <path> --data-machine-code <path> --task <text> [options]
+  wp-codebox agent-sandbox-batch --agents-api <path> --data-machine <path> --data-machine-code <path> --task <text> [--task <text> ...] [options]
 
 Options:
   --mount <host:vfs>   Mount a host path into the runtime. Repeatable.
@@ -675,7 +687,7 @@ Agent runtime probe options:
   --agents-api <path>         Local Agents API plugin checkout.
   --data-machine <path>       Local Data Machine plugin checkout.
   --data-machine-code <path>  Local Data Machine Code plugin checkout.
-  --openai-provider <path>    Local AI Provider for OpenAI plugin checkout.
+  --provider-plugin <path>    Local AI provider plugin checkout. Repeatable.
 
 Agent sandbox run options:
   --task <text>               Task description recorded in the sandbox run.
@@ -697,7 +709,7 @@ Agent sandbox batch options:
   --concurrency <n>           Maximum concurrent sandboxes. Defaults to 2.
 
 Example:
-  sandbox-runtime run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)
+  wp-codebox run --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin --command wordpress.run-php --arg code-file=./examples/simple-plugin/probe.php --artifacts ./artifacts --json`)
 }
 
 async function resolveSandboxTaskCode(options: AgentSandboxRunOptions): Promise<string> {
@@ -726,8 +738,8 @@ function agentChatTaskCode(options: AgentSandboxRunOptions): string {
     mode,
     client_context: {
       source: "bridge",
-      client_name: "sandbox-runtime",
-      connector_id: "sandbox-runtime-cli",
+      client_name: "wp-codebox",
+      connector_id: "wp-codebox-cli",
       mode,
       agent_modes: [mode],
     },
@@ -838,18 +850,35 @@ function scopedSettings(mode: string, provider: string | undefined, model: strin
   }
 }
 
-function agentSandboxRunCode(task: string, code: string): string {
+function agentSandboxRunCode(task: string, code: string, providerPlugins: Array<{ slug: string }>): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
 add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
 
-$plugins = array(
+$plugins = array_merge(array(
     'agents-api/agents-api.php',
     'data-machine/data-machine.php',
     'data-machine-code/data-machine-code.php',
-    'ai-provider-for-openai/plugin.php',
-);
+), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
+
+function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
+    $entries = array();
+    foreach ($provider_plugins as $plugin) {
+        $slug = isset($plugin['slug']) ? sanitize_key((string) $plugin['slug']) : '';
+        if ('' === $slug) {
+            continue;
+        }
+        $candidates = array($slug . '/plugin.php', $slug . '/' . $slug . '.php');
+        foreach ($candidates as $candidate) {
+            if (file_exists(WP_PLUGIN_DIR . '/' . $candidate)) {
+                $entries[] = $candidate;
+                break;
+            }
+        }
+    }
+    return $entries;
+}
 
 $activation_results = array();
 
@@ -876,7 +905,7 @@ $sandbox_stack = array(
         'data_machine_permission_helper' => class_exists('DataMachine\\Abilities\\PermissionHelper'),
         'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
         'data_machine_code_workspace' => class_exists('DataMachineCode\\Workspace\\Workspace'),
-        'openai_provider_plugin_loaded' => function_exists('WordPress\\OpenAiAiProvider\\register_provider'),
+        'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
     ),
 );
 
@@ -901,18 +930,35 @@ function phpBody(code: string): string {
   return code.trimStart().replace(/^<\?php\s*/, "")
 }
 
-function agentRuntimeProbeCode(): string {
+function agentRuntimeProbeCode(providerPlugins: Array<{ slug: string }>): string {
   return `<?php
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
 add_filter('datamachine_should_load_full_runtime', '__return_true', 1);
 
-$plugins = array(
+$plugins = array_merge(array(
     'agents-api/agents-api.php',
     'data-machine/data-machine.php',
     'data-machine-code/data-machine-code.php',
-    'ai-provider-for-openai/plugin.php',
-);
+), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
+
+function wp_codebox_provider_plugin_entries(array $provider_plugins): array {
+    $entries = array();
+    foreach ($provider_plugins as $plugin) {
+        $slug = isset($plugin['slug']) ? sanitize_key((string) $plugin['slug']) : '';
+        if ('' === $slug) {
+            continue;
+        }
+        $candidates = array($slug . '/plugin.php', $slug . '/' . $slug . '.php');
+        foreach ($candidates as $candidate) {
+            if (file_exists(WP_PLUGIN_DIR . '/' . $candidate)) {
+                $entries[] = $candidate;
+                break;
+            }
+        }
+    }
+    return $entries;
+}
 
 $activation_results = array();
 
@@ -941,7 +987,7 @@ echo json_encode(
             'data_machine_permission_helper' => class_exists('DataMachine\\\\Abilities\\\\PermissionHelper'),
             'data_machine_code_version' => defined('DATAMACHINE_CODE_VERSION') ? DATAMACHINE_CODE_VERSION : null,
             'data_machine_code_workspace' => class_exists('DataMachineCode\\\\Workspace\\\\Workspace'),
-            'openai_provider_plugin_loaded' => function_exists('WordPress\\\\OpenAiAiProvider\\\\register_provider'),
+            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
         ),
     ),
     JSON_PRETTY_PRINT
