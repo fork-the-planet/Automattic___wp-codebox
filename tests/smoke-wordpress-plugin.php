@@ -199,13 +199,37 @@ $assert( 'missing batch tasks fails closed', is_wp_error( $missing_tasks ) && 'w
 $artifact_root = $root . '/artifact-store';
 $bundle_dir    = $artifact_root . '/runtime-test';
 mkdir( $bundle_dir . '/files', 0777, true );
+$changed_files_json = json_encode(
+	array(
+		'schema' => 'wp-codebox/changed-files/v1',
+		'files'  => array(
+			array(
+				'path'         => '/wordpress/wp-content/plugins/example/generated.txt',
+				'status'       => 'added',
+				'mountIndex'   => 0,
+				'mountTarget'  => '/wordpress/wp-content/plugins/example',
+				'relativePath' => 'generated.txt',
+				'patchPath'    => 'files/diffs/mount-0.patch',
+			),
+		),
+	),
+	JSON_PRETTY_PRINT
+) . "\n";
+$patch_diff          = "diff --git a/generated.txt b/generated.txt\n+cooked\n";
+$content_digest      = hash( 'sha256', "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n" . $changed_files_json . "\nfiles/patch.diff\n" . $patch_diff );
+$artifact_id         = 'artifact-bundle-sha256-' . $content_digest;
 file_put_contents(
 	$bundle_dir . '/manifest.json',
 	json_encode(
 		array(
-			'id'        => 'artifact-bundle-test',
-			'createdAt' => '2026-05-19T00:00:00Z',
-			'files'     => array(
+			'id'            => $artifact_id,
+			'contentDigest' => array(
+				'algorithm' => 'sha256',
+				'inputs'    => array( 'files/changed-files.json', 'files/patch.diff' ),
+				'value'     => $content_digest,
+			),
+			'createdAt'     => '2026-05-19T00:00:00Z',
+			'files'         => array(
 				array(
 					'path'        => 'files/changed-files.json',
 					'kind'        => 'changed-files',
@@ -227,33 +251,16 @@ file_put_contents(
 	) . "\n"
 );
 file_put_contents( $bundle_dir . '/metadata.json', json_encode( array( 'artifacts' => array( 'patch' => 'files/patch.diff' ) ), JSON_PRETTY_PRINT ) . "\n" );
-file_put_contents(
-	$bundle_dir . '/files/changed-files.json',
-	json_encode(
-		array(
-			'schema' => 'wp-codebox/changed-files/v1',
-			'files'  => array(
-				array(
-					'path'         => '/wordpress/wp-content/plugins/example/generated.txt',
-					'status'       => 'added',
-					'mountIndex'   => 0,
-					'mountTarget'  => '/wordpress/wp-content/plugins/example',
-					'relativePath' => 'generated.txt',
-					'patchPath'    => 'files/diffs/mount-0.patch',
-				),
-			),
-		),
-		JSON_PRETTY_PRINT
-	) . "\n"
-);
-file_put_contents( $bundle_dir . '/files/patch.diff', "diff --git a/generated.txt b/generated.txt\n+cooked\n" );
+file_put_contents( $bundle_dir . '/files/changed-files.json', $changed_files_json );
+file_put_contents( $bundle_dir . '/files/patch.diff', $patch_diff );
 file_put_contents(
 	$bundle_dir . '/files/review.json',
 	json_encode(
 		array(
-			'schema'  => 'wp-codebox/artifact-review/v1',
-			'summary' => 'Sandbox produced changes in 1 file.',
-			'actions' => array(
+			'schema'     => 'wp-codebox/artifact-review/v1',
+			'artifactId' => $artifact_id,
+			'summary'    => 'Sandbox produced changes in 1 file.',
+			'actions'    => array(
 				array(
 					'kind'                  => 'approve',
 					'label'                 => 'Approve all changes',
@@ -272,34 +279,36 @@ $assert( 'artifact listing succeeds', ! is_wp_error( $listed ) && 1 === count( $
 $read_artifact = $artifacts->get(
 	array(
 		'artifacts_path' => $artifact_root,
-		'artifact_id'    => 'artifact-bundle-test',
+		'artifact_id'    => $artifact_id,
 	)
 );
 $assert( 'artifact get returns canonical changed files', ! is_wp_error( $read_artifact ) && 'wp-codebox/changed-files/v1' === ( $read_artifact['artifact']['changed_files']['schema'] ?? '' ) );
 $assert( 'artifact get returns review payload', ! is_wp_error( $read_artifact ) && 'wp-codebox/artifact-review/v1' === ( $read_artifact['artifact']['review']['schema'] ?? '' ) );
+$assert( 'artifact get verifies content digest', ! is_wp_error( $read_artifact ) && $content_digest === ( $read_artifact['artifact']['content_digest'] ?? '' ) );
 
 $GLOBALS['wp_codebox_filters']['wp_codebox_apply_approved_artifact'] = function ( mixed $value, array $payload ): array {
 	return array(
-		'adapter'       => 'test-adapter',
-		'artifact_id'   => $payload['artifact_id'],
-		'patch_sha256'  => $payload['patch_sha256'],
-		'patch_contains' => str_contains( $payload['patch'], 'cooked' ),
+		'adapter'                 => 'test-adapter',
+		'artifact_id'             => $payload['artifact_id'],
+		'patch_sha256'            => $payload['patch_sha256'],
+		'artifact_content_digest' => $payload['artifact_content_digest'],
+		'patch_contains'          => str_contains( $payload['patch'], 'cooked' ),
 	);
 };
 $applied = $artifacts->apply_approved(
 	array(
 		'artifacts_path'  => $artifact_root,
-		'artifact_id'     => 'artifact-bundle-test',
+		'artifact_id'     => $artifact_id,
 		'approved_files'  => array( '/wordpress/wp-content/plugins/example/generated.txt' ),
 		'approver'        => 'site-user:1',
 	)
 );
-$assert( 'approved artifact apply delegates exact patch', ! is_wp_error( $applied ) && true === ( $applied['result']['patch_contains'] ?? false ) && hash( 'sha256', "diff --git a/generated.txt b/generated.txt\n+cooked\n" ) === ( $applied['patch_sha256'] ?? '' ) );
+$assert( 'approved artifact apply delegates exact patch', ! is_wp_error( $applied ) && true === ( $applied['result']['patch_contains'] ?? false ) && hash( 'sha256', $patch_diff ) === ( $applied['patch_sha256'] ?? '' ) && $content_digest === ( $applied['content_digest'] ?? '' ) );
 
 $unknown_apply = $artifacts->apply_approved(
 	array(
 		'artifacts_path' => $artifact_root,
-		'artifact_id'    => 'artifact-bundle-test',
+		'artifact_id'    => $artifact_id,
 		'approved_files' => array( '/wordpress/wp-content/plugins/example/unknown.txt' ),
 	)
 );
@@ -308,7 +317,7 @@ $assert( 'approved artifact rejects unknown files', is_wp_error( $unknown_apply 
 $discarded = $artifacts->discard(
 	array(
 		'artifacts_path' => $artifact_root,
-		'artifact_id'    => 'artifact-bundle-test',
+		'artifact_id'    => $artifact_id,
 	)
 );
 $assert( 'artifact discard removes bundle inside root', ! is_wp_error( $discarded ) && ! is_dir( $bundle_dir ) );
