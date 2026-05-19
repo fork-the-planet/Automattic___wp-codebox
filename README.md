@@ -25,7 +25,9 @@ Parent app, CI job, or WordPress control plane
 
 ## Repo Components
 
-These are local workspace components in this repo, not published packages yet:
+These are local workspace components in this repo. The CLI and WordPress plugin
+now have package artifact validation, but publication and release automation are
+still explicit release-manager steps.
 
 - `packages/runtime-core`: backend-agnostic runtime interfaces and shared types.
 - `packages/runtime-playground`: WordPress Playground backend adapter.
@@ -41,6 +43,38 @@ npm run check
 ```
 
 `npm run check` runs the TypeScript build, policy validation smoke test, WordPress plugin smoke test, and a real Playground-backed CLI smoke test.
+
+## Distribution Artifacts
+
+The CLI package is prepared as `@chubes4/wp-codebox-cli` and exposes the
+`wp-codebox` binary from `packages/cli/dist/index.js`.
+
+```bash
+npm run build
+npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json
+```
+
+The WordPress plugin zip is built from `packages/wordpress-plugin` with only the
+installable plugin files under a top-level `wp-codebox/` directory.
+
+```bash
+npm run package:wordpress-plugin
+unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip
+```
+
+`npm run package-distribution-smoke` validates both artifact shapes. It checks
+that the CLI pack includes `package.json`, `README.md`, and compiled `dist/`
+files without TypeScript source, then builds the WordPress plugin zip and checks
+that it contains the plugin bootstrap, README, and PHP sources without package
+metadata or generated artifacts.
+
+Release checklist:
+
+1. Run `npm run check` from a clean checkout.
+2. Review `npm pack --workspace @chubes4/wp-codebox-cli --dry-run --json` before publishing the CLI package.
+3. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with `npm run package:wordpress-plugin` and inspect `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
+4. Install the CLI in the target environment and configure the WordPress plugin `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
+5. Install the plugin zip on the parent site and run the WordPress plugin smoke or equivalent ability registration check in that environment.
 
 ## Quick Start
 

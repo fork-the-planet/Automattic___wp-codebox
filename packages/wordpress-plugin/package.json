@@ -1,0 +1,8 @@
+{
+  "name": "wp-codebox-wordpress-plugin",
+  "private": true,
+  "description": "WordPress plugin package artifact for WP Codebox parent-site abilities.",
+  "scripts": {
+    "zip": "tsx ../../scripts/build-wordpress-plugin-zip.ts"
+  }
+}

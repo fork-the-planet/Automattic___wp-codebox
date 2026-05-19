@@ -69,6 +69,25 @@ Expected component keys:
 The CLI binary can be supplied by ability input, the `wp_codebox_bin` option,
 or the `wp_codebox_bin` filter.
 
+## Package Artifact
+
+Build the installable plugin zip from the repository root:
+
+```bash
+npm run package:wordpress-plugin
+```
+
+The generated artifact is `packages/wordpress-plugin/dist/wp-codebox.zip`. It
+contains a single top-level `wp-codebox/` directory with `wp-codebox.php`, this
+README, and the `src/` PHP files. Generated build outputs and package metadata
+are intentionally excluded from the plugin zip.
+
+Validate the artifact shape with:
+
+```bash
+npm run package-distribution-smoke
+```
+
 ## Boundary
 
 Data Machine Code is the mounted coding-tools component for file-editing agent
