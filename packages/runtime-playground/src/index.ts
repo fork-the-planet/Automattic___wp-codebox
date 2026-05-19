@@ -85,6 +85,15 @@ interface CapturedMountFiles {
   }
 }
 
+interface MountDiff {
+  mountIndex: number
+  source: string
+  target: string
+  baselineSource: string
+  artifactPath: string
+  changed: boolean
+}
+
 const MAX_CAPTURED_MOUNT_FILES = 200
 const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
 const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules"])
@@ -234,6 +243,7 @@ class PlaygroundRuntime implements Runtime {
     const commandsLogPath = join(logsDirectory, "commands.log")
     const mountsPath = join(filesDirectory, "mounts.json")
     const capturedMountsPath = join(filesDirectory, "mounted-files.json")
+    const diffsPath = join(filesDirectory, "diffs.json")
 
     this.recordEvent("runtime.artifacts.collected", {
       id: bundleId,
@@ -249,9 +259,11 @@ class PlaygroundRuntime implements Runtime {
       runtime,
       mounts: this.mounts,
       policy: this.spec.policy,
+      context: this.spec.metadata ?? {},
       spec,
     }
     const capturedMounts = await this.captureMountedFiles(filesDirectory)
+    const mountDiffs = await this.captureMountDiffs(filesDirectory)
     const blueprintAfter = this.buildBlueprintAfter(capturedMounts)
     const blueprintAfterNotes = this.buildBlueprintAfterNotes(createdAt, capturedMounts)
 
@@ -267,6 +279,8 @@ class PlaygroundRuntime implements Runtime {
       fileEntry(commandsLogPath, "log", "text/plain"),
       fileEntry(mountsPath, "mounts", "application/json"),
       fileEntry(capturedMountsPath, "mounted-files", "application/json"),
+      fileEntry(diffsPath, "mount-diffs", "application/json"),
+      ...mountDiffs.map((diff) => fileEntry(join(this.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         fileEntry(join(this.artifactRoot, file.artifactPath), "file", file.contentType),
       ),
@@ -296,6 +310,7 @@ class PlaygroundRuntime implements Runtime {
     await writeFile(commandsLogPath, this.formatCommandsLog())
     await writeFile(mountsPath, `${JSON.stringify(this.mounts, null, 2)}\n`)
     await writeFile(capturedMountsPath, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
+    await writeFile(diffsPath, `${JSON.stringify(mountDiffs, null, 2)}\n`)
 
     return {
       id: bundleId,
@@ -311,6 +326,7 @@ class PlaygroundRuntime implements Runtime {
       commandsLogPath,
       mountsPath,
       capturedMountsPath,
+      diffsPath,
       createdAt,
     }
   }
@@ -392,6 +408,33 @@ class PlaygroundRuntime implements Runtime {
     }
 
     return captured
+  }
+
+  private async captureMountDiffs(filesDirectory: string): Promise<MountDiff[]> {
+    const diffsDirectory = join(filesDirectory, "diffs")
+    await mkdir(diffsDirectory, { recursive: true })
+    const diffs: MountDiff[] = []
+
+    for (const [mountIndex, mount] of this.mounts.entries()) {
+      const baselineSource = typeof mount.metadata?.baselineSource === "string" ? mount.metadata.baselineSource : ""
+      if (mount.mode !== "readwrite" || !baselineSource) {
+        continue
+      }
+
+      const patch = await directoryDiff(baselineSource, mount.source, mount.target)
+      const artifactPath = `files/diffs/mount-${mountIndex}.patch`
+      await writeFile(join(this.artifactRoot, artifactPath), patch)
+      diffs.push({
+        mountIndex,
+        source: mount.source,
+        target: mount.target,
+        baselineSource,
+        artifactPath,
+        changed: patch.trim().length > 0,
+      })
+    }
+
+    return diffs
   }
 
   private async captureMountedDirectory(
@@ -801,6 +844,82 @@ function serializeCapturedMountFiles(captured: CapturedMountFiles): CapturedMoun
 
 async function writeJsonLines(path: string, records: unknown[]): Promise<void> {
   await writeFile(path, records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "")
+}
+
+async function directoryDiff(baselineDirectory: string, currentDirectory: string, targetPrefix: string): Promise<string> {
+  const [baselineFiles, currentFiles] = await Promise.all([
+    listTextFiles(baselineDirectory),
+    listTextFiles(currentDirectory),
+  ])
+  const paths = [...new Set([...baselineFiles.keys(), ...currentFiles.keys()])].sort()
+  const patches: string[] = []
+
+  for (const relativePath of paths) {
+    const before = baselineFiles.get(relativePath)
+    const after = currentFiles.get(relativePath)
+    if (before === after) {
+      continue
+    }
+
+    patches.push(fileDiff(`${targetPrefix}/${relativePath}`, before ?? "", after ?? "", before === undefined, after === undefined))
+  }
+
+  return patches.join("\n")
+}
+
+async function listTextFiles(directory: string, prefix = ""): Promise<Map<string, string>> {
+  const files = new Map<string, string>()
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (SKIPPED_CAPTURE_DIRECTORIES.has(entry.name)) {
+      continue
+    }
+
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+    const fullPath = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      for (const [path, contents] of await listTextFiles(fullPath, relativePath)) {
+        files.set(path, contents)
+      }
+      continue
+    }
+
+    if (!entry.isFile()) {
+      continue
+    }
+
+    const buffer = await readFile(fullPath)
+    const text = buffer.toString("utf8")
+    if (isReplayableText(buffer, text)) {
+      files.set(relativePath, text)
+    }
+  }
+
+  return files
+}
+
+function fileDiff(path: string, before: string, after: string, isAdded: boolean, isDeleted: boolean): string {
+  const beforeLines = splitLines(before)
+  const afterLines = splitLines(after)
+  const oldPath = isAdded ? "/dev/null" : `a${path}`
+  const newPath = isDeleted ? "/dev/null" : `b${path}`
+  const lines = [
+    `diff --git ${oldPath} ${newPath}`,
+    `--- ${oldPath}`,
+    `+++ ${newPath}`,
+    `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
+    ...beforeLines.map((line) => `-${line}`),
+    ...afterLines.map((line) => `+${line}`),
+  ]
+
+  return `${lines.join("\n")}\n`
+}
+
+function splitLines(text: string): string[] {
+  if (text.length === 0) {
+    return []
+  }
+
+  return text.replace(/\n$/, "").split("\n")
 }
 
 function argValue(args: string[], name: string): string | undefined {
