@@ -217,9 +217,13 @@ Current bundles include:
 - `logs/runtime.log`, `logs/commands.log`: human-readable logs.
 - `files/mounts.json`: mounted input list.
 - `files/mounted-files.json`: captured readwrite mount files with size, SHA-256, target path, and replayability metadata.
+- `files/diffs.json`: diff index for readwrite mounts that declare a baseline, such as seeded workspaces.
+- `files/diffs/<mount>.patch`: unified text diff from the workspace seed to the cooked output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
 For text files from readwrite mounts, `blueprint.after.json` includes `writeFile` steps so the files can be replayed into a fresh WordPress Playground runtime. Binary files and oversized files are copied into the artifact bundle but are not embedded in the blueprint yet. Database exports, option diffs, uploads, active theme/plugin state, and screenshots are planned capture targets.
+
+Recipe runs also embed a `context.recipe` summary in `metadata.json` so artifacts remain self-describing after the sandbox is destroyed. Seeded workspaces include baseline metadata and emit patch files that show what changed from the scaffold or copied directory seed.
 
 `blueprint.after.json` is backend-specific. It matters when the output should replay in WordPress Playground. Non-WordPress outputs still use the generic artifact contract: manifest, metadata, copied files, hashes, event streams, command logs, observations, patches, and future generic replay recipes.
 

@@ -48,6 +48,7 @@ export interface RuntimeCreateSpec {
   policy: RuntimePolicy
   artifactsDirectory?: string
   secretEnv?: Record<string, string>
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkspaceRecipeMount {
@@ -119,6 +120,7 @@ export interface MountSpec {
   source: string
   target: string
   mode: "readonly" | "readwrite"
+  metadata?: Record<string, unknown>
 }
 
 export interface ExecutionSpec {
@@ -207,6 +209,7 @@ export interface ArtifactBundle {
   commandsLogPath: string
   mountsPath: string
   capturedMountsPath: string
+  diffsPath: string
   createdAt: string
 }
 

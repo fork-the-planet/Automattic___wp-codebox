@@ -50,6 +50,14 @@ interface PreparedWorkspaceMount {
   source: string
   target: string
   mode: "readonly" | "readwrite"
+  cleanupPaths: string[]
+  metadata: Record<string, unknown>
+}
+
+interface PreparedWorkspaceSource {
+  source: string
+  baselineSource: string
+  cleanupPaths: string[]
 }
 
 interface AgentRuntimeProbeOptions {
@@ -277,6 +285,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         policy: Object.keys(secretEnv).length > 0 ? { ...policy, secrets: "connector-scoped" } : policy,
         secretEnv,
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
+        metadata: recipeRunMetadata(recipe, recipePath, workspaceMounts),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -287,6 +296,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         source: workspace.source,
         target: workspace.target,
         mode: workspace.mode,
+        metadata: workspace.metadata,
       })
     }
 
@@ -878,16 +888,50 @@ function runPolicy(command: string): RuntimePolicy {
   }
 }
 
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[]): Record<string, unknown> {
+  return {
+    recipe: {
+      path: recipePath,
+      schema: recipe.schema,
+      runtime: recipe.runtime ?? {},
+      artifacts: recipe.artifacts ?? {},
+      workflow: {
+        steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
+      },
+      inputs: {
+        workspaces: recipe.inputs?.workspaces ?? [],
+        mounts: recipe.inputs?.mounts ?? [],
+        extra_plugins: recipeExtraPlugins(recipe),
+        secretEnv: recipe.inputs?.secretEnv ?? [],
+      },
+    },
+    preparedWorkspaces: workspaceMounts.map((workspace) => ({
+      target: workspace.target,
+      mode: workspace.mode,
+      metadata: workspace.metadata,
+    })),
+  }
+}
+
 async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedWorkspaceMount[]> {
   const workspaces = recipe.inputs?.workspaces ?? []
   const mounts: PreparedWorkspaceMount[] = []
   for (const [index, workspace] of workspaces.entries()) {
     const slug = workspace.seed.slug ?? basename(resolve(recipeDirectory, workspace.seed.source ?? `workspace-${index}`))
-    const source = await prepareRecipeWorkspace(workspace, recipeDirectory, slug)
+    const prepared = await prepareRecipeWorkspace(workspace, recipeDirectory, slug)
+    const target = workspace.target ?? defaultWorkspaceTarget(workspace, slug)
     mounts.push({
-      source,
-      target: workspace.target ?? defaultWorkspaceTarget(workspace, slug),
+      source: prepared.source,
+      target,
       mode: workspace.mode ?? "readwrite",
+      cleanupPaths: prepared.cleanupPaths,
+      metadata: {
+        kind: "recipe-workspace",
+        index,
+        seed: workspace.seed,
+        baselineSource: prepared.baselineSource,
+        target,
+      },
     })
   }
 
@@ -895,23 +939,28 @@ async function prepareRecipeWorkspaces(recipe: WorkspaceRecipe, recipeDirectory:
 }
 
 async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Promise<void> {
-  await Promise.all(workspaces.map((workspace) => rm(workspace.source, { recursive: true, force: true })))
+  await Promise.all(workspaces.flatMap((workspace) => workspace.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
 }
 
-async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recipeDirectory: string, slug: string): Promise<string> {
+async function prepareRecipeWorkspace(workspace: WorkspaceRecipeWorkspace, recipeDirectory: string, slug: string): Promise<PreparedWorkspaceSource> {
   const directory = await mkdtemp(join(tmpdir(), `wp-codebox-${slug}-`))
+  const baselineDirectory = await mkdtemp(join(tmpdir(), `wp-codebox-${slug}-baseline-`))
   if (workspace.seed.type === "directory") {
-    await cp(resolve(recipeDirectory, workspace.seed.source ?? ""), directory, { recursive: true })
-    return directory
+    const source = resolve(recipeDirectory, workspace.seed.source ?? "")
+    await cp(source, directory, { recursive: true })
+    await cp(source, baselineDirectory, { recursive: true })
+    return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
   }
 
   if (workspace.seed.type === "theme_scaffold") {
     await writeThemeScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
-    return directory
+    await writeThemeScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
+    return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
   }
 
   await writePluginScaffold(directory, slug, workspace.seed.name ?? titleFromSlug(slug))
-  return directory
+  await writePluginScaffold(baselineDirectory, slug, workspace.seed.name ?? titleFromSlug(slug))
+  return { source: directory, baselineSource: baselineDirectory, cleanupPaths: [directory, baselineDirectory] }
 }
 
 function defaultWorkspaceTarget(workspace: WorkspaceRecipeWorkspace, slug: string): string {
