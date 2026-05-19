@@ -473,7 +473,7 @@ final class WP_Codebox_Artifacts {
 		$redacted = array();
 		foreach ( $value as $key => $item ) {
 			$normalized_key = strtolower( (string) $key );
-			if ( in_array( $normalized_key, array( 'patch', 'patch_body', 'patch_diff', 'diff', 'body', 'content', 'contents' ), true ) ) {
+			if ( $this->is_sensitive_audit_key( $normalized_key ) ) {
 				$redacted[ $key ] = '[redacted]';
 				continue;
 			}
@@ -482,6 +482,20 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return $redacted;
+	}
+
+	private function is_sensitive_audit_key( string $key ): bool {
+		if ( in_array( $key, array( 'patch', 'patch_body', 'patch_diff', 'diff', 'body', 'content', 'contents' ), true ) ) {
+			return true;
+		}
+
+		foreach ( array( 'secret', 'token', 'password', 'credential', 'authorization', 'private_key', 'api_key' ) as $needle ) {
+			if ( str_contains( $key, $needle ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/** @param array<string,mixed> $record Audit record. @return array<string,mixed> */
