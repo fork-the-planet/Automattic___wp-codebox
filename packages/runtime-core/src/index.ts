@@ -190,9 +190,16 @@ export interface ArtifactManifestFile {
 
 export interface ArtifactManifest {
   id: string
+  contentDigest: ArtifactContentDigest
   createdAt: string
   runtime: RuntimeInfo
   files: ArtifactManifestFile[]
+}
+
+export interface ArtifactContentDigest {
+  algorithm: "sha256"
+  inputs: string[]
+  value: string
 }
 
 export type ArtifactReviewProgressEventType =
@@ -245,6 +252,7 @@ export interface ArtifactReview {
   evidence: {
     patch: string
     patchSha256: string
+    artifactContentDigest: string
     changedFiles: string
   }
   riskFlags: string[]
@@ -268,6 +276,7 @@ export interface ArtifactBundle {
   changedFilesPath: string
   patchPath: string
   reviewPath: string
+  contentDigest: string
   createdAt: string
 }
 

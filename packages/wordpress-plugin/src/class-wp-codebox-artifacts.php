@@ -12,6 +12,8 @@ final class WP_Codebox_Artifacts {
 	private const LIST_SCHEMA  = 'wp-codebox/artifact-list/v1';
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
+	private const CONTENT_DIGEST_PREFIX = "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n";
+	private const CONTENT_DIGEST_SEPARATOR = "\nfiles/patch.diff\n";
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function list( array $input = array() ): array|WP_Error {
@@ -126,13 +128,19 @@ final class WP_Codebox_Artifacts {
 			return new WP_Error( 'wp_codebox_patch_missing', 'Artifact patch.diff is missing or empty.', array( 'status' => 400 ) );
 		}
 
+		$content_digest = $this->artifact_content_digest( $bundle );
+		if ( is_wp_error( $content_digest ) ) {
+			return $content_digest;
+		}
+
 		$payload = array(
-			'artifact_id'    => (string) $bundle['id'],
-			'artifact'       => $bundle,
-			'approved_files' => $approved_files,
-			'approver'       => $input['approver'] ?? null,
-			'patch'          => $patch,
-			'patch_sha256'   => hash( 'sha256', $patch ),
+			'artifact_id'             => (string) $bundle['id'],
+			'artifact'                => $bundle,
+			'approved_files'          => $approved_files,
+			'approver'                => $input['approver'] ?? null,
+			'patch'                   => $patch,
+			'patch_sha256'            => hash( 'sha256', $patch ),
+			'artifact_content_digest' => $content_digest,
 		);
 
 		$result = apply_filters( 'wp_codebox_apply_approved_artifact', null, $payload );
@@ -150,6 +158,7 @@ final class WP_Codebox_Artifacts {
 			'artifact_id'    => (string) $bundle['id'],
 			'approved_files' => $approved_files,
 			'patch_sha256'   => $payload['patch_sha256'],
+			'content_digest' => $content_digest,
 			'result'         => $result,
 		);
 	}
@@ -238,6 +247,7 @@ final class WP_Codebox_Artifacts {
 
 		$bundle = array(
 			'id'                => $id,
+			'content_digest'    => is_array( $manifest['contentDigest'] ?? null ) ? (string) ( $manifest['contentDigest']['value'] ?? '' ) : '',
 			'created_at'        => (string) ( $manifest['createdAt'] ?? '' ),
 			'directory'         => $directory,
 			'paths'             => $paths,
@@ -263,6 +273,25 @@ final class WP_Codebox_Artifacts {
 			return $review;
 		}
 
+		$content_digest = $this->artifact_content_digest( $bundle );
+		if ( is_wp_error( $content_digest ) ) {
+			return $content_digest;
+		}
+
+		$declared_digest = (string) ( $bundle['content_digest'] ?? '' );
+		if ( '' === $declared_digest ) {
+			return new WP_Error( 'wp_codebox_artifact_digest_missing', 'Artifact manifest is missing contentDigest.value.', array( 'status' => 400 ) );
+		}
+
+		if ( ! hash_equals( $declared_digest, $content_digest ) ) {
+			return new WP_Error( 'wp_codebox_artifact_digest_mismatch', 'Artifact content digest does not match changed-files.json and patch.diff.', array( 'status' => 400 ) );
+		}
+
+		$expected_id = 'artifact-bundle-sha256-' . $content_digest;
+		if ( $expected_id !== $id ) {
+			return new WP_Error( 'wp_codebox_artifact_id_mismatch', 'Artifact id does not match the content digest.', array( 'status' => 400 ) );
+		}
+
 		$bundle['manifest']      = $manifest;
 		$bundle['metadata']      = $metadata;
 		$bundle['changed_files'] = $changed_files;
@@ -284,6 +313,24 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return $decoded;
+	}
+
+	/** @param array<string,mixed> $bundle Artifact bundle. */
+	private function artifact_content_digest( array $bundle ): string|WP_Error {
+		$changed_files_path = (string) ( $bundle['paths']['changed_files'] ?? '' );
+		$patch_path         = (string) ( $bundle['paths']['patch'] ?? '' );
+		$changed_files      = '' !== $changed_files_path && is_file( $changed_files_path ) ? file_get_contents( $changed_files_path ) : false;
+		$patch              = '' !== $patch_path && is_file( $patch_path ) ? file_get_contents( $patch_path ) : false;
+
+		if ( false === $changed_files ) {
+			return new WP_Error( 'wp_codebox_changed_files_missing', 'Artifact changed-files.json is missing.', array( 'status' => 400 ) );
+		}
+
+		if ( false === $patch ) {
+			return new WP_Error( 'wp_codebox_patch_missing', 'Artifact patch.diff is missing.', array( 'status' => 400 ) );
+		}
+
+		return hash( 'sha256', self::CONTENT_DIGEST_PREFIX . $changed_files . self::CONTENT_DIGEST_SEPARATOR . $patch );
 	}
 
 	private function resolve_artifact_file( string $directory, string $relative_path ): string {

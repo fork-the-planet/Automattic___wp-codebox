@@ -31,6 +31,16 @@ function id(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function artifactContentDigest(changedFilesJson: string, patch: string): string {
+  return createHash("sha256")
+    .update("wp-codebox/artifact-content/v1\n")
+    .update("files/changed-files.json\n")
+    .update(changedFilesJson)
+    .update("\nfiles/patch.diff\n")
+    .update(patch)
+    .digest("hex")
+}
+
 interface PlaygroundRunResponse {
   exitCode?: number
   errors?: string
@@ -258,7 +268,6 @@ class PlaygroundRuntime implements Runtime {
     await mkdir(logsDirectory, { recursive: true })
     await mkdir(filesDirectory, { recursive: true })
 
-    const bundleId = id("artifact-bundle")
     const createdAt = now()
     const manifestPath = join(this.artifactRoot, "manifest.json")
     const metadataPath = join(this.artifactRoot, "metadata.json")
@@ -276,16 +285,20 @@ class PlaygroundRuntime implements Runtime {
     const patchPath = join(filesDirectory, "patch.diff")
     const reviewPath = join(filesDirectory, "review.json")
 
-    this.recordEvent("runtime.artifacts.collected", {
-      id: bundleId,
-      directory: this.artifactRoot,
-      createdAt,
-      spec,
-    })
-
     const runtime = await this.info()
+    const capturedMounts = await this.captureMountedFiles(filesDirectory)
+    const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory)
+    const changedFilesJson = `${JSON.stringify(changedFiles, null, 2)}\n`
+    const contentDigest = artifactContentDigest(changedFilesJson, patch)
+    const bundleId = `artifact-bundle-sha256-${contentDigest}`
+    const contentDigestMetadata = {
+      algorithm: "sha256",
+      inputs: ["files/changed-files.json", "files/patch.diff"],
+      value: contentDigest,
+    }
     const metadata: Record<string, unknown> = {
       id: bundleId,
+      contentDigest: contentDigestMetadata,
       createdAt,
       runtime,
       mounts: this.mounts,
@@ -293,9 +306,15 @@ class PlaygroundRuntime implements Runtime {
       context: this.spec.metadata ?? {},
       spec,
     }
-    const capturedMounts = await this.captureMountedFiles(filesDirectory)
-    const { mountDiffs, changedFiles, patch } = await this.captureMountDiffs(filesDirectory)
-    const review = this.buildArtifactReview(bundleId, createdAt, changedFiles, patch)
+
+    this.recordEvent("runtime.artifacts.collected", {
+      id: bundleId,
+      directory: this.artifactRoot,
+      createdAt,
+      spec,
+    })
+    const review = this.buildArtifactReview(bundleId, createdAt, changedFiles, patch, contentDigest)
+    const reviewJson = `${JSON.stringify(review, null, 2)}\n`
     const artifactFiles = {
       changedFiles: relative(this.artifactRoot, changedFilesPath),
       patch: relative(this.artifactRoot, patchPath),
@@ -330,6 +349,11 @@ class PlaygroundRuntime implements Runtime {
 
     const manifest: ArtifactManifest = {
       id: bundleId,
+      contentDigest: {
+        algorithm: "sha256",
+        inputs: ["files/changed-files.json", "files/patch.diff"],
+        value: contentDigest,
+      },
       createdAt,
       runtime,
       files: manifestFiles.map((file) => ({
@@ -353,9 +377,9 @@ class PlaygroundRuntime implements Runtime {
     await writeFile(mountsPath, `${JSON.stringify(this.mounts, null, 2)}\n`)
     await writeFile(capturedMountsPath, `${JSON.stringify(serializeCapturedMountFiles(capturedMounts), null, 2)}\n`)
     await writeFile(diffsPath, `${JSON.stringify(mountDiffs, null, 2)}\n`)
-    await writeFile(changedFilesPath, `${JSON.stringify(changedFiles, null, 2)}\n`)
+    await writeFile(changedFilesPath, changedFilesJson)
     await writeFile(patchPath, patch)
-    await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
+    await writeFile(reviewPath, reviewJson)
 
     return {
       id: bundleId,
@@ -375,6 +399,7 @@ class PlaygroundRuntime implements Runtime {
       changedFilesPath,
       patchPath,
       reviewPath,
+      contentDigest,
       createdAt,
     }
   }
@@ -384,6 +409,7 @@ class PlaygroundRuntime implements Runtime {
     createdAt: string,
     changedFiles: CanonicalChangedFiles,
     patch: string,
+    contentDigest: string,
   ): ArtifactReview {
     const stats = {
       added: changedFiles.files.filter((file) => file.status === "added").length,
@@ -456,6 +482,7 @@ class PlaygroundRuntime implements Runtime {
       evidence: {
         patch: "files/patch.diff",
         patchSha256: createHash("sha256").update(patch).digest("hex"),
+        artifactContentDigest: contentDigest,
         changedFiles: "files/changed-files.json",
       },
       riskFlags: [],

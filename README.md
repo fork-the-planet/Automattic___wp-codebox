@@ -69,6 +69,8 @@ Expected shape:
     "exitCode": 0
   },
   "artifacts": {
+    "id": "artifact-bundle-sha256-...",
+    "contentDigest": "...",
     "directory": "./artifacts/runtime-...",
     "manifestPath": "./artifacts/runtime-.../manifest.json",
     "blueprintAfterPath": "./artifacts/runtime-.../blueprint.after.json",
@@ -207,7 +209,7 @@ Artifact capture is owned by WP Codebox because WP Codebox knows what was mounte
 
 Current bundles include:
 
-- `manifest.json`: artifact index with content types.
+- `manifest.json`: artifact index with content types and the content digest used for the bundle id.
 - `metadata.json`: runtime, policy, mounts, and caller metadata.
 - `blueprint.after.json`: partial WordPress Playground replay blueprint for captured text files.
 - `blueprint.after-notes.json`: replay limitations and next capture targets.
@@ -223,6 +225,8 @@ Current bundles include:
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
 `metadata.json` points to the canonical changed-files, patch, review, and mount-diff artifact paths under `artifacts`. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
+
+Artifact bundle ids are content-addressed for the apply-back contract. The runtime writes `manifest.id` as `artifact-bundle-sha256-<digest>`, where `<digest>` is SHA-256 over the exact bytes of `files/changed-files.json` and `files/patch.diff` with the `wp-codebox/artifact-content/v1` domain separator. The same value is exposed as `manifest.contentDigest.value`, `metadata.contentDigest.value`, the CLI `artifacts.contentDigest` field, and `files/review.json` evidence. Approval and apply-back consumers must recompute it before trusting an approved artifact.
 
 ### `files/review.json`
 
@@ -257,6 +261,7 @@ Current bundles include:
   "evidence": {
     "patch": "files/patch.diff",
     "patchSha256": "...",
+    "artifactContentDigest": "...",
     "changedFiles": "files/changed-files.json"
   },
   "riskFlags": []
@@ -265,7 +270,7 @@ Current bundles include:
 
 Review actions are declarative. Frontends call `wp-codebox/apply-approved-artifact` with `artifact_id` and an explicit `approved_files[]` list for approve actions, call `wp-codebox/discard-artifact` for discard, and start a new sandbox task for iterate/request-changes flows.
 
-Binary files and oversized files are copied when allowed by capture limits but are not embedded into `blueprint.after.json`. Database exports, option diffs, uploaded media, active plugin/theme state, screenshots, normalized test results, content-addressed artifact IDs, and redaction guarantees are still future artifact targets.
+Binary files and oversized files are copied when allowed by capture limits but are not embedded into `blueprint.after.json`. Database exports, option diffs, uploaded media, active plugin/theme state, screenshots, normalized test results, and redaction guarantees are still future artifact targets.
 
 ## WordPress Plugin
 
@@ -295,7 +300,7 @@ The CLI binary can come from ability input, the `wp_codebox_bin` option, or the 
 
 Data Machine Code is a mounted coding-tools component inside the sandbox. It provides workspace/file/GitHub tools to the sandboxed agent. WP Codebox owns the parent-site ability surface, sandbox lifecycle, and artifact capture boundary.
 
-Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, reads the exact `patch.diff` the reviewer approved, and delegates to the `wp_codebox_apply_approved_artifact` filter. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
+Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, and delegates to the `wp_codebox_apply_approved_artifact` filter. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 
 ## Runtime Policy
 
@@ -341,7 +346,7 @@ WP Codebox does not own:
 
 ## Near-Term Gaps
 
-- Define content-addressed artifact IDs and redaction guarantees.
+- Define redaction guarantees.
 - Define multi-user sandbox session lifecycle, retention, quotas, cancellation, and audit records.
 - Define reviewed apply-back adapters for bot-authored PRs, direct apply, and package export.
 - Add visual previews, normalized test results, and richer risk flags to frontend review payloads.
