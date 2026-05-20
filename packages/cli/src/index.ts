@@ -152,7 +152,7 @@ const defaultPolicy: RuntimePolicy = {
 
 const WP_CODEBOX_RUNTIME_VERSION = "0.0.0"
 const DEFAULT_WORDPRESS_VERSION = "7.0"
-const supportedRecipeCommands = new Set(["inspect-mounted-inputs", "wordpress.run-php", "wordpress.wp-cli", "wordpress.ability", "wordpress.bench", "wp-codebox.agent-runtime-probe", "wp-codebox.agent-sandbox-run"])
+const supportedRecipeCommands = new Set(["inspect-mounted-inputs", "wordpress.run-php", "wordpress.wp-cli", "wordpress.ability", "wordpress.bench", "wordpress.phpunit", "wp-codebox.agent-runtime-probe", "wp-codebox.agent-sandbox-run"])
 
 const secretEnvPolicy: RuntimePolicy = {
   ...defaultPolicy,
@@ -1114,14 +1114,14 @@ async function validateWorkspaceRecipe(recipe: WorkspaceRecipe, recipePath: stri
 }
 
 async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"][number], path: string, addIssue: (code: string, path: string, message: string) => void): Promise<void> {
-  if (step.command === "wordpress.run-php") {
+  if (step.command === "wordpress.run-php" || step.command === "wordpress.phpunit") {
     const code = recipeStepArgValue(step.args ?? [], "code")
     const codeFile = recipeStepArgValue(step.args ?? [], "code-file")
     if (!code && !codeFile) {
-      addIssue("missing-code", `${path}.args`, "wordpress.run-php requires code=<php> or code-file=<path>.")
+      addIssue("missing-code", `${path}.args`, `${step.command} requires code=<php> or code-file=<path>.`)
     }
     if (code && codeFile) {
-      addIssue("ambiguous-code", `${path}.args`, "wordpress.run-php accepts either code=<php> or code-file=<path>, not both.")
+      addIssue("ambiguous-code", `${path}.args`, `${step.command} accepts either code=<php> or code-file=<path>, not both.`)
     }
     if (codeFile) {
       await validateExistingFile(resolve(codeFile), `${path}.args`, addIssue)

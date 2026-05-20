@@ -598,6 +598,10 @@ class PlaygroundRuntime implements Runtime {
       return this.runBench(spec)
     }
 
+    if (spec.command === "wordpress.phpunit") {
+      return this.runPhpunit(spec)
+    }
+
     throw new Error(`No Playground command handler is registered for: ${spec.command}`)
   }
 
@@ -668,6 +672,14 @@ class PlaygroundRuntime implements Runtime {
     return response.text
   }
 
+  private async runPhpunit(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const code = await this.phpCodeFromArgs(spec.args ?? [], "wordpress.phpunit")
+    const response = await server.playground.run({ code })
+
+    return response.text
+  }
+
   private bootstrapAbilityPhpCode(code: string): string {
     return `<?php
 $_SERVER['REQUEST_URI'] = '/wp-json/wp-codebox/ability';
@@ -698,7 +710,7 @@ ${phpBody(code)}`
       .join("\n")}\n`
   }
 
-  private async phpCodeFromArgs(args: string[]): Promise<string> {
+  private async phpCodeFromArgs(args: string[], command = "wordpress.run-php"): Promise<string> {
     const inlineCode = argValue(args, "code")
     if (inlineCode) {
       return normalizePhpCode(inlineCode)
@@ -709,7 +721,7 @@ ${phpBody(code)}`
       return normalizePhpCode(await readFile(resolve(codeFile), "utf8"))
     }
 
-    throw new Error("wordpress.run-php requires code=<php> or code-file=<path>")
+    throw new Error(`${command} requires code=<php> or code-file=<path>`)
   }
 
   private async inspectMountedInputs(): Promise<string> {
