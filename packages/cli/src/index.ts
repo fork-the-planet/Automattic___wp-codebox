@@ -71,6 +71,8 @@ interface RecipeRunOutput {
   recipePath?: string
   runtime?: RuntimeInfo
   executions: ExecutionResult[]
+  benchResults?: BenchResults
+  benchResultsList?: BenchResults[]
   artifacts?: ArtifactBundle
   logs?: string[]
   error?: RunOutput["error"]
@@ -134,31 +136,10 @@ interface AgentSandboxBatchOutput {
   runs: Array<RunOutput & { index: number; task: string }>
 }
 
-interface BenchRunOptions {
-  componentPath: string
-  componentId?: string
-  pluginSlug?: string
-  dependencies: Array<{ source: string; slug: string }>
-  mounts: RunOptions["mounts"]
-  envJson?: string
-  wpConfigDefinesJson?: string
-  workloadsJson?: string
-  iterations?: string
-  warmupIterations?: string
-  wpVersion?: string
-  artifactsDirectory?: string
-  json: boolean
-}
-
 interface BenchResults {
   component_id: string
   iterations: number
   scenarios: Array<Record<string, unknown>>
-}
-
-interface BenchRunOutput extends RunOutput {
-  schema: "wp-codebox/bench-run/v1"
-  benchResults?: BenchResults
 }
 
 const defaultPolicy: RuntimePolicy = {
@@ -271,25 +252,6 @@ async function main(args: string[]): Promise<number> {
     return output.success ? 0 : 1
   }
 
-  if (command === "bench-run") {
-    const options = parseBenchRunOptions(args)
-    const execute = () => runBench(options)
-
-    if (!options.json) {
-      const output = await execute()
-      printHumanOutput(output)
-      if (output.benchResults) {
-        console.log(`Bench scenarios: ${output.benchResults.scenarios.length}`)
-      }
-      return output.success ? 0 : 1
-    }
-
-    const { result, logs } = await captureStdout(execute)
-    const output = logs.length > 0 ? { ...result, logs } : result
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-    return output.success ? 0 : 1
-  }
-
   if (command !== "run") {
     console.error(`Unknown command: ${command}`)
     printHelp()
@@ -357,62 +319,6 @@ async function runAgentSandboxBatch(options: AgentSandboxBatchOptions): Promise<
     completed: runs.length - failed,
     failed,
     runs,
-  }
-}
-
-async function runBench(options: BenchRunOptions): Promise<BenchRunOutput> {
-  const componentPath = resolve(options.componentPath)
-  const pluginSlug = options.pluginSlug ?? basename(componentPath)
-  const componentId = options.componentId ?? pluginSlug
-  const env = parseJsonRecord(options.envJson, "--env-json")
-  const wpConfigDefines = parseJsonRecord(options.wpConfigDefinesJson, "--wp-config-defines-json")
-  const workloads = parseJsonArray(options.workloadsJson, "--workloads-json")
-  const output = await run({
-    mounts: [
-      componentMount(componentPath, `/wordpress/wp-content/plugins/${pluginSlug}`, pluginSlug),
-      ...options.dependencies.map((dependency) => componentMount(dependency.source, `/wordpress/wp-content/plugins/${dependency.slug}`, dependency.slug)),
-      ...options.mounts,
-    ],
-    command: "wordpress.bench",
-    args: [
-      `component-id=${componentId}`,
-      `plugin-slug=${pluginSlug}`,
-      `iterations=${positiveInteger(options.iterations, 3)}`,
-      `warmup=${nonNegativeInteger(options.warmupIterations, 1)}`,
-      `dependency-slugs=${options.dependencies.map((dependency) => dependency.slug).join(",")}`,
-      `env-json=${JSON.stringify(env)}`,
-      `workloads-json=${JSON.stringify(workloads)}`,
-    ],
-    wpVersion: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
-    artifactsDirectory: options.artifactsDirectory,
-    blueprint: Object.keys(wpConfigDefines).length > 0 ? wpConfigDefinesBlueprint(wpConfigDefines) : undefined,
-    metadata: {
-      ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
-      task: stripUndefined({
-        kind: "bench-run",
-        componentId,
-        pluginSlug,
-        componentPath,
-        dependencies: options.dependencies,
-        mounts: options.mounts,
-        env,
-        wpConfigDefines,
-        workloads,
-        iterations: positiveInteger(options.iterations, 3),
-        warmupIterations: nonNegativeInteger(options.warmupIterations, 1),
-      }),
-    },
-    json: options.json,
-  })
-
-  if (!output.success) {
-    return { ...output, schema: "wp-codebox/bench-run/v1" }
-  }
-
-  return {
-    ...output,
-    schema: "wp-codebox/bench-run/v1",
-    benchResults: parseBenchResults(output.execution?.stdout ?? ""),
   }
 }
 
@@ -492,12 +398,18 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.destroy()
     await cleanupRecipeWorkspaces(workspaceMounts)
 
+    const benchResultsList = executions
+      .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
+      .map((execution) => parseBenchResults(execution.stdout))
+
     return {
       success: true,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
       runtime: await runtime.info(),
       executions,
+      ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
+      ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
       artifacts,
     }
   } catch (error) {
@@ -793,119 +705,6 @@ function parseAgentSandboxRunOptions(args: string[]): AgentSandboxRunOptions {
   return options as AgentSandboxRunOptions
 }
 
-function parseBenchRunOptions(args: string[]): BenchRunOptions {
-  const options: Partial<BenchRunOptions> = { json: false, dependencies: [], mounts: [] }
-
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]
-
-    if (arg === "--json") {
-      options.json = true
-      continue
-    }
-
-    const [name, inlineValue] = arg.split("=", 2)
-    const value = inlineValue ?? args[++index]
-
-    if (!name.startsWith("--") || value === undefined) {
-      throw new Error(`Invalid argument: ${arg}`)
-    }
-
-    switch (name) {
-      case "--component":
-        options.componentPath = value
-        break
-      case "--component-id":
-        options.componentId = value
-        break
-      case "--plugin-slug":
-        options.pluginSlug = value
-        break
-      case "--dependency":
-        options.dependencies = [...(options.dependencies ?? []), parseDependency(value)]
-        break
-      case "--mount":
-        options.mounts = [...(options.mounts ?? []), parseMount(value)]
-        break
-      case "--env-json":
-        options.envJson = value
-        break
-      case "--wp-config-defines-json":
-        options.wpConfigDefinesJson = value
-        break
-      case "--workloads-json":
-        options.workloadsJson = value
-        break
-      case "--iterations":
-        options.iterations = value
-        break
-      case "--warmup":
-        options.warmupIterations = value
-        break
-      case "--wp":
-        options.wpVersion = value
-        break
-      case "--artifacts":
-        options.artifactsDirectory = value
-        break
-      default:
-        throw new Error(`Unknown option: ${name}`)
-    }
-  }
-
-  if (!options.componentPath) {
-    throw new Error("Missing required option: --component")
-  }
-
-  return options as BenchRunOptions
-}
-
-function parseDependency(value: string): { source: string; slug: string } {
-  const [source, slug = basename(resolve(value))] = value.split(":")
-  if (!source || !slug) {
-    throw new Error(`Invalid dependency, expected path[:slug]: ${value}`)
-  }
-
-  return { source: resolve(source), slug }
-}
-
-function parseJsonRecord(raw: string | undefined, label: string): Record<string, unknown> {
-  if (!raw) {
-    return {}
-  }
-
-  const parsed = JSON.parse(raw)
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${label} must be a JSON object`)
-  }
-
-  return parsed as Record<string, unknown>
-}
-
-function parseJsonArray(raw: string | undefined, label: string): unknown[] {
-  if (!raw) {
-    return []
-  }
-
-  const parsed = JSON.parse(raw)
-  if (!Array.isArray(parsed)) {
-    throw new Error(`${label} must be a JSON array`)
-  }
-
-  return parsed
-}
-
-function wpConfigDefinesBlueprint(defines: Record<string, unknown>): unknown {
-  return {
-    steps: [
-      {
-        step: "defineWpConfigConsts",
-        consts: defines,
-      },
-    ],
-  }
-}
-
 function parseBenchResults(raw: string): BenchResults {
   const parsed = JSON.parse(raw) as BenchResults
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.scenarios)) {
@@ -995,15 +794,6 @@ function positiveInteger(value: string | undefined, fallback: number): number {
 
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function nonNegativeInteger(value: string | undefined, fallback: number): number {
-  if (!value) {
-    return fallback
-  }
-
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 function resolveSecretEnv(names: string[]): Record<string, string> {
