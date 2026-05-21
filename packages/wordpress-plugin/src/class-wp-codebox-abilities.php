@@ -97,6 +97,10 @@ final class WP_Codebox_Abilities {
 								'type'        => 'integer',
 								'description' => 'Maximum agent loop turns for this sandbox task.',
 							),
+							'preview_hold_seconds'   => array(
+								'type'        => 'integer',
+								'description' => 'Seconds to keep the live Playground preview URL available after capture. Max 3600.',
+							),
 							'wp'                     => array(
 								'type'        => 'string',
 								'description' => 'WordPress version passed to Playground. Defaults to trunk.',
@@ -172,6 +176,7 @@ final class WP_Codebox_Abilities {
 								'items' => array( 'type' => 'string' ),
 							),
 							'max_turns'              => array( 'type' => 'integer' ),
+							'preview_hold_seconds'   => array( 'type' => 'integer' ),
 							'wp'                     => array( 'type' => 'string' ),
 							'artifacts_path'         => array( 'type' => 'string' ),
 							'wp_codebox_bin'    => array( 'type' => 'string' ),

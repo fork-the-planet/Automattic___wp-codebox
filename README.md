@@ -134,6 +134,20 @@ Expected shape:
 
 WP Codebox boots Playground lazily on the first command, captures artifacts after execution, and disposes the runtime when the run completes.
 
+For interactive review, pass `--preview-hold <duration>` to keep the live Playground server available briefly after artifact capture. The command emits `artifacts.preview.url` and `files/review.json` includes a matching top-level `preview` object with lifecycle and expiry details.
+
+```bash
+npm run wp-codebox -- run \
+  --mount ./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin \
+  --command wordpress.run-php \
+  --arg code-file=./examples/simple-plugin/probe.php \
+  --artifacts ./artifacts \
+  --preview-hold 15m \
+  --json
+```
+
+The v1 preview is a held live Playground runtime. When `--preview-hold` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
+
 ## CLI Commands
 
 ### `run`
@@ -180,6 +194,7 @@ Run a repeatable recipe.
 ```bash
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/simple-plugin.json \
+  --preview-hold 15m \
   --json
 ```
 

@@ -62,6 +62,13 @@ inside the sandbox can map changed sandbox paths back to source repositories.
 WP Codebox preserves the metadata but does not interpret product-specific repo
 topology.
 
+For browser review, callers may pass `preview_hold_seconds` to keep the live
+Playground runtime available after artifact capture. The ability response's
+`run.artifacts.preview.url` and the artifact's `files/review.json` `preview`
+field point at the same live URL until the hold window expires. Without a hold
+window, the preview field is still recorded as evidence but marked
+`expired-on-completion` because the sandbox is destroyed when the command exits.
+
 Returned artifact metadata includes the runtime manifest, replay blueprint,
 after-state notes, captured readwrite mount index, event streams, and logs. WP
 Codebox owns this capture boundary so the parent site can discard the disposable

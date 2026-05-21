@@ -2,7 +2,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { createRuntime, type ArtifactBundle, type ExecutionResult, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
+import { createRuntime, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import { captureStdout, printBatchHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
@@ -17,6 +17,7 @@ interface RunOptions {
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>
   blueprint?: unknown
+  previewHoldSeconds?: number
   json: boolean
 }
 
@@ -36,6 +37,7 @@ interface RunOutput {
 interface RecipeRunOptions {
   recipePath: string
   artifactsDirectory?: string
+  previewHoldSeconds?: number
   json: boolean
 }
 
@@ -296,9 +298,8 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
 
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
-    await runtime.destroy()
-    await cleanupRecipeWorkspaces(workspaceMounts)
+    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipeWorkspaces(workspaceMounts))
 
     const benchResultsList = executions
       .filter((execution) => execution.command === "wordpress.bench" && execution.exitCode === 0)
@@ -806,8 +807,8 @@ async function run(options: RunOptions): Promise<RunOutput> {
     execution = await runtime.execute({ command: options.command, args: options.args })
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
-    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
-    await runtime.destroy()
+    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    await releaseRuntime(runtime, options.previewHoldSeconds)
 
     return {
       success: true,
@@ -838,6 +839,36 @@ async function run(options: RunOptions): Promise<RunOutput> {
       error: serializeError(error),
     }
   }
+}
+
+async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDestroy?: () => Promise<void>): Promise<void> {
+  const holdSeconds = Math.max(0, Math.floor(previewHoldSeconds))
+  if (holdSeconds === 0) {
+    await runtime.destroy()
+    await afterDestroy?.()
+    return
+  }
+
+  setTimeout(() => {
+    void runtime.destroy().finally(() => {
+      void afterDestroy?.()
+    })
+  }, holdSeconds * 1000)
+}
+
+function parsePreviewHoldSeconds(value: string): number {
+  const match = value.trim().match(/^(\d+)(s|m)?$/)
+  if (!match) {
+    throw new Error(`Invalid --preview-hold value: ${value}`)
+  }
+
+  const amount = Number.parseInt(match[1], 10)
+  const seconds = match[2] === "m" ? amount * 60 : amount
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 3600) {
+    throw new Error("--preview-hold must be between 0s and 3600s")
+  }
+
+  return seconds
 }
 
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
@@ -878,6 +909,9 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
         break
       case "--artifacts":
         options.artifactsDirectory = value
+        break
+      case "--preview-hold":
+        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
       case "--policy":
         options.policy = await parsePolicy(value)
@@ -922,6 +956,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--artifacts":
         options.artifactsDirectory = value
+        break
+      case "--preview-hold":
+        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
       default:
         throw new Error(`Unknown option: ${name}`)
