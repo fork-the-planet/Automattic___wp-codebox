@@ -1,5 +1,23 @@
 # WP Codebox Roadmap
 
+## Product Positioning
+
+WP Codebox unlocks **secure coding environments inside WordPress**. WordPress Playground is genuinely sandboxed — PHP runs in WASM, the runtime has no host filesystem access except via declared mounts, and the whole environment tears down on exit. WP Codebox wraps that primitive into a stable runtime contract so any product can offer real code execution against a real WordPress instance without risking the host.
+
+The capability has been hidden under technical framing. Stating it directly: this is the missing "scratch space" that lets WordPress catch up to how every other modern stack handles isolated execution. Node has `npm install` per project, Python has venvs, containers have ephemeral filesystems — WordPress now has Playground, and WP Codebox makes it usable by products.
+
+Generalized product shapes this enables:
+
+- Agentic coding on any WP site (chat to bounded code changes to PR, no shell required for the contributor).
+- Untrusted patch evaluation by plugin and theme authors.
+- "Try this in a sandbox first" workflows before installing on production.
+- Reproduction harnesses shipped with bug reports.
+- Hosting provider sandbox integrations.
+- Education environments with disposable WordPress per exercise.
+- Security research detonating suspicious plugins in isolation.
+
+The technical roadmap below serves those product shapes.
+
 ## North Star
 
 WP Codebox is a portable TypeScript substrate for real-time, isolated application environments. It lets products create sandboxes, mount inputs, execute controlled actions, observe state, and collect artifacts.
