@@ -73,6 +73,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			escapeshellarg( $recipe_file ),
 			escapeshellarg( $artifacts )
 		);
+		$command .= $this->preview_hold_arg( $input );
 
 		$result    = $this->run_command( $command );
 		@unlink( $recipe_file );
@@ -168,6 +169,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			escapeshellarg( $recipe_file ),
 			escapeshellarg( $artifacts )
 		);
+		$command .= $this->preview_hold_arg( $input );
 
 		$result    = $this->run_command( $command );
 		@unlink( $recipe_file );
@@ -477,6 +479,18 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	private function clean_path( string $path ): string {
 		return rtrim( trim( $path ), DIRECTORY_SEPARATOR );
+	}
+
+	private function preview_hold_seconds( array $input ): int {
+		$seconds = (int) ( $input['preview_hold_seconds'] ?? $input['preview_hold'] ?? 0 );
+
+		return max( 0, min( 3600, $seconds ) );
+	}
+
+	private function preview_hold_arg( array $input ): string {
+		$seconds = $this->preview_hold_seconds( $input );
+
+		return $seconds > 0 ? ' --preview-hold ' . escapeshellarg( (string) $seconds ) : '';
 	}
 
 	private function config_option( string $name, mixed $default ): mixed {

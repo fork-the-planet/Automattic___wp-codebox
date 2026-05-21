@@ -21,6 +21,8 @@ try {
       "./examples/recipes/seeded-plugin-workspace.json",
       "--artifacts",
       artifactsDirectory,
+      "--preview-hold",
+      "1s",
       "--json",
     ],
     {
@@ -30,12 +32,18 @@ try {
   )
   const output = JSON.parse(stdout)
   assert.equal(output.success, true)
+  assert.equal(output.runtime.status, "created")
+  assert.match(output.runtime.previewUrl, /^http:\/\/127\.0\.0\.1:/)
 
   const artifacts = output.artifacts
   assert.ok(artifacts.changedFilesPath, "artifact bundle should expose changedFilesPath")
   assert.ok(artifacts.patchPath, "artifact bundle should expose patchPath")
   assert.ok(artifacts.testResultsPath, "artifact bundle should expose testResultsPath")
   assert.ok(artifacts.reviewPath, "artifact bundle should expose reviewPath")
+  assert.equal(artifacts.preview.status, "available")
+  assert.equal(artifacts.preview.lifecycle, "held-after-run")
+  assert.equal(artifacts.preview.holdSeconds, 1)
+  assert.match(artifacts.preview.url, /^http:\/\/127\.0\.0\.1:/)
 
   const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
   const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8"))
@@ -61,6 +69,7 @@ try {
     value: contentDigest,
   })
   assert.deepEqual(metadata.contentDigest, manifest.contentDigest)
+  assert.deepEqual(metadata.preview, artifacts.preview)
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/changed-files.json" && file.kind === "changed-files"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/patch.diff" && file.kind === "patch"))
   assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/test-results.json" && file.kind === "test-results"))
@@ -96,6 +105,7 @@ try {
   assert.ok(testResults.rawLogReferences.some((log: { path: string }) => log.path === "logs/commands.log"))
   assert.equal(review.schema, "wp-codebox/artifact-review/v1")
   assert.equal(review.artifactId, artifacts.id)
+  assert.deepEqual(review.preview, artifacts.preview)
   assert.equal(review.provenance.task.kind, "recipe-run")
   assert.equal(review.provenance.runtime.wordpressVersion, "latest")
   assert.equal(review.evidence.patch, "files/patch.diff")
@@ -142,6 +152,9 @@ try {
   const agentArtifacts = await runtime.collectArtifacts({ includeLogs: true })
   const agentMetadata = JSON.parse(await readFile(agentArtifacts.metadataPath, "utf8"))
   const agentReview = JSON.parse(await readFile(agentArtifacts.reviewPath, "utf8"))
+  assert.equal(agentArtifacts.preview?.status, "expired-on-completion")
+  assert.equal(agentReview.preview.status, "expired-on-completion")
+  assert.equal(agentReview.preview.lifecycle, "destroyed-on-completion")
   assert.equal(agentMetadata.provenance.task.input, "Cook provenance smoke")
   assert.deepEqual(agentMetadata.provenance.agent, { agent: "sandbox-agent", provider: "openai", model: "gpt-5.5" })
   assert.equal(agentReview.provenance.agent.model, "gpt-5.5")

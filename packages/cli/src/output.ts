@@ -81,6 +81,9 @@ export function printHumanOutput(output: RunOutputLike): void {
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Executed: ${output.execution?.command ?? "unknown"}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
+  if (output.artifacts?.preview?.url) {
+    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
+  }
 }
 
 export function printRecipeHumanOutput(output: RecipeRunOutputLike): void {
@@ -93,6 +96,9 @@ export function printRecipeHumanOutput(output: RecipeRunOutputLike): void {
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Steps: ${output.executions.length}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
+  if (output.artifacts?.preview?.url) {
+    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
+  }
 }
 
 export function printRecipeValidateHumanOutput(output: RecipeValidateOutputLike): void {
@@ -136,6 +142,7 @@ Options:
   --arg <key=value>    Command argument. Repeatable. Recipe commands include wordpress.run-php, wordpress.phpunit, wordpress.wp-cli, wordpress.ability, and wordpress.bench.
   --wp <version>       WordPress version for Playground. Defaults to 7.0; accepts latest, trunk, nightly, or numeric versions.
   --artifacts <dir>    Artifact root directory.
+  --preview-hold <n>   Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.
   --policy <json|file> Runtime policy JSON or path to a JSON file.
   --json               Emit machine-readable JSON.
 

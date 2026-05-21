@@ -29,6 +29,7 @@ import type {
   ArtifactBundle,
   ArtifactManifest,
   ArtifactManifestFile,
+  ArtifactPreview,
   ArtifactSpec,
   ExecutionResult,
   ExecutionSpec,
@@ -62,6 +63,7 @@ interface PlaygroundCliServer {
     run(options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse>
     writeFile?(path: string, contents: string): Promise<void>
   }
+  serverUrl: string
   [Symbol.asyncDispose](): Promise<void>
 }
 
@@ -112,12 +114,14 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async info(): Promise<RuntimeInfo> {
+    const previewUrl = await this.currentPreviewUrl()
     return {
       id: this.runtimeId,
       backend: "wordpress-playground",
       environment: this.spec.environment,
       createdAt: this.createdAt,
       status: this.status,
+      ...(previewUrl ? { previewUrl } : {}),
     }
   }
 
@@ -227,6 +231,7 @@ class PlaygroundRuntime implements Runtime {
     const testResultsPath = join(filesDirectory, "test-results.json")
     const reviewPath = join(filesDirectory, "review.json")
     const redactor = new ArtifactRedactor(this.spec.secretEnv)
+    const preview = await this.previewInfo(createdAt, spec.previewHoldSeconds)
 
     const runtime = await this.info()
     const capturedMounts = await this.captureMountedFiles(filesDirectory, redactor)
@@ -272,6 +277,7 @@ class PlaygroundRuntime implements Runtime {
       contentDigest,
       runtimeCreatedAt: this.createdAt,
       mounts: this.mounts,
+      preview,
     })
     const artifactFiles = {
       changedFiles: relative(this.artifactRoot, changedFilesPath),
@@ -330,6 +336,7 @@ class PlaygroundRuntime implements Runtime {
         path: relative(this.artifactRoot, file.path),
       })),
     }
+    metadata.preview = preview
 
     await writeRedactedArtifact(redactor, manifestPath, this.artifactRoot, `${JSON.stringify(manifest, null, 2)}\n`)
     await writeRedactedArtifact(redactor, blueprintAfterPath, this.artifactRoot, `${JSON.stringify(blueprintAfter, null, 2)}\n`)
@@ -373,6 +380,7 @@ class PlaygroundRuntime implements Runtime {
       patchPath,
       testResultsPath,
       reviewPath,
+      ...(preview ? { preview } : {}),
       contentDigest,
       createdAt,
     }
@@ -547,6 +555,34 @@ class PlaygroundRuntime implements Runtime {
     await cliServer?.[Symbol.asyncDispose]()
     this.status = "destroyed"
     this.recordEvent("runtime.destroyed", { runtimeId: this.runtimeId })
+  }
+
+  private async currentPreviewUrl(): Promise<string | undefined> {
+    if (this.status === "destroyed") {
+      return undefined
+    }
+
+    if (!this.cliServerPromise) {
+      return undefined
+    }
+
+    const server = await this.cliServerPromise
+    return server.serverUrl
+  }
+
+  private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview> {
+    const server = await this.bootPlayground()
+    const normalizedHoldSeconds = Math.max(0, Math.floor(holdSeconds))
+    const expiresAt = normalizedHoldSeconds > 0 ? new Date(Date.now() + normalizedHoldSeconds * 1000).toISOString() : undefined
+
+    return {
+      url: server.serverUrl,
+      status: normalizedHoldSeconds > 0 ? "available" : "expired-on-completion",
+      lifecycle: normalizedHoldSeconds > 0 ? "held-after-run" : "destroyed-on-completion",
+      source: "live-playground",
+      createdAt,
+      ...(expiresAt ? { expiresAt, holdSeconds: normalizedHoldSeconds } : {}),
+    }
   }
 
   private recordEvent(type: LifecycleEvent["type"], data?: Record<string, unknown>): LifecycleEvent {

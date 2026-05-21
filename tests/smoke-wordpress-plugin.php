@@ -156,6 +156,7 @@ $result = $runner->run(
 		'task'           => 'Run a chat-requested sandbox task.',
 		'artifacts_path' => $root . '/artifacts',
 		'secret_env'     => array( 'GITHUB_TOKEN' ),
+		'preview_hold_seconds' => 30,
 		'mounts'         => array(
 			array(
 				'source'   => $root . '/editable-plugin',
@@ -179,6 +180,7 @@ $assert( 'runner schema is stable', ! is_wp_error( $result ) && 'wp-codebox/agen
 $assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $assert( 'runner invokes recipe-run', str_contains( $captured_command, 'recipe-run' ) );
 $assert( 'runner uses node for JS CLI', str_contains( $captured_command, 'node ' ) );
+$assert( 'runner passes preview hold to CLI', str_contains( $captured_command, '--preview-hold' ) && str_contains( $captured_command, "'30'" ) );
 $assert( 'runner recipe uses agent step', str_contains( $captured_recipe, 'wp-codebox.agent-sandbox-run' ) );
 $assert( 'runner recipe passes task', str_contains( $captured_recipe, 'Run a chat-requested sandbox task.' ) );
 $assert( 'runner recipe passes default agent', str_contains( $captured_recipe, 'site-coder' ) );

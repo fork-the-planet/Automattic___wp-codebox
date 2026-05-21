@@ -140,6 +140,7 @@ export interface RuntimeInfo {
   environment: EnvironmentSpec
   createdAt: string
   status: "created" | "destroyed"
+  previewUrl?: string
 }
 
 export interface MountSpec {
@@ -207,6 +208,7 @@ export interface ArtifactSpec {
   includePatch?: boolean
   includeScreenshots?: boolean
   includeObservations?: boolean
+  previewHoldSeconds?: number
 }
 
 export interface ArtifactManifestFile {
@@ -302,6 +304,7 @@ export interface ArtifactReview {
     total: number
   }
   changedFiles: ArtifactReviewChangedFile[]
+  preview?: ArtifactPreview
   progress: ArtifactReviewProgressEvent[]
   actions: ArtifactReviewAction[]
   evidence: {
@@ -313,6 +316,16 @@ export interface ArtifactReview {
   }
   redaction?: ArtifactRedactionSummary
   riskFlags: string[]
+}
+
+export interface ArtifactPreview {
+  url: string
+  status: "available" | "expired-on-completion"
+  lifecycle: "held-after-run" | "destroyed-on-completion"
+  source: "live-playground"
+  createdAt: string
+  expiresAt?: string
+  holdSeconds?: number
 }
 
 export interface ArtifactRedactionArtifactSummary {
@@ -378,6 +391,7 @@ export interface ArtifactBundle {
   patchPath: string
   testResultsPath: string
   reviewPath: string
+  preview?: ArtifactPreview
   contentDigest: string
   createdAt: string
 }

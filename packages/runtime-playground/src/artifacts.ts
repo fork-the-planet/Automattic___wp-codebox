@@ -4,6 +4,7 @@ import { basename, join } from "node:path"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
 import type {
   ArtifactManifestFile,
+  ArtifactPreview,
   ArtifactProvenance,
   ArtifactRedactionSummary,
   ArtifactReview,
@@ -189,6 +190,7 @@ export function buildArtifactReview({
   contentDigest,
   runtimeCreatedAt,
   mounts,
+  preview,
 }: {
   artifactId: string
   createdAt: string
@@ -198,6 +200,7 @@ export function buildArtifactReview({
   contentDigest: string
   runtimeCreatedAt: string
   mounts: MountSpec[]
+  preview?: ArtifactPreview
 }): ArtifactReview {
   const stats = {
     added: changedFiles.files.filter((file) => file.status === "added").length,
@@ -222,6 +225,7 @@ export function buildArtifactReview({
       mountTarget: file.mountTarget,
       relativePath: file.relativePath,
     })),
+    ...(preview ? { preview } : {}),
     progress: [
       {
         type: "boot",
