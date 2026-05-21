@@ -33,11 +33,9 @@ What you can build on top of WP Codebox:
 - **Education.** Real WordPress instances per student per exercise, fully disposable.
 - **Security research.** Detonate suspicious plugins, themes, or patches in isolation.
 
-Prior art for the "isolated Playground + controlled execution + evidence bundle" pattern: [wp-gym](https://github.com/Automattic/wp-gym), [world-of-wordpress](https://github.com/chubes4/world-of-wordpress), and [wp-site-generator](https://github.com/chubes4/wp-site-generator) all demonstrate non-WordPress hosts (GitHub Actions / CI runners) driving WordPress Playground for evidence, training, or generation. WP Codebox extracts the shared runtime contract from those patterns into a reusable substrate.
-
 ## Runtime Capabilities
 
-What WP Codebox provides for those product use cases:
+What WP Codebox provides for product use cases:
 
 - Run a PHP or WP-CLI probe against mounted WordPress code.
 - Execute a WordPress Ability inside a disposable Playground runtime.
