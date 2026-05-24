@@ -38,3 +38,9 @@ wp-codebox schema recipe --json
 `commands` emits `wp-codebox/command-catalog/v1` with command ids,
 descriptions, accepted args, known output shape, and policy requirements.
 `schema recipe` emits the JSON Schema for `wp-codebox/workspace-recipe/v1`.
+
+## Recipe Planning
+
+- `wp-codebox recipe validate --recipe <path> [--json]` validates recipe shape, paths, commands, and arguments without resolving a full execution plan.
+- `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting Playground, creating temp workspaces, mutating files, or writing artifacts.
+- `wp-codebox recipe-run --recipe <path> [--json]` boots Playground, mounts inputs, executes workflow steps, and captures artifacts.

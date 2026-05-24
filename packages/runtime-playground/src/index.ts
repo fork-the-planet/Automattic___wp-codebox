@@ -121,6 +121,7 @@ interface PlaygroundCliModule {
     mount: Array<{ hostPath: string; vfsPath: string }>
     blueprint?: unknown
     wp?: string
+    "site-url"?: string
   }): Promise<PlaygroundCliServer>
 }
 
@@ -612,19 +613,23 @@ class PlaygroundRuntime implements Runtime {
     }
 
     const server = await this.cliServerPromise
-    return server.serverUrl
+    return this.spec.preview?.publicUrl ?? server.serverUrl
   }
 
   private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview> {
     const server = await this.bootPlayground()
     const normalizedHoldSeconds = Math.max(0, Math.floor(holdSeconds))
     const expiresAt = normalizedHoldSeconds > 0 ? new Date(Date.now() + normalizedHoldSeconds * 1000).toISOString() : undefined
+    const publicUrl = this.spec.preview?.publicUrl
+    const siteUrl = this.spec.preview?.siteUrl
 
     return {
-      url: server.serverUrl,
+      url: publicUrl ?? server.serverUrl,
+      ...(publicUrl ? { publicUrl, localUrl: server.serverUrl } : {}),
+      ...(siteUrl ? { siteUrl } : {}),
       status: normalizedHoldSeconds > 0 ? "available" : "expired-on-completion",
       lifecycle: normalizedHoldSeconds > 0 ? "held-after-run" : "destroyed-on-completion",
-      source: "live-playground",
+      source: publicUrl ? "public-url-override" : "live-playground",
       createdAt,
       ...(expiresAt ? { expiresAt, holdSeconds: normalizedHoldSeconds } : {}),
     }
@@ -945,6 +950,7 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
         vfsPath: mount.target,
       })),
       wp: this.spec.environment.version,
+      "site-url": this.spec.preview?.siteUrl,
       blueprint: playgroundBlueprint(this.spec.environment.blueprint, this.spec.policy),
     })
   }

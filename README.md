@@ -170,6 +170,10 @@ npm run wp-codebox -- run \
 
 The v1 preview is a held live Playground runtime. When `--preview-hold` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
 
+When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url`, so WordPress-generated links can align with the public preview where Playground supports that option. The local Playground URL remains recorded as `preview.localUrl`.
+
+Remote preview access still requires an external tunnel or proxy. WP Codebox does not claim true bind-host support: a `--preview-bind` style option depends on upstream WordPress Playground exposing a host/bind API. Track upstream support in https://github.com/WordPress/wordpress-playground/issues/3681.
+
 ## Runtime Episodes
 
 Use `createRuntimeEpisode()` when a caller needs a stateful sandbox loop instead
@@ -239,6 +243,7 @@ npm run wp-codebox -- run \
   --mount <host-path>:<sandbox-path>[:readonly|readwrite] \
   --command <command> \
   --arg <key=value> \
+  --preview-public-url <public-tunnel-url> \
   --json
 ```
 
@@ -255,6 +260,8 @@ Supported runtime commands today:
 
 WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
 
+`--preview-public-url` is metadata and site-url alignment only; it does not make Playground listen on a public interface. Use a tunnel/proxy for remote access.
+
 ### `recipe validate`
 
 Validate a workspace recipe without launching Playground.
@@ -267,6 +274,8 @@ npm run wp-codebox -- recipe validate \
 
 Validation checks schema, source paths, extra plugin entrypoints, workspace seeds, supported workflow commands, JSON ability inputs, and command arguments.
 
+Use `recipe validate` when you only need a pass/fail contract for authoring or CI. It does not resolve the execution plan beyond validation summaries.
+
 ### `recipe-run`
 
 Run a repeatable recipe.
@@ -275,10 +284,22 @@ Run a repeatable recipe.
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/simple-plugin.json \
   --preview-hold 15m \
+  --preview-public-url https://example-tunnel.test/ \
   --json
 ```
 
 Recipes are JSON declarations for a sandbox setup plus workflow steps. They can mount existing directories, create disposable plugin/theme workspaces, activate extra plugins, allow-list selected secret environment variable names, and capture the output as artifacts.
+
+Pass `--dry-run --json` to validate the same recipe and emit the resolved plan without booting Playground, creating temp workspaces, mounting files, executing commands, or writing artifacts:
+
+```bash
+npm run wp-codebox -- recipe-run \
+  --recipe ./examples/recipes/simple-plugin.json \
+  --dry-run \
+  --json
+```
+
+Dry-run output uses `wp-codebox/recipe-run-dry-run/v1` and includes resolved mounts, planned workspaces, extra plugins, workflow steps with parsed and resolved command args, allowed secret environment variable names without values, and per-step policy status. Use `recipe-run` without `--dry-run` when you want the real Playground-backed execution and artifact bundle.
 
 Mount entries may include opaque `metadata` that is preserved in runtime observations, artifact provenance, and captured mount files. Product-specific callers can use this to map sandbox paths back to source repositories without WP Codebox knowing about the caller's deployment environment:
 
