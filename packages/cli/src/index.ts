@@ -51,6 +51,7 @@ interface RunOptions {
   blueprint?: unknown
   previewHoldSeconds?: number
   previewPublicUrl?: string
+  previewPort?: number
   json: boolean
 }
 
@@ -72,6 +73,7 @@ interface RecipeRunOptions {
   artifactsDirectory?: string
   previewHoldSeconds?: number
   previewPublicUrl?: string
+  previewPort?: number
   json: boolean
   dryRun: boolean
 }
@@ -917,9 +919,9 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
         metadata: {
           ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, options.previewPublicUrl),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, options.previewPublicUrl, options.previewPort),
         },
-        preview: previewSpec(options.previewPublicUrl),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -970,6 +972,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
     await releaseRuntime(runtime, options.previewHoldSeconds, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins))
 
     const benchResultsList = executions
@@ -980,7 +983,7 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
       success: true,
       schema: "wp-codebox/recipe-run/v1",
       recipePath,
-      runtime: await runtime.info(),
+      runtime: runtimeInfo ?? await runtime.info(),
       executions,
       ...(benchResultsList.length === 1 ? { benchResults: benchResultsList[0] } : {}),
       ...(benchResultsList.length > 0 ? { benchResultsList } : {}),
@@ -1166,8 +1169,16 @@ function runtimeMetadata(artifactsDirectory: string | undefined, wpVersion: stri
   }
 }
 
-function previewSpec(publicUrl: string | undefined): { publicUrl: string; siteUrl: string } | undefined {
-  return publicUrl ? { publicUrl, siteUrl: publicUrl } : undefined
+function previewSpec(publicUrl: string | undefined, port: number | undefined): { publicUrl?: string; siteUrl?: string; port?: number } | undefined {
+  if (!publicUrl && port === undefined) {
+    return undefined
+  }
+
+  return stripUndefined({
+    publicUrl,
+    siteUrl: publicUrl,
+    port,
+  })
 }
 
 function runMetadata(options: RunOptions): Record<string, unknown> {
@@ -1179,6 +1190,7 @@ function runMetadata(options: RunOptions): Record<string, unknown> {
       args: options.args,
       artifactsDirectory: options.artifactsDirectory,
       previewPublicUrl: options.previewPublicUrl,
+      previewPort: options.previewPort,
     }),
   }
 }
@@ -1472,7 +1484,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
         secretEnv: options.secretEnv,
         artifactsDirectory: options.artifactsDirectory,
         metadata: options.metadata ?? runMetadata(options),
-        preview: previewSpec(options.previewPublicUrl),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -1485,11 +1497,12 @@ async function run(options: RunOptions): Promise<RunOutput> {
     await runtime.observe({ type: "runtime-info" })
     await runtime.observe({ type: "mounts" })
     artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
     await releaseRuntime(runtime, options.previewHoldSeconds)
 
     return {
       success: true,
-      runtime: await runtime.info(),
+      runtime: runtimeInfo ?? await runtime.info(),
       execution,
       artifacts,
     }
@@ -1526,11 +1539,9 @@ async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDes
     return
   }
 
-  setTimeout(() => {
-    void runtime.destroy().finally(() => {
-      void afterDestroy?.()
-    })
-  }, holdSeconds * 1000)
+  await new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000))
+  await runtime.destroy()
+  await afterDestroy?.()
 }
 
 function parsePreviewHoldSeconds(value: string): number {
@@ -1546,6 +1557,20 @@ function parsePreviewHoldSeconds(value: string): number {
   }
 
   return seconds
+}
+
+function parsePreviewPort(value: string): number {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`Invalid --preview-port value: ${value}`)
+  }
+
+  const port = Number.parseInt(trimmed, 10)
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+    throw new Error("--preview-port must be an integer between 1 and 65535")
+  }
+
+  return port
 }
 
 async function parseRunOptions(args: string[]): Promise<RunOptions> {
@@ -1592,6 +1617,9 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
         break
       case "--preview-public-url":
         options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
+      case "--preview-port":
+        options.previewPort = parsePreviewPort(value)
         break
       case "--policy":
         options.policy = await parsePolicy(value)
@@ -1647,6 +1675,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
         break
       case "--preview-public-url":
         options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
+      case "--preview-port":
+        options.previewPort = parsePreviewPort(value)
         break
       default:
         throw new Error(`Unknown option: ${name}`)
@@ -2043,7 +2074,7 @@ function runPolicy(command: string): RuntimePolicy {
   }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], previewPublicUrl: string | undefined): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], previewPublicUrl: string | undefined, previewPort: number | undefined): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -2074,6 +2105,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
       kind: "recipe-run",
       recipePath,
       previewPublicUrl,
+      previewPort,
       workflow: {
         steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
       },
