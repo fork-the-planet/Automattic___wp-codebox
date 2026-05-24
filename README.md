@@ -170,6 +170,10 @@ npm run wp-codebox -- run \
 
 The v1 preview is a held live Playground runtime. When `--preview-hold` is omitted, the preview field still records the URL observed during capture, but the runtime is destroyed on command completion and the URL is marked `expired-on-completion`. Artifact replay from `blueprint.after.json` remains partial and is a separate future preview mode.
 
+When a caller exposes the local Playground through a tunnel or proxy, pass `--preview-public-url <url>` to report that public URL in `artifacts.preview.url`, `metadata.json`, and `files/review.json`. WP Codebox also passes the same URL to Playground as `site-url`, so WordPress-generated links can align with the public preview where Playground supports that option. The local Playground URL remains recorded as `preview.localUrl`.
+
+Remote preview access still requires an external tunnel or proxy. WP Codebox does not claim true bind-host support: a `--preview-bind` style option depends on upstream WordPress Playground exposing a host/bind API. Track upstream support in https://github.com/WordPress/wordpress-playground/issues/3681.
+
 ## Runtime Episodes
 
 Use `createRuntimeEpisode()` when a caller needs a stateful sandbox loop instead
@@ -219,6 +223,7 @@ npm run wp-codebox -- run \
   --mount <host-path>:<sandbox-path>[:readonly|readwrite] \
   --command <command> \
   --arg <key=value> \
+  --preview-public-url <public-tunnel-url> \
   --json
 ```
 
@@ -234,6 +239,8 @@ Supported runtime commands today:
 `wordpress.wp-cli` automatically enables Playground's `wp-cli` extra library when the command is allowed by runtime policy.
 
 WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
+
+`--preview-public-url` is metadata and site-url alignment only; it does not make Playground listen on a public interface. Use a tunnel/proxy for remote access.
 
 ### `recipe validate`
 
@@ -257,6 +264,7 @@ Run a repeatable recipe.
 npm run wp-codebox -- recipe-run \
   --recipe ./examples/recipes/simple-plugin.json \
   --preview-hold 15m \
+  --preview-public-url https://example-tunnel.test/ \
   --json
 ```
 

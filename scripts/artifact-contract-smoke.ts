@@ -23,6 +23,8 @@ try {
       artifactsDirectory,
       "--preview-hold",
       "1s",
+      "--preview-public-url",
+      "https://preview.example.test/codebox/",
       "--json",
     ],
     {
@@ -33,7 +35,7 @@ try {
   const output = JSON.parse(stdout)
   assert.equal(output.success, true)
   assert.equal(output.runtime.status, "created")
-  assert.match(output.runtime.previewUrl, /^http:\/\/127\.0\.0\.1:/)
+  assert.equal(output.runtime.previewUrl, "https://preview.example.test/codebox/")
 
   const artifacts = output.artifacts
   assert.ok(artifacts.changedFilesPath, "artifact bundle should expose changedFilesPath")
@@ -43,7 +45,11 @@ try {
   assert.equal(artifacts.preview.status, "available")
   assert.equal(artifacts.preview.lifecycle, "held-after-run")
   assert.equal(artifacts.preview.holdSeconds, 1)
-  assert.match(artifacts.preview.url, /^http:\/\/127\.0\.0\.1:/)
+  assert.equal(artifacts.preview.url, "https://preview.example.test/codebox/")
+  assert.equal(artifacts.preview.publicUrl, "https://preview.example.test/codebox/")
+  assert.equal(artifacts.preview.siteUrl, "https://preview.example.test/codebox/")
+  assert.match(artifacts.preview.localUrl, /^http:\/\/127\.0\.0\.1:/)
+  assert.equal(artifacts.preview.source, "public-url-override")
 
   const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
   const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8"))
@@ -86,6 +92,7 @@ try {
   assert.equal(metadata.provenance.runtime.wordpressVersion, "latest")
   assert.equal(metadata.provenance.task.kind, "recipe-run")
   assert.equal(metadata.provenance.task.recipePath.endsWith("examples/recipes/seeded-plugin-workspace.json"), true)
+  assert.equal(metadata.provenance.task.previewPublicUrl, "https://preview.example.test/codebox/")
   assert.ok(metadata.provenance.task.inputs.workspaces.length > 0)
   assert.ok(metadata.provenance.mounts.some((mount: { target: string; mode: string; metadata?: { kind?: string } }) =>
     mount.target === "/wordpress/wp-content/plugins/seeded-helper" && mount.mode === "readwrite" && mount.metadata?.kind === "recipe-workspace",
@@ -118,6 +125,35 @@ try {
   assert.ok(review.actions.some((action: { kind: string; requiresApprovedFiles?: boolean }) => action.kind === "approve" && action.requiresApprovedFiles === true))
   assert.ok(review.actions.some((action: { kind: string }) => action.kind === "discard"))
   assert.ok(review.progress.some((event: { type: string; label: string }) => event.type === "complete" && event.label === "Ready for your review."))
+
+  const { stdout: runStdout } = await execFileAsync(
+    process.execPath,
+    [
+      "packages/cli/dist/index.js",
+      "run",
+      "--mount",
+      "./examples/simple-plugin:/wordpress/wp-content/plugins/simple-plugin",
+      "--command",
+      "wordpress.run-php",
+      "--arg",
+      "code-file=./examples/simple-plugin/probe.php",
+      "--artifacts",
+      artifactsDirectory,
+      "--preview-public-url",
+      "https://run-preview.example.test/",
+      "--json",
+    ],
+    {
+      cwd: resolve(import.meta.dirname, ".."),
+      maxBuffer: 1024 * 1024 * 10,
+    },
+  )
+  const runOutput = JSON.parse(runStdout)
+  assert.equal(runOutput.success, true)
+  assert.equal(runOutput.runtime.status, "destroyed")
+  assert.equal(runOutput.artifacts.preview.url, "https://run-preview.example.test/")
+  assert.equal(runOutput.artifacts.preview.publicUrl, "https://run-preview.example.test/")
+  assert.match(runOutput.artifacts.preview.localUrl, /^http:\/\/127\.0\.0\.1:/)
 
   const agentMount = join(artifactsDirectory, "agent-mounted-component")
   await mkdir(agentMount, { recursive: true })
