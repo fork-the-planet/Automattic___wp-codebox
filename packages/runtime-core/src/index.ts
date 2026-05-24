@@ -75,6 +75,12 @@ export interface RuntimeCreateSpec {
   artifactsDirectory?: string
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>
+  preview?: RuntimePreviewSpec
+}
+
+export interface RuntimePreviewSpec {
+  publicUrl?: string
+  siteUrl?: string
 }
 
 export interface WorkspaceRecipeMount {
@@ -346,9 +352,12 @@ export interface ArtifactReview {
 
 export interface ArtifactPreview {
   url: string
+  localUrl?: string
+  publicUrl?: string
+  siteUrl?: string
   status: "available" | "expired-on-completion"
   lifecycle: "held-after-run" | "destroyed-on-completion"
-  source: "live-playground"
+  source: "live-playground" | "public-url-override"
   createdAt: string
   expiresAt?: string
   holdSeconds?: number

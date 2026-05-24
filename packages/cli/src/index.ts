@@ -18,6 +18,7 @@ interface RunOptions {
   metadata?: Record<string, unknown>
   blueprint?: unknown
   previewHoldSeconds?: number
+  previewPublicUrl?: string
   json: boolean
 }
 
@@ -38,6 +39,7 @@ interface RecipeRunOptions {
   recipePath: string
   artifactsDirectory?: string
   previewHoldSeconds?: number
+  previewPublicUrl?: string
   json: boolean
 }
 
@@ -271,8 +273,9 @@ async function runRecipe(options: RecipeRunOptions): Promise<RecipeRunOutput> {
         artifactsDirectory: options.artifactsDirectory ?? recipe.artifacts?.directory,
         metadata: {
           ...runtimeMetadata(options.artifactsDirectory ?? recipe.artifacts?.directory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
-          ...recipeRunMetadata(recipe, recipePath, workspaceMounts),
+          ...recipeRunMetadata(recipe, recipePath, workspaceMounts, options.previewPublicUrl),
         },
+        preview: previewSpec(options.previewPublicUrl),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -515,6 +518,10 @@ function runtimeMetadata(artifactsDirectory: string | undefined, wpVersion: stri
   }
 }
 
+function previewSpec(publicUrl: string | undefined): { publicUrl: string; siteUrl: string } | undefined {
+  return publicUrl ? { publicUrl, siteUrl: publicUrl } : undefined
+}
+
 function runMetadata(options: RunOptions): Record<string, unknown> {
   return {
     ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
@@ -523,6 +530,7 @@ function runMetadata(options: RunOptions): Record<string, unknown> {
       command: options.command,
       args: options.args,
       artifactsDirectory: options.artifactsDirectory,
+      previewPublicUrl: options.previewPublicUrl,
     }),
   }
 }
@@ -816,6 +824,7 @@ async function run(options: RunOptions): Promise<RunOutput> {
         secretEnv: options.secretEnv,
         artifactsDirectory: options.artifactsDirectory,
         metadata: options.metadata ?? runMetadata(options),
+        preview: previewSpec(options.previewPublicUrl),
       },
       createPlaygroundRuntimeBackend(),
     )
@@ -933,6 +942,9 @@ async function parseRunOptions(args: string[]): Promise<RunOptions> {
       case "--preview-hold":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
+      case "--preview-public-url":
+        options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
       case "--policy":
         options.policy = await parsePolicy(value)
         break
@@ -980,6 +992,9 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
       case "--preview-hold":
         options.previewHoldSeconds = parsePreviewHoldSeconds(value)
         break
+      case "--preview-public-url":
+        options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
       default:
         throw new Error(`Unknown option: ${name}`)
     }
@@ -990,6 +1005,25 @@ function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
   }
 
   return options as RecipeRunOptions
+}
+
+function parsePreviewPublicUrl(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`Invalid --preview-public-url value: ${value}`)
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("--preview-public-url must be an http or https URL")
+  }
+
+  if (!url.hostname) {
+    throw new Error("--preview-public-url must include a hostname")
+  }
+
+  return url.toString()
 }
 
 function parseRecipeValidateOptions(args: string[]): RecipeValidateOptions {
@@ -1272,7 +1306,7 @@ function runPolicy(command: string): RuntimePolicy {
   }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[]): Record<string, unknown> {
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], previewPublicUrl: string | undefined): Record<string, unknown> {
   return {
     recipe: {
       path: recipePath,
@@ -1294,6 +1328,7 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     task: {
       kind: "recipe-run",
       recipePath,
+      previewPublicUrl,
       workflow: {
         steps: recipe.workflow.steps.map((step) => ({ command: step.command, args: step.args ?? [] })),
       },
