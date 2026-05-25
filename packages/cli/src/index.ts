@@ -11,7 +11,7 @@ import { promisify } from "node:util"
 import { createRuntime, validateRuntimePolicy, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
-import { captureStdout, printBatchHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
+import { captureStdout, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 
 interface CommandMetadata {
   id: string
@@ -83,6 +83,28 @@ interface BootOptions {
 interface BootOutput {
   success: boolean
   schema: "wp-codebox/boot/v1"
+  runtime?: RuntimeInfo
+  artifacts?: ArtifactBundle
+  logs?: string[]
+  error?: RunOutput["error"]
+}
+
+interface BlueprintValidateOptions {
+  blueprint: unknown
+  blueprintPath?: string
+  wpVersion?: string
+  artifactsDirectory?: string
+  policy?: RuntimePolicy
+  previewHoldSeconds?: number
+  previewPublicUrl?: string
+  previewPort?: number
+  json: boolean
+}
+
+interface BlueprintValidateOutput {
+  success: boolean
+  schema: "wp-codebox/blueprint-validation/v1"
+  blueprintPath?: string
   runtime?: RuntimeInfo
   artifacts?: ArtifactBundle
   logs?: string[]
@@ -662,6 +684,23 @@ async function main(args: string[]): Promise<number> {
     if (!options.json) {
       const output = await execute()
       printBootHumanOutput(output)
+      return output.success ? 0 : 1
+    }
+
+    const { result, logs } = await captureStdout(execute)
+    const output = logs.length > 0 ? { ...result, logs } : result
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    printJsonFailureDiagnostic(output)
+    return output.success ? 0 : 1
+  }
+
+  if (command === "validate-blueprint") {
+    const options = await parseBlueprintValidateOptions(args)
+    const execute = () => validateBlueprint(options)
+
+    if (!options.json) {
+      const output = await execute()
+      printBlueprintValidateHumanOutput(output)
       return output.success ? 0 : 1
     }
 
@@ -1258,6 +1297,19 @@ function bootMetadata(options: BootOptions): Record<string, unknown> {
   }
 }
 
+function blueprintValidationMetadata(options: BlueprintValidateOptions): Record<string, unknown> {
+  return {
+    ...runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION),
+    task: stripUndefined({
+      kind: "blueprint-validation",
+      blueprintPath: options.blueprintPath,
+      artifactsDirectory: options.artifactsDirectory,
+      previewPublicUrl: options.previewPublicUrl,
+      previewPort: options.previewPort,
+    }),
+  }
+}
+
 function agentRuntimeMetadata(options: AgentRuntimeProbeOptions): Record<string, unknown> {
   const base = runtimeMetadata(options.artifactsDirectory, options.wpVersion ?? DEFAULT_WORDPRESS_VERSION)
 
@@ -1657,6 +1709,67 @@ async function boot(options: BootOptions): Promise<BootOutput> {
   }
 }
 
+async function validateBlueprint(options: BlueprintValidateOptions): Promise<BlueprintValidateOutput> {
+  let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
+  let artifacts: ArtifactBundle | undefined
+
+  try {
+    runtime = await createRuntime(
+      {
+        backend: "wordpress-playground",
+        environment: {
+          kind: "wordpress",
+          name: "wp-codebox-blueprint-validation",
+          version: options.wpVersion ?? DEFAULT_WORDPRESS_VERSION,
+          blueprint: options.blueprint,
+        },
+        policy: options.policy ?? defaultPolicy,
+        artifactsDirectory: options.artifactsDirectory,
+        metadata: blueprintValidationMetadata(options),
+        preview: previewSpec(options.previewPublicUrl, options.previewPort),
+      },
+      createPlaygroundRuntimeBackend(),
+    )
+
+    await runtime.observe({ type: "runtime-info" })
+    await runtime.observe({ type: "mounts" })
+    artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true, previewHoldSeconds: options.previewHoldSeconds })
+    const runtimeInfo = options.previewHoldSeconds ? await runtime.info() : undefined
+    await releaseRuntime(runtime, options.previewHoldSeconds)
+
+    return {
+      success: true,
+      schema: "wp-codebox/blueprint-validation/v1",
+      ...(options.blueprintPath ? { blueprintPath: options.blueprintPath } : {}),
+      runtime: runtimeInfo ?? await runtime.info(),
+      artifacts,
+    }
+  } catch (error) {
+    if (runtime) {
+      try {
+        artifacts = await runtime.collectArtifacts({ includeLogs: true, includeObservations: true })
+      } catch {
+        // Preserve the original failure as the CLI result.
+      }
+
+      try {
+        await runtime.destroy()
+      } catch {
+        // Preserve the original failure as the CLI result.
+      }
+    }
+
+    return {
+      success: false,
+      schema: "wp-codebox/blueprint-validation/v1",
+      ...(options.blueprintPath ? { blueprintPath: options.blueprintPath } : {}),
+      ...(runtime ? { runtime: await runtime.info() } : {}),
+      ...(artifacts ? { artifacts } : {}),
+      error: serializeError(error),
+    }
+  }
+}
+
 async function releaseRuntime(runtime: Runtime, previewHoldSeconds = 0, afterDestroy?: () => Promise<void>): Promise<void> {
   const holdSeconds = Math.max(0, Math.floor(previewHoldSeconds))
   if (holdSeconds === 0) {
@@ -1818,6 +1931,59 @@ async function parseBootOptions(args: string[]): Promise<BootOptions> {
   }
 
   return options
+}
+
+async function parseBlueprintValidateOptions(args: string[]): Promise<BlueprintValidateOptions> {
+  const options: Partial<BlueprintValidateOptions> = { json: false }
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--blueprint":
+        options.blueprint = await parseJsonOption(value)
+        options.blueprintPath = jsonOptionPath(value)
+        break
+      case "--wp":
+        options.wpVersion = value
+        break
+      case "--artifacts":
+        options.artifactsDirectory = value
+        break
+      case "--preview-hold":
+        options.previewHoldSeconds = parsePreviewHoldSeconds(value)
+        break
+      case "--preview-public-url":
+        options.previewPublicUrl = parsePreviewPublicUrl(value)
+        break
+      case "--preview-port":
+        options.previewPort = parsePreviewPort(value)
+        break
+      case "--policy":
+        options.policy = await parsePolicy(value)
+        break
+      default:
+        throw new Error(`Unknown option: ${name}`)
+    }
+  }
+
+  if (options.blueprint === undefined) {
+    throw new Error("Missing required option: --blueprint")
+  }
+
+  return options as BlueprintValidateOptions
 }
 
 function parseRecipeRunOptions(args: string[]): RecipeRunOptions {
@@ -2708,6 +2874,11 @@ async function parseJsonOption(value: string): Promise<unknown> {
 async function readJsonOption(value: string): Promise<string> {
   const trimmed = value.trim()
   return trimmed.startsWith("{") || trimmed.startsWith("[") ? value : await readFile(resolve(value), "utf8")
+}
+
+function jsonOptionPath(value: string): string | undefined {
+  const trimmed = value.trim()
+  return trimmed.startsWith("{") || trimmed.startsWith("[") ? undefined : resolve(value)
 }
 
 function stripUndefined<T extends Record<string, unknown>>(record: T): T {
