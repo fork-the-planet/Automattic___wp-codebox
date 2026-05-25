@@ -40,6 +40,10 @@ interface RecipeValidateOutputLike {
   }
 }
 
+interface BlueprintValidateOutputLike extends RunOutputLike {
+  blueprintPath?: string
+}
+
 interface BatchOutputLike {
   concurrency: number
   total: number
@@ -118,6 +122,21 @@ export function printBootHumanOutput(output: RunOutputLike): void {
   }
 
   console.log("WP Codebox boot")
+  console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
+  console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
+  if (output.artifacts?.preview?.url) {
+    console.log(`Preview: ${output.artifacts.preview.url} (${output.artifacts.preview.status})`)
+  }
+}
+
+export function printBlueprintValidateHumanOutput(output: BlueprintValidateOutputLike): void {
+  if (!output.success) {
+    console.error(output.error?.message ?? "WP Codebox blueprint validation failed")
+    return
+  }
+
+  console.log("WP Codebox blueprint validation")
+  console.log(`Blueprint: ${output.blueprintPath ?? "inline"}`)
   console.log(`Runtime: ${output.runtime?.backend ?? "unknown"}`)
   console.log(`Artifacts: ${output.artifacts?.directory ?? "none"}`)
   if (output.artifacts?.preview?.url) {
@@ -205,6 +224,7 @@ export function printHelp(): void {
   wp-codebox commands [--json]
   wp-codebox schema recipe [--json]
   wp-codebox recipe validate --recipe <path> [--json]
+  wp-codebox validate-blueprint --blueprint <json|file> [options]
   wp-codebox recipe-run --recipe <path> [options]
   wp-codebox boot [--mount <host>:<vfs>] [options]
   wp-codebox run --mount <host>:<vfs> --command <id> [options]
@@ -216,7 +236,7 @@ Options:
   --arg <key=value>    Command argument. Repeatable. Recipe commands include wordpress.run-php, wordpress.phpunit, wordpress.core-phpunit, wordpress.wp-cli, wordpress.ability, wordpress.bench, and wordpress.browser-probe.
   --wp <version>       WordPress version for Playground. Defaults to 7.0; accepts latest, trunk, nightly, or numeric versions.
   --blueprint <json|file>
-                       WordPress Playground blueprint JSON or path for boot.
+                       WordPress Playground blueprint JSON or path for boot or validate-blueprint.
   --artifacts <dir>    Artifact root directory.
   --hold <n>           Keep a booted Playground preview available before teardown. Accepts the same values as --preview-hold.
   --preview-hold <n>   Keep the live Playground preview available after a successful run. Accepts seconds or minutes, e.g. 30s or 15m; max 3600s.

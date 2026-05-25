@@ -38,6 +38,7 @@ What you can build on top of WP Codebox:
 What WP Codebox provides for product use cases:
 
 - Run a PHP or WP-CLI probe against mounted WordPress code.
+- Validate raw WordPress Playground blueprints through the same runtime and artifact contract.
 - Execute a WordPress Ability inside a disposable Playground runtime.
 - Run repeatable workspace recipes that mount plugins, seed workspaces, and capture outputs.
 - Drive stateful runtime episodes with reset, step, observe, snapshot, artifact, and close operations.
@@ -332,6 +333,20 @@ npm run wp-codebox -- boot \
 `boot` accepts the same mount, WordPress version, policy, artifact, fixed preview port, and public preview URL setup used by the runtime commands. `--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. `--hold` uses the same duration syntax and 3600-second maximum as `run --preview-hold`.
 
 The JSON output uses `wp-codebox/boot/v1` and includes runtime information plus the collected artifact bundle. The artifact bundle includes preview metadata, mounted-file capture, diffs, review metadata, and lifecycle logs, but no `execution` object and no fake command entry.
+
+### `validate-blueprint`
+
+Validate a raw WordPress Playground blueprint through WP Codebox instead of calling `@wp-playground/cli` directly.
+
+```bash
+npm run wp-codebox -- validate-blueprint \
+  --blueprint ./playground-blueprint.json \
+  --wp 7.0 \
+  --artifacts ./artifacts \
+  --json
+```
+
+`--blueprint` accepts inline JSON or a path to a Playground blueprint JSON file. The command boots Playground with that blueprint, captures the normal artifact bundle, and returns `wp-codebox/blueprint-validation/v1` with runtime and artifact paths. Use it in CI when the desired contract is "this blueprint boots and produces reviewable WP Codebox artifacts" rather than a recipe workflow.
 
 ### `recipe validate`
 

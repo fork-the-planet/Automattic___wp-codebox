@@ -41,6 +41,7 @@ descriptions, accepted args, known output shape, and policy requirements.
 
 ## Recipe Planning
 
+- `wp-codebox validate-blueprint --blueprint <json|file> [--json]` boots a raw WordPress Playground blueprint through WP Codebox and captures the normal artifact bundle.
 - `wp-codebox recipe validate --recipe <path> [--json]` validates recipe shape, paths, commands, and arguments without resolving a full execution plan.
 - `wp-codebox recipe-run --recipe <path> --dry-run --json` validates the recipe and emits the resolved plan without booting Playground, creating temp workspaces, mutating files, or writing artifacts.
 - `wp-codebox recipe-run --recipe <path> [--json]` boots Playground, mounts inputs, executes workflow steps, and captures artifacts.
