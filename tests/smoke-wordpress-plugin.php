@@ -100,6 +100,7 @@ $assert( 'ability exposes connector credential envelope schema', 'object' === ( 
 $assert( 'ability exposes external sandbox session schema', 'string' === ( $ability['input_schema']['properties']['sandbox_session_id']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['orchestrator']['type'] ?? '' ) && 'object' === ( $ability['output_schema']['properties']['session']['type'] ?? '' ) );
 $assert( 'session schema pins external orchestrator persistence', array( 'external-orchestrator' ) === ( $ability['output_schema']['properties']['session']['properties']['persistence']['enum'] ?? array() ) && str_contains( $ability['output_schema']['properties']['session']['properties']['persistence']['description'] ?? '', 'does not persist' ) );
 $assert( 'session schema keeps durable lifecycle external', array( 'completed' ) === ( $ability['output_schema']['properties']['session']['properties']['status']['enum'] ?? array() ) && str_contains( $ability['output_schema']['properties']['session']['properties']['status']['description'] ?? '', 'external orchestrator' ) );
+$assert( 'ability exposes preview configuration schema', 'integer' === ( $ability['input_schema']['properties']['preview_port']['type'] ?? '' ) && 'string' === ( $ability['input_schema']['properties']['preview_bind']['type'] ?? '' ) && 'string' === ( $ability['input_schema']['properties']['preview_public_url']['type'] ?? '' ) );
 $assert( 'ability omits raw code input', ! isset( $ability['input_schema']['properties']['code'] ) && ! isset( $ability['input_schema']['properties']['code_file'] ) );
 $assert( 'permission defaults to manage_options', true === call_user_func( $ability['permission_callback'] ) );
 
@@ -107,6 +108,7 @@ $batch_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-age
 $assert( 'run-agent-task-batch ability registered', is_array( $batch_ability ) );
 $assert( 'batch ability is REST visible', true === ( $batch_ability['meta']['show_in_rest'] ?? false ) );
 $assert( 'batch ability requires tasks', array( 'tasks' ) === ( $batch_ability['input_schema']['required'] ?? array() ) );
+$assert( 'batch ability exposes preview configuration schema', 'integer' === ( $batch_ability['input_schema']['properties']['preview_port']['type'] ?? '' ) && 'string' === ( $batch_ability['input_schema']['properties']['preview_bind']['type'] ?? '' ) && 'string' === ( $batch_ability['input_schema']['properties']['preview_public_url']['type'] ?? '' ) );
 $assert( 'batch ability contract does not expose unimplemented concurrency', ! isset( $batch_ability['input_schema']['properties']['concurrency'] ) && ! isset( $batch_ability['output_schema']['properties']['concurrency'] ) );
 $assert( 'batch ability exposes per-task run outputs', isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['artifact_id'] ) && isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['preview_url'] ) && isset( $batch_ability['output_schema']['properties']['runs']['items']['properties']['error'] ) );
 
@@ -160,7 +162,10 @@ $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 						'runtime'   => array( 'backend' => 'wordpress-playground' ),
 						'artifacts' => array(
 							'id'      => $artifact_id,
-							'preview' => array( 'url' => 'http://127.0.0.1:' . ( 12344 + $command_count ) ),
+							'preview' => array(
+								'url'      => str_contains( $command, 'https://preview.example.test/session-123/' ) ? 'https://preview.example.test/session-123/' : ( str_contains( $command, 'https://preview.example.test/batch/' ) ? 'https://preview.example.test/batch/' : 'http://127.0.0.1:' . ( 12344 + $command_count ) ),
+								'localUrl' => 'http://127.0.0.1:' . ( 12344 + $command_count ),
+							),
 						),
 					)
 				),
@@ -182,6 +187,9 @@ $result = $runner->run(
 		'artifacts_path' => $root . '/artifacts',
 		'secret_env'     => array( 'GITHUB_TOKEN' ),
 		'preview_hold_seconds' => 30,
+		'preview_port'   => 45678,
+		'preview_bind'   => '127.0.0.1',
+		'preview_public_url' => 'https://preview.example.test/session-123/',
 		'mounts'         => array(
 			array(
 				'source'   => $root . '/editable-plugin',
@@ -205,10 +213,12 @@ $assert( 'runner schema is stable', ! is_wp_error( $result ) && 'wp-codebox/agen
 $assert( 'runner returns caller-owned sandbox session envelope', ! is_wp_error( $result ) && 'wp-codebox/sandbox-session/v1' === ( $result['session']['schema'] ?? '' ) && 'parent-job-123' === ( $result['session']['id'] ?? '' ) && 'external-orchestrator' === ( $result['session']['persistence'] ?? '' ) );
 $assert( 'runner keeps agent session separate from sandbox session', ! is_wp_error( $result ) && 'agent-chat-session-456' === ( $result['session']['agent_session_id'] ?? '' ) && str_contains( $captured_recipe, 'session-id=agent-chat-session-456' ) );
 $assert( 'runner returns orchestrator correlation and artifact refs', ! is_wp_error( $result ) && 'job-123' === ( $result['session']['orchestrator']['job_id'] ?? '' ) && 'artifact-bundle-sha256-fixture' === ( $result['session']['artifacts']['bundle_id'] ?? '' ) );
+$assert( 'runner returns public preview URL in session artifact metadata', ! is_wp_error( $result ) && 'https://preview.example.test/session-123/' === ( $result['session']['artifacts']['preview_url'] ?? '' ) && 'https://preview.example.test/session-123/' === ( $result['run']['artifacts']['preview']['url'] ?? '' ) );
 $assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $assert( 'runner invokes recipe-run', str_contains( $captured_command, 'recipe-run' ) );
 $assert( 'runner uses node for JS CLI', str_contains( $captured_command, 'node ' ) );
 $assert( 'runner passes preview hold to CLI', str_contains( $captured_command, '--preview-hold' ) && str_contains( $captured_command, "'30'" ) );
+$assert( 'runner passes preview configuration to CLI', str_contains( $captured_command, '--preview-port' ) && str_contains( $captured_command, "'45678'" ) && str_contains( $captured_command, '--preview-bind' ) && str_contains( $captured_command, "'127.0.0.1'" ) && str_contains( $captured_command, '--preview-public-url' ) && str_contains( $captured_command, "'https://preview.example.test/session-123/'" ) );
 $assert( 'runner recipe uses agent step', str_contains( $captured_recipe, 'wp-codebox.agent-sandbox-run' ) );
 $assert( 'runner recipe passes task', str_contains( $captured_recipe, 'Run a chat-requested sandbox task.' ) );
 $assert( 'runner recipe passes default agent', str_contains( $captured_recipe, 'site-coder' ) );
@@ -385,6 +395,24 @@ $invalid_mount = $runner->run(
 );
 $assert( 'invalid mount input fails closed', is_wp_error( $invalid_mount ) && 'wp_codebox_mount_source_invalid' === $invalid_mount->get_error_code() );
 
+$invalid_preview_bind = $runner->run(
+	array(
+		'task'           => 'Run a chat-requested sandbox task.',
+		'artifacts_path' => $root . '/artifacts',
+		'preview_bind'   => '0.0.0.0',
+	)
+);
+$assert( 'preview bind without preview port fails closed', is_wp_error( $invalid_preview_bind ) && 'wp_codebox_preview_bind_requires_port' === $invalid_preview_bind->get_error_code() );
+
+$invalid_preview_url = $runner->run(
+	array(
+		'task'               => 'Run a chat-requested sandbox task.',
+		'artifacts_path'     => $root . '/artifacts',
+		'preview_public_url' => 'file:///tmp/preview',
+	)
+);
+$assert( 'invalid preview public URL fails closed', is_wp_error( $invalid_preview_url ) && 'wp_codebox_preview_public_url_invalid' === $invalid_preview_url->get_error_code() );
+
 $structured_result = $runner->run(
 	array(
 		'goal'               => 'Add a focused product feature.',
@@ -404,6 +432,7 @@ $assert( 'runner accepts structured task input', ! is_wp_error( $structured_resu
 $assert( 'runner preserves structured target', ! is_wp_error( $structured_result ) && 'plugin' === ( $structured_result['task_input']['target']['kind'] ?? '' ) );
 $assert( 'runner normalizes task input lists', ! is_wp_error( $structured_result ) && array( 'workspace.read', 'workspace.write', 'datamachine/workspace-read' ) === ( $structured_result['task_input']['allowed_tools'] ?? array() ) && array( 'patch', 'tests' ) === ( $structured_result['task_input']['expected_artifacts'] ?? array() ) );
 $assert( 'runner passes structured task contract to recipe', str_contains( $captured_recipe, 'wp-codebox/task-input/v1' ) && str_contains( $captured_recipe, 'allowed_tools' ) );
+$assert( 'runner leaves preview config unset by default', ! str_contains( $captured_command, '--preview-port' ) && ! str_contains( $captured_command, '--preview-bind' ) && ! str_contains( $captured_command, '--preview-public-url' ) );
 
 $parent_only_tool = $runner->run(
 	array(
@@ -432,6 +461,9 @@ $batch_result = $runner->run_batch(
 		'tasks'          => array( 'Fix issue one.', 'Fix issue two.' ),
 		'sandbox_session_id' => 'parent-batch-789',
 		'artifacts_path' => $root . '/artifacts',
+		'preview_port'   => 45679,
+		'preview_bind'   => '127.0.0.1',
+		'preview_public_url' => 'https://preview.example.test/batch/',
 	)
 );
 
@@ -439,17 +471,19 @@ $assert( 'batch runner succeeds with filter-provided component paths', ! is_wp_e
 $assert( 'batch runner schema is stable', ! is_wp_error( $batch_result ) && 'wp-codebox/agent-task-batch/v1' === ( $batch_result['schema'] ?? '' ) );
 $assert( 'batch runner returns normalized task inputs', ! is_wp_error( $batch_result ) && 2 === count( $batch_result['task_inputs'] ?? array() ) && 'Fix issue one.' === ( $batch_result['task_inputs'][0]['goal'] ?? '' ) );
 $batch_recipes = array_slice( $captured_recipes, -2 );
+$batch_commands = array_slice( $captured_commands, -2 );
 $assert( 'batch runner invokes recipe-run once per task', 2 === count( $batch_result['runs'] ?? array() ) && 2 === count( $batch_recipes ) && str_contains( $captured_commands[ count( $captured_commands ) - 1 ] ?? '', 'recipe-run' ) );
 $assert( 'batch runner emits one agent step per isolated recipe', 1 === substr_count( $batch_recipes[0] ?? '', 'wp-codebox.agent-sandbox-run' ) && 1 === substr_count( $batch_recipes[1] ?? '', 'wp-codebox.agent-sandbox-run' ) );
 $assert( 'batch runner returns sequential isolation contract', 'sequential-isolated-sandboxes' === ( $batch_result['execution'] ?? '' ) && ! array_key_exists( 'concurrency', $batch_result ) );
 $assert( 'batch runner returns per-task artifact refs', ! is_wp_error( $batch_result ) && '' !== ( $batch_result['runs'][0]['artifact_id'] ?? '' ) && '' !== ( $batch_result['runs'][1]['artifact_id'] ?? '' ) && ( $batch_result['runs'][0]['artifact_id'] ?? '' ) !== ( $batch_result['runs'][1]['artifact_id'] ?? '' ) );
-$assert( 'batch runner returns per-task preview URLs', ! is_wp_error( $batch_result ) && str_starts_with( (string) ( $batch_result['runs'][0]['preview_url'] ?? '' ), 'http://127.0.0.1:' ) && str_starts_with( (string) ( $batch_result['runs'][1]['preview_url'] ?? '' ), 'http://127.0.0.1:' ) );
+$assert( 'batch runner returns per-task preview URLs', ! is_wp_error( $batch_result ) && 'https://preview.example.test/batch/' === ( $batch_result['runs'][0]['preview_url'] ?? '' ) && 'https://preview.example.test/batch/' === ( $batch_result['runs'][1]['preview_url'] ?? '' ) );
 $assert( 'batch runner assigns per-task sandbox session ids', ! is_wp_error( $batch_result ) && 'parent-batch-789:1' === ( $batch_result['runs'][0]['session']['id'] ?? '' ) && 'parent-batch-789:2' === ( $batch_result['runs'][1]['session']['id'] ?? '' ) );
 $assert( 'batch runner reports per-task counts', ! is_wp_error( $batch_result ) && 2 === ( $batch_result['total'] ?? 0 ) && 2 === ( $batch_result['completed'] ?? 0 ) && 0 === ( $batch_result['failed'] ?? -1 ) );
 $assert( 'batch runner recipe passes default provider', str_contains( $batch_recipes[0] ?? '', 'openai' ) && str_contains( $batch_recipes[1] ?? '', 'openai' ) );
 $assert( 'batch runner recipe passes default model', str_contains( $batch_recipes[0] ?? '', 'gpt-5.5' ) && str_contains( $batch_recipes[1] ?? '', 'gpt-5.5' ) );
 $assert( 'batch runner recipe passes provider plugin path', str_contains( $batch_recipes[0] ?? '', 'ai-provider-test' ) && str_contains( $batch_recipes[1] ?? '', 'ai-provider-test' ) );
 $assert( 'batch runner recipe passes secret env name only', str_contains( $batch_recipes[0] ?? '', 'OPENAI_API_KEY' ) && str_contains( $batch_recipes[1] ?? '', 'OPENAI_API_KEY' ) );
+$assert( 'batch runner passes preview configuration to each CLI run', str_contains( $batch_commands[0] ?? '', '--preview-port' ) && str_contains( $batch_commands[0] ?? '', "'45679'" ) && str_contains( $batch_commands[0] ?? '', '--preview-bind' ) && str_contains( $batch_commands[0] ?? '', "'127.0.0.1'" ) && str_contains( $batch_commands[0] ?? '', '--preview-public-url' ) && str_contains( $batch_commands[0] ?? '', "'https://preview.example.test/batch/'" ) && str_contains( $batch_commands[1] ?? '', '--preview-port' ) && str_contains( $batch_commands[1] ?? '', "'45679'" ) && str_contains( $batch_commands[1] ?? '', '--preview-bind' ) && str_contains( $batch_commands[1] ?? '', "'127.0.0.1'" ) && str_contains( $batch_commands[1] ?? '', '--preview-public-url' ) && str_contains( $batch_commands[1] ?? '', "'https://preview.example.test/batch/'" ) );
 
 $failing_batch_count  = 0;
 $failing_batch_runner = new WP_Codebox_Agent_Sandbox_Runner(
