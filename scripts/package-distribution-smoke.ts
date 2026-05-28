@@ -1,11 +1,25 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { access } from "node:fs/promises"
+import { access, readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
+
+const rootPackage = JSON.parse(await readFile(resolve(repoRoot, "package.json"), "utf8")) as {
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
+}
+
+assert.ok(
+  rootPackage.dependencies?.["@wp-playground/cli"],
+  "Published workspace package should install the Playground CLI runtime dependency",
+)
+assert.ok(
+  rootPackage.dependencies?.playwright,
+  "Published workspace package should install the Playwright runtime dependency",
+)
 
 const { stdout: packStdout } = await execFileAsync(
   "npm",

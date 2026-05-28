@@ -67,7 +67,6 @@
   ],
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "playwright": "^1.60.0",
     "tsx": "^4.20.0"
   },
   "description": "**WP Codebox unlocks secure WordPress code execution from anywhere.** Run agents, accept untrusted patches, evaluate plugins, reproduce bugs, or experiment freely — every sandbox is a disposable WordPress Playground that can't touch its caller. Your host can be a CLI, CI job, mobile app, Node service, WordPress plugin, or anything else that can shell out or hit an API.",
@@ -81,6 +80,7 @@
     "@chubes4/wp-codebox-cli": "file:packages/cli",
     "@chubes4/wp-codebox-core": "file:packages/runtime-core",
     "@chubes4/wp-codebox-playground": "file:packages/runtime-playground",
+    "@wp-playground/cli": "3.1.30",
     "abort-controller": "^3.0.0",
     "accepts": "^1.3.8",
     "aggregate-error": "^3.1.0",
@@ -201,6 +201,7 @@
     "path-expression-matcher": "^1.5.0",
     "path-to-regexp": "^0.1.13",
     "pify": "^4.0.1",
+    "playwright": "^1.60.0",
     "possible-typed-array-names": "^1.1.0",
     "process": "^0.11.10",
     "proxy-addr": "^2.0.7",
