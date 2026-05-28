@@ -532,6 +532,12 @@ export interface ArtifactManifestFile {
     | "test-results"
     | (string & {})
   contentType: string
+  sha256: ArtifactFileDigest
+}
+
+export interface ArtifactFileDigest {
+  algorithm: "sha256"
+  value: string
 }
 
 export interface ArtifactManifest {
@@ -733,6 +739,8 @@ export type ArtifactBundleVerificationViolationCode =
   | "missing-file"
   | "orphaned-file"
   | "digest-mismatch"
+  | "missing-file-hash"
+  | "file-hash-mismatch"
   | "bundle-id-mismatch"
   | "malformed-reference"
   | "review-evidence-mismatch"
@@ -821,6 +829,7 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
     }
   }
 
+  await verifyManifestFileHashes(bundleDirectory, manifest, manifestFileName, violations)
   await verifyContentDigest(bundleDirectory, manifest, violations)
   verifyBundleId(manifest, violations)
   await verifyMetadataReferences(bundleDirectory, manifestFiles, violations)
@@ -841,6 +850,53 @@ export async function calculateArtifactContentDigest(directory: string, inputs: 
   }
 
   return hash.digest("hex")
+}
+
+export async function calculateArtifactManifestFileSha256(directory: string, manifest: ArtifactManifest, file: ArtifactManifestFile, manifestFileName = "manifest.json"): Promise<string> {
+  if (file.path === manifestFileName) {
+    return calculateArtifactManifestSelfSha256(manifest, manifestFileName)
+  }
+
+  return createHash("sha256").update(await readFile(join(directory, file.path))).digest("hex")
+}
+
+export function calculateArtifactManifestSelfSha256(manifest: ArtifactManifest, manifestFileName = "manifest.json"): string {
+  return createHash("sha256")
+    .update("wp-codebox/artifact-manifest-self/v1\n")
+    .update(stableJson(manifestWithPlaceholderSelfHash(manifest, manifestFileName)))
+    .digest("hex")
+}
+
+function manifestWithPlaceholderSelfHash(manifest: ArtifactManifest, manifestFileName: string): ArtifactManifest {
+  return {
+    ...manifest,
+    files: manifest.files.map((file) => file.path === manifestFileName
+      ? { ...file, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
+      : file),
+  }
+}
+
+async function verifyManifestFileHashes(directory: string, manifest: ArtifactManifest, manifestFileName: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
+  for (const [index, file] of manifest.files.entries()) {
+    if (artifactPathViolation(file.path, `manifest.files[${index}].path`)) {
+      continue
+    }
+
+    const fieldPath = `manifest.files[${index}].sha256`
+    if (!isArtifactFileDigestShape(file.sha256)) {
+      violations.push({ code: "missing-file-hash", path: fieldPath, file: file.path, message: `Manifest file entry must include a lowercase SHA-256 digest: ${file.path}` })
+      continue
+    }
+
+    try {
+      const value = await calculateArtifactManifestFileSha256(directory, manifest, file, manifestFileName)
+      if (value !== file.sha256.value) {
+        violations.push({ code: "file-hash-mismatch", path: fieldPath, file: file.path, message: `Manifest file hash does not match ${file.path}: expected ${value}, got ${file.sha256.value}` })
+      }
+    } catch (error) {
+      violations.push({ code: "file-hash-mismatch", path: fieldPath, file: file.path, message: `Unable to hash manifest file entry ${file.path}: ${errorMessage(error)}` })
+    }
+  }
 }
 
 function artifactBundleVerificationResult(bundleDirectory: string, violations: ArtifactBundleVerificationViolation[], manifest?: ArtifactManifest): ArtifactBundleVerificationResult {
@@ -876,6 +932,13 @@ function isArtifactManifestFileShape(value: unknown): value is ArtifactManifestF
     && typeof value.path === "string"
     && typeof value.kind === "string"
     && typeof value.contentType === "string"
+}
+
+function isArtifactFileDigestShape(value: unknown): value is ArtifactFileDigest {
+  return isRecord(value)
+    && value.algorithm === "sha256"
+    && typeof value.value === "string"
+    && /^[a-f0-9]{64}$/.test(value.value)
 }
 
 function artifactPathViolation(path: string, fieldPath: string): ArtifactBundleVerificationViolation | undefined {
@@ -1658,6 +1721,23 @@ function upsertManifestFile(manifest: ArtifactManifest, file: ArtifactManifestFi
   manifest.files[index] = file
 }
 
+function artifactManifestFile(path: string, kind: string, contentType: string): ArtifactManifestFile {
+  return { path, kind, contentType, sha256: { algorithm: "sha256", value: "0".repeat(64) } }
+}
+
+async function refreshArtifactManifestFileHashes(directory: string, manifest: ArtifactManifest): Promise<void> {
+  for (const file of manifest.files) {
+    if (file.path !== "manifest.json") {
+      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
+    }
+  }
+  for (const file of manifest.files) {
+    if (file.path === "manifest.json") {
+      file.sha256 = { algorithm: "sha256", value: await calculateArtifactManifestFileSha256(directory, manifest, file) }
+    }
+  }
+}
+
 export async function createRuntime(spec: RuntimeCreateSpec, backend: RuntimeBackend): Promise<Runtime> {
   assertRuntimePolicy(spec.policy)
 
@@ -1783,9 +1863,9 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     const eventsRelativePath = "files/runtime-episode.jsonl"
     await writeFile(this.artifacts.runtimeEpisodeTracePath, `${JSON.stringify(trace, null, 2)}\n`)
     await writeFile(this.artifacts.runtimeEpisodeEventsPath, `${runtimeEpisodeJsonLines(trace)}`)
-    await this.updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateArtifactMetadataForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
     await this.updateArtifactReviewForRuntimeEpisodeTrace(traceRelativePath)
+    await this.updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath, eventsRelativePath)
   }
 
   private async updateArtifactManifestForRuntimeEpisodeTrace(traceRelativePath: string, eventsRelativePath: string): Promise<void> {
@@ -1794,8 +1874,9 @@ class RuntimeEpisodeRunner implements RuntimeEpisode {
     }
 
     const manifest = JSON.parse(await readFile(this.artifacts.manifestPath, "utf8")) as ArtifactManifest
-    upsertManifestFile(manifest, { path: traceRelativePath, kind: "runtime-episode-trace", contentType: "application/json" })
-    upsertManifestFile(manifest, { path: eventsRelativePath, kind: "runtime-episode-events", contentType: "application/x-ndjson" })
+    upsertManifestFile(manifest, artifactManifestFile(traceRelativePath, "runtime-episode-trace", "application/json"))
+    upsertManifestFile(manifest, artifactManifestFile(eventsRelativePath, "runtime-episode-events", "application/x-ndjson"))
+    await refreshArtifactManifestFileHashes(this.artifacts.directory, manifest)
     await writeFile(this.artifacts.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
   }
 
