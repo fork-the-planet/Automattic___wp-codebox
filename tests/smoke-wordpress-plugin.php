@@ -552,6 +552,22 @@ $assert( 'runner normalizes task input lists', ! is_wp_error( $structured_result
 $assert( 'runner passes structured task contract to recipe', str_contains( $captured_recipe, 'wp-codebox/task-input/v1' ) && str_contains( $captured_recipe, 'allowed_tools' ) );
 $assert( 'runner leaves preview config unset by default', ! str_contains( $captured_command, '--preview-port' ) && ! str_contains( $captured_command, '--preview-bind' ) && ! str_contains( $captured_command, '--preview-public-url' ) );
 
+$remediation_artifact_run = function ( string $name, array $files ): array {
+	$directory = sys_get_temp_dir() . '/wp-codebox-remediation-artifact-' . $name . '-' . uniqid( '', true );
+	mkdir( $directory . '/files', 0777, true );
+	file_put_contents(
+		$directory . '/files/changed-files.json',
+		json_encode( array( 'schema' => 'wp-codebox/changed-files/v1', 'files' => $files ), JSON_PRETTY_PRINT )
+	);
+
+	return array(
+		'artifacts' => array(
+			'id'        => 'artifact-' . $name,
+			'directory' => $directory,
+		),
+	);
+};
+
 $remediation_run = function ( array $agent_payload, int $exit_code = 0, array $run_overrides = array() ) use ( $root ): array|WP_Error {
 	$strict_runner = new WP_Codebox_Agent_Sandbox_Runner(
 		array(
@@ -585,7 +601,7 @@ $remediation_run = function ( array $agent_payload, int $exit_code = 0, array $r
 		array(
 			'goal'               => 'Remediate audit finding.',
 			'target'             => array( 'kind' => 'audit-remediation' ),
-			'expected_artifacts' => array( 'fix_pr', 'false_positive_pr' ),
+			'expected_artifacts' => array( 'fix_artifact', 'false_positive_artifact' ),
 			'artifacts_path'     => $root . '/artifacts',
 		)
 	);
@@ -615,7 +631,7 @@ $text_false_positive_result = $remediation_run(
 		'metadata' => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
 	)
 );
-$assert( 'strict remediation outcome rejects text-only false-positive conclusions without PR', ! is_wp_error( $text_false_positive_result ) && false === ( $text_false_positive_result['success'] ?? true ) && 'agent_no_pr_outcome' === ( $text_false_positive_result['outcome']['kind'] ?? '' ) );
+$assert( 'strict remediation outcome rejects text-only false-positive conclusions without artifact', ! is_wp_error( $text_false_positive_result ) && false === ( $text_false_positive_result['success'] ?? true ) && 'agent_no_pr_outcome' === ( $text_false_positive_result['outcome']['kind'] ?? '' ) );
 
 $normal_no_pr_result = $remediation_run(
 	array(
@@ -623,23 +639,26 @@ $normal_no_pr_result = $remediation_run(
 		'metadata' => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
 	)
 );
-$assert( 'strict remediation outcome rejects normal answers without PR', ! is_wp_error( $normal_no_pr_result ) && false === ( $normal_no_pr_result['success'] ?? true ) && 'agent_no_pr_outcome' === ( $normal_no_pr_result['outcome']['failure'] ?? '' ) );
+$assert( 'strict remediation outcome rejects normal answers without artifact', ! is_wp_error( $normal_no_pr_result ) && false === ( $normal_no_pr_result['success'] ?? true ) && 'agent_no_pr_outcome' === ( $normal_no_pr_result['outcome']['failure'] ?? '' ) );
 
-$fix_pr_result = $remediation_run(
+$fix_artifact_result = $remediation_run(
 	array(
-		'pr_url'   => 'https://github.com/chubes4/wp-codebox/pull/2020',
 		'metadata' => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
-	)
+	),
+	0,
+	$remediation_artifact_run( 'fix', array( array( 'path' => '/wordpress/wp-content/plugins/example/example.php', 'relativePath' => 'example.php', 'status' => 'modified' ) ) )
 );
-$assert( 'strict remediation outcome accepts valid fix PR URL', ! is_wp_error( $fix_pr_result ) && true === ( $fix_pr_result['success'] ?? false ) && 'fix_pr' === ( $fix_pr_result['outcome']['kind'] ?? '' ) && 'https://github.com/chubes4/wp-codebox/pull/2020' === ( $fix_pr_result['outcome']['pr_url'] ?? '' ) );
+$assert( 'strict remediation outcome accepts changed fix artifact', ! is_wp_error( $fix_artifact_result ) && true === ( $fix_artifact_result['success'] ?? false ) && 'fix_artifact' === ( $fix_artifact_result['outcome']['kind'] ?? '' ) && 'example.php' === ( $fix_artifact_result['outcome']['artifact']['changed_files'][0]['relative_path'] ?? '' ) );
 
-$false_positive_pr_result = $remediation_run(
+$false_positive_artifact_result = $remediation_run(
 	array(
-		'false_positive_pr_url' => 'https://github.com/chubes4/wp-codebox/pull/2021',
-		'metadata'              => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
-	)
+		'false_positive' => true,
+		'metadata'       => array( 'datamachine' => array( 'completed' => true, 'max_turns_reached' => false ) ),
+	),
+	0,
+	$remediation_artifact_run( 'false-positive', array( array( 'path' => '/wordpress/wp-content/plugins/example/tests/audit.php', 'relativePath' => 'tests/audit.php', 'status' => 'modified' ) ) )
 );
-$assert( 'strict remediation outcome accepts valid false-positive PR URL', ! is_wp_error( $false_positive_pr_result ) && true === ( $false_positive_pr_result['success'] ?? false ) && 'false_positive_pr' === ( $false_positive_pr_result['outcome']['kind'] ?? '' ) && 'https://github.com/chubes4/wp-codebox/pull/2021' === ( $false_positive_pr_result['outcome']['false_positive_pr_url'] ?? '' ) );
+$assert( 'strict remediation outcome accepts changed false-positive artifact', ! is_wp_error( $false_positive_artifact_result ) && true === ( $false_positive_artifact_result['success'] ?? false ) && 'false_positive_artifact' === ( $false_positive_artifact_result['outcome']['kind'] ?? '' ) && true === ( $false_positive_artifact_result['outcome']['false_positive'] ?? false ) );
 
 $max_turns_result = $remediation_run(
 	array(

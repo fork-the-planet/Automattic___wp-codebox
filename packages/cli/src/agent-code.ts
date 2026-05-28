@@ -439,7 +439,7 @@ do_action('init');
 do_action('wp_abilities_api_categories_init');
 do_action('wp_abilities_api_init');
 
-$sandbox_task = ${JSON.stringify(task)};
+$sandbox_task = ${phpStringLiteral(task)};
 $sandbox_stack = array(
     'plugins' => $activation_results,
     'signals' => array(
@@ -472,6 +472,11 @@ echo json_encode(
 
 function phpBody(code: string): string {
   return code.trimStart().replace(/^<\?php\s*/, "")
+}
+
+function phpStringLiteral(value: string): string {
+  const marker = `WP_CODEBOX_LITERAL_${Math.random().toString(36).slice(2).toUpperCase()}`
+  return `<<<'${marker}'\n${value}\n${marker}`
 }
 
 export function agentRuntimeProbeCode(providerPlugins: Array<{ slug: string }>): string {

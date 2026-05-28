@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { resolveSandboxTaskCode } from "../packages/cli/src/agent-code.ts"
+import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.ts"
 
 async function main() {
   const code = await resolveSandboxTaskCode({
@@ -20,6 +20,14 @@ async function main() {
   assert.match(code, /datamachine_code_remote_workspace_backend_should_handle/, "sandbox mode should use the mounted workspace backend")
   assert.match(code, /Do not invent alternate tool names such as read_file/, "sandbox guidance should prevent pseudo-tool aliases")
   assert.match(code, /workspace_apply_patch/, "sandbox tool policy should include patch application")
+
+  const runCode = agentSandboxRunCode(
+    '{"prompt":"Do not interpolate $buckets, $meta, or $state_store."}',
+    '<?php echo "ok";',
+    [],
+  )
+  assert.match(runCode, /<<<'WP_CODEBOX_LITERAL_/, "sandbox task JSON should use a single-quoted nowdoc")
+  assert.doesNotMatch(runCode, /\$sandbox_task = "\{/, "sandbox task JSON should not use PHP double-quoted strings")
 }
 
 main().catch((error) => {
