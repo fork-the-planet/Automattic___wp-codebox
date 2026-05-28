@@ -889,7 +889,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		foreach ( $expected_artifacts as $artifact ) {
 			$artifact = strtolower( str_replace( '_', '-', trim( (string) $artifact ) ) );
-			if ( in_array( $artifact, array( 'fix-pr', 'false-positive-pr', 'remediation-pr' ), true ) ) {
+			if ( in_array( $artifact, array( 'fix-artifact', 'false-positive-artifact', 'remediation-artifact', 'fix-pr', 'false-positive-pr', 'remediation-pr' ), true ) ) {
 				return true;
 			}
 		}
@@ -904,6 +904,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$provider_error = $this->provider_error_details( $run, $output );
 		$pr_url = $this->first_url_for_keys( $run, array( 'pr_url', 'pull_request_url', 'pullRequestUrl' ) );
 		$false_positive_pr_url = $this->first_url_for_keys( $run, array( 'false_positive_pr_url', 'falsePositivePrUrl' ) );
+		$artifact = $this->remediation_artifact_details( $run );
+		$has_artifact_changes = ! empty( $artifact['changed_files'] );
+		$false_positive = $this->remediation_false_positive( $run );
 
 		$outcome = array(
 			'schema'      => self::REMEDIATION_OUTCOME_SCHEMA,
@@ -923,6 +926,29 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		if ( ! empty( $datamachine ) ) {
 			$outcome['metadata'] = array( 'datamachine' => $datamachine );
+		}
+
+		if ( $has_artifact_changes && $false_positive ) {
+			$outcome['success'] = true;
+			$outcome['kind'] = 'false_positive_artifact';
+			$outcome['artifact'] = $artifact;
+			$outcome['false_positive'] = true;
+			unset( $outcome['failure'] );
+			return $outcome;
+		}
+
+		if ( $has_artifact_changes ) {
+			$outcome['success'] = true;
+			$outcome['kind'] = 'fix_artifact';
+			$outcome['artifact'] = $artifact;
+			unset( $outcome['failure'] );
+			if ( '' !== $pr_url ) {
+				$outcome['pr_url'] = $pr_url;
+			}
+			if ( '' !== $false_positive_pr_url ) {
+				$outcome['false_positive_pr_url'] = $false_positive_pr_url;
+			}
+			return $outcome;
 		}
 
 		if ( '' !== $false_positive_pr_url ) {
@@ -956,6 +982,52 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		}
 
 		return $outcome;
+	}
+
+	/** @param array<string,mixed> $run Decoded CLI run output. */
+	private function remediation_false_positive( array $run ): bool {
+		foreach ( array_merge( array( $run ), $this->agent_payloads( $run ) ) as $payload ) {
+			if ( $this->recursive_truthy_key( $payload, 'false_positive' ) || $this->recursive_truthy_key( $payload, 'falsePositive' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
+	private function remediation_artifact_details( array $run ): array {
+		$artifacts = is_array( $run['artifacts'] ?? null ) ? $run['artifacts'] : array();
+		$directory = $this->clean_path( (string) ( $artifacts['directory'] ?? $artifacts['path'] ?? '' ) );
+		$changed_files = array();
+
+		if ( '' !== $directory ) {
+			$changed_files_path = $directory . DIRECTORY_SEPARATOR . 'files' . DIRECTORY_SEPARATOR . 'changed-files.json';
+			if ( is_readable( $changed_files_path ) ) {
+				$decoded = json_decode( (string) file_get_contents( $changed_files_path ), true );
+				foreach ( is_array( $decoded['files'] ?? null ) ? $decoded['files'] : array() as $file ) {
+					if ( is_array( $file ) ) {
+						$changed_files[] = array_filter(
+							array(
+								'path'          => (string) ( $file['path'] ?? '' ),
+								'relative_path' => (string) ( $file['relativePath'] ?? $file['relative_path'] ?? '' ),
+								'status'        => (string) ( $file['status'] ?? '' ),
+							),
+							static fn( mixed $value ): bool => '' !== $value
+						);
+					}
+				}
+			}
+		}
+
+		return array_filter(
+			array(
+				'id'            => (string) ( $artifacts['id'] ?? '' ),
+				'directory'     => $directory,
+				'changed_files' => $changed_files,
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
 	}
 
 	/** @param array<string,mixed> $run Decoded CLI run output. @return array<string,mixed> */
