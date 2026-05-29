@@ -83,9 +83,9 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.bench",
-    description: "Run plugin benchmark workloads and emit a Homeboy-compatible BenchResults envelope.",
+    description: "Run plugin benchmark workloads and emit a normalized benchmark results envelope.",
     acceptedArgs: [
-      { name: "component-id", description: "Component id for the BenchResults envelope.", format: "string" },
+      { name: "component-id", description: "Component id for the benchmark results envelope.", format: "string" },
       { name: "plugin-slug", description: "Plugin slug containing tests/bench workloads.", required: true, format: "slug" },
       { name: "iterations", description: "Measured iterations per workload.", format: "positive integer" },
       { name: "warmup", description: "Warmup iterations before measurement.", format: "non-negative integer" },
@@ -93,7 +93,7 @@ export const commandRegistry = [
       { name: "env-json", description: "Benchmark environment object.", format: "JSON object" },
       { name: "workloads-json", description: "Explicit workload list.", format: "JSON array" },
     ],
-    outputShape: "BenchResults JSON envelope with component_id, iterations, and scenarios.",
+    outputShape: "Benchmark results JSON envelope with component_id, iterations, and scenarios.",
     policyRequirement: "Runtime policy commands must include wordpress.bench.",
     recipe: true,
     handler: { kind: "playground", method: "runBench" },

@@ -24,9 +24,9 @@ the agent production access. A site owner, Studio user, CI job, eval runner, or
 chat surface can ask for a change; WP Codebox runs the work in Playground and
 returns evidence that the parent product can review.
 
-Example control planes include WordPress.com, Studio, self-hosted WordPress,
-Frontend Agent Chat, Homeboy Extensions, wp-gym, GitHub Actions, and other host
-applications. They consume WP Codebox; they do not change the sandbox contract.
+Example control planes include hosted WordPress products, local development
+tools, chat surfaces, CI jobs, GitHub Actions, and other host applications. They
+consume WP Codebox; they do not change the sandbox contract.
 
 ## Landed Contracts
 
@@ -43,10 +43,9 @@ applications. They consume WP Codebox; they do not change the sandbox contract.
   [`external-apply-adapter-contract.md`](./external-apply-adapter-contract.md).
 - **Batch/fan-out primitive:** `wp-codebox/run-agent-task-batch` launches one
   isolated sandbox per task sequentially and returns per-task artifact ids,
-  preview URLs, statuses, and errors. Homeboy audit fan-out and similar
-  orchestrators should own parent-side parallelism, track their own parent jobs,
-  pass correlation metadata into each sandbox run, and store the returned
-  artifact ids as audit evidence.
+  preview URLs, statuses, and errors. Parent orchestrators own parallelism,
+  track their own jobs, pass correlation metadata into each sandbox run, and
+  store the returned artifact ids as evidence.
 
 ## Ownership Boundaries
 

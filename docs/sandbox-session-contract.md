@@ -20,8 +20,7 @@ Disposable Playground sandbox
 ```
 
 The host WP Codebox plugin should not depend on a specific parent job system.
-Data Machine, Homeboy, DMC, Studio, or a custom host app can all be external
-orchestrators that consume the same abilities and artifact contracts.
+External orchestrators consume the same abilities and artifact contracts.
 
 ## Browser Playground Permission Model
 

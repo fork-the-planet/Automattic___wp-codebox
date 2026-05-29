@@ -62,7 +62,7 @@ and reviewer workflow records.
 ## Smoke Fixture
 
 `npm run external-adapter-contract-smoke` demonstrates the contract without
-depending on Homeboy, Data Machine Code, or any other apply-back implementation.
+depending on Data Machine Code or any other apply-back implementation.
 The fixture builds a verified artifact payload, runs a stand-in parent control
 plane adapter, and persists this external record shape:
 

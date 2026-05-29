@@ -167,7 +167,7 @@ See [External Apply Adapter Contract](../../docs/external-apply-adapter-contract
 for the parent-control-plane contract. The documented smoke fixture proves that
 an external adapter can consume the verified artifact payload and record adapter
 metadata, PR URL, branch, commit, and artifact digest without WP Codebox calling
-Homeboy, Data Machine Code, or any other product-specific apply-back system.
+Data Machine Code or any other product-specific apply-back system.
 
 ## Configuration
 
@@ -244,5 +244,5 @@ default list matches the sandbox-safe DMC abilities above; installations can
 narrow it with `wp_codebox_allowed_sandbox_tools` while parent-only abilities are
 always removed from the effective allow-list.
 
-Data Machine, Data Machine Code, Homeboy Extensions, wp-gym, and other systems
-are consumers or mounted tools. They do not own WP Codebox's artifact contract.
+Data Machine, Data Machine Code, and other systems are consumers or mounted
+tools. They do not own WP Codebox's artifact contract.

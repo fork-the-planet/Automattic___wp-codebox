@@ -2,7 +2,7 @@
 
 ## Problem
 
-Homeboy proves that isolated WordPress environments are powerful for CI, benchmarks, evidence capture, and repeatable investigations. Studio and other real-time applications need the same principle in an embeddable TypeScript shape: start a sandbox now, stream/observe work, collect artifacts, and let the user apply or discard results without waiting for CI.
+Isolated WordPress environments are powerful for CI, benchmarks, evidence capture, and repeatable investigations. Real-time applications need the same principle in an embeddable TypeScript shape: start a sandbox now, stream/observe work, collect artifacts, and let the user apply or discard results without waiting for CI.
 
 ## Proposal
 
@@ -16,7 +16,7 @@ WordPress Playground is the first backend because it provides a cheap, portable,
 
 ## Boundary
 
-- **Homeboy** remains the operator/CI/evidence harness.
+- **Parent control planes** own operator, CI, and evidence workflows.
 - **Agents API** owns agent identity, sessions, tools, and run loops.
 - **WP AI Client** owns model/provider prompt execution.
 - **Connectors API** owns external service auth and credential configuration.
