@@ -8,6 +8,7 @@ import {
   RUNTIME_EPISODE_TRACE_SCHEMA,
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
+  RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
   createRuntimeEpisode,
   validateRuntimeEpisodeTrace,
   verifyArtifactBundle,
@@ -77,7 +78,10 @@ try {
 
     const snapshot = await episode.snapshot()
     assert.match(snapshot.id, /^snapshot-/)
+    assert.equal(snapshot.schema, RUNTIME_EPISODE_SNAPSHOT_SCHEMA)
     assert.equal(snapshot.semantics, "metadata-only")
+    assert.equal(snapshot.digest?.algorithm, "sha256")
+    assert.equal(snapshot.digest?.value.length, 64)
 
     const artifacts = await episode.collectArtifacts()
     const metadata = JSON.parse(await readFile(artifacts.metadataPath, "utf8"))
@@ -110,6 +114,8 @@ try {
     assert.match(trace.id, /^trace-runtime-/)
     assert.equal(trace.steps.length, 2)
     assert.equal(trace.snapshots.length, 1)
+    assert.equal(trace.snapshots[0].schema, RUNTIME_EPISODE_SNAPSHOT_SCHEMA)
+    assert.equal(trace.snapshots[0].digest?.value, snapshot.digest?.value)
     assert.equal(trace.reset.observations.length, 1)
     assert.equal(trace.reset.observationRefs.length, 1)
     assert.equal(trace.artifacts?.id, artifacts.id)
@@ -163,6 +169,30 @@ try {
       validateRuntimeEpisodeTrace(malformedResetObservation).valid,
       false,
       "trace validator must reject malformed reset observation envelopes",
+    )
+
+    const tamperedSnapshotMetadata = structuredClone(trace)
+    tamperedSnapshotMetadata.snapshots[0].metadata = { tampered: true }
+    assert.equal(
+      validateRuntimeEpisodeTrace(tamperedSnapshotMetadata).valid,
+      false,
+      "trace validator must reject snapshots whose digest no longer matches metadata",
+    )
+
+    const missingSnapshotDigest = structuredClone(trace)
+    delete missingSnapshotDigest.snapshots[0].digest
+    assert.equal(
+      validateRuntimeEpisodeTrace(missingSnapshotDigest).valid,
+      false,
+      "trace validator must reject snapshots without digests",
+    )
+
+    const invalidSnapshotArtifactRef = structuredClone(trace)
+    invalidSnapshotArtifactRef.snapshots[0].artifactRefs = [{ kind: "runtime-state-artifact", id: "state-1" }]
+    assert.equal(
+      validateRuntimeEpisodeTrace(invalidSnapshotArtifactRef).valid,
+      false,
+      "trace validator must reject snapshot artifact refs without digests",
     )
   } finally {
     await episode.close()
