@@ -16,6 +16,7 @@ import {
   type ObservationResult,
   type RuntimeCreateSpec,
   type RuntimeInfo,
+  type Snapshot,
 } from "@chubes4/wp-codebox-core"
 import {
   ArtifactRedactor,
@@ -39,6 +40,7 @@ export interface ArtifactBundleBuilderSource {
   mounts: MountSpec[]
   commands: ExecutionResult[]
   observations: ObservationResult[]
+  snapshots: Snapshot[]
   events: LifecycleEvent[]
   info(): Promise<RuntimeInfo>
   previewInfo(createdAt: string, previewHoldSeconds?: number): Promise<ArtifactPreview | undefined>
@@ -98,6 +100,12 @@ export class ArtifactBundleBuilder {
     const preview = await source.previewInfo(createdAt, spec.previewHoldSeconds)
     const browser = source.browserReviewSummary()
     const runtime = await source.info()
+    const runtimeSnapshots = spec.includeRuntimeSnapshotBundles ? source.snapshots : []
+    const runtimeSnapshotFiles = runtimeSnapshots.flatMap((snapshot) =>
+      (snapshot.artifactRefs ?? [])
+        .filter((ref): ref is typeof ref & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
+        .map((ref) => fileEntry(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
+    )
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch } = await source.captureMountDiffs(filesDirectory, redactor)
     const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
@@ -147,6 +155,7 @@ export class ArtifactBundleBuilder {
       runtimeReferenceManifest: relative(source.artifactRoot, runtimeReferenceManifestPath),
       runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
       mountDiffs: relative(source.artifactRoot, diffsPath),
+      ...(runtimeSnapshotFiles.length > 0 ? { runtimeSnapshots: runtimeSnapshotFiles.map((file) => relative(source.artifactRoot, file.path)) } : {}),
       ...(browser ? { browser: "files/browser/summary.json" } : {}),
       ...(source.pluginCheckArtifactPaths().length > 0 ? { pluginChecks: source.pluginCheckArtifactPaths() } : {}),
       ...(source.themeCheckArtifactPaths().length > 0 ? { themeChecks: source.themeCheckArtifactPaths() } : {}),
@@ -187,6 +196,7 @@ export class ArtifactBundleBuilder {
       ...source.observationManifestFiles(),
       ...source.pluginCheckManifestFiles(),
       ...source.themeCheckManifestFiles(),
+      ...runtimeSnapshotFiles,
       ...mountDiffs.map((diff) => fileEntry(join(source.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         fileEntry(join(source.artifactRoot, file.artifactPath), "file", file.contentType),
@@ -258,6 +268,7 @@ export class ArtifactBundleBuilder {
       files: manifest.files
         .filter((file) => !["manifest.json", "metadata.json", "files/review.json", "files/runtime-reference-manifest.json", "files/runtime-replay-index.json"].includes(file.path))
         .map((file) => ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
+      snapshots: runtimeSnapshots,
     })
     await writeFile(runtimeReferenceManifestPath, `${JSON.stringify(runtimeReferenceManifest, null, 2)}\n`)
     const runtimeReferenceManifestRef = {
@@ -281,6 +292,7 @@ export class ArtifactBundleBuilder {
         .filter((file) => !["manifest.json", "files/runtime-replay-index.json"].includes(file.path))
         .map((file) => file.path === "files/runtime-reference-manifest.json" ? runtimeReferenceManifestRef : ({ path: file.path, kind: file.kind, contentType: file.contentType, sha256: file.sha256 })),
       runtimeReferenceManifest: runtimeReferenceManifestRef,
+      snapshots: runtimeSnapshots,
     })
     await writeFile(runtimeReplayReferenceIndexPath, `${JSON.stringify(runtimeReplayReferenceIndex, null, 2)}\n`)
     manifest.files = await Promise.all(manifest.files.map(async (file) => file.path === "files/runtime-reference-manifest.json" ? ({
