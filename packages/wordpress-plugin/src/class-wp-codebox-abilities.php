@@ -299,11 +299,22 @@ final class WP_Codebox_Abilities {
 							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
 							'policy'             => $task_input_schema['properties']['policy'],
 							'context'            => $task_input_schema['properties']['context'],
+							'provider_plugin_paths' => array(
+								'type'        => 'array',
+								'description' => 'AI provider plugin directories the browser sandbox should have available before code execution.',
+								'items'       => array( 'type' => 'string' ),
+							),
+							'inherit'            => $inherit_schema,
+							'secret_env'         => array(
+								'type'        => 'array',
+								'description' => 'Parent environment variable names expected to be available to the browser sandbox. Values are never accepted in this payload.',
+								'items'       => array( 'type' => 'string' ),
+							),
 							'sandbox_session_id' => $session_input['sandbox_session_id'],
 							'orchestrator'       => $session_input['orchestrator'],
 							'playground'         => array(
 								'type'        => 'object',
-								'description' => 'Optional browser Playground client configuration overrides.',
+								'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
 							),
 							'browser_runner'     => array(
 								'type'        => 'object',
@@ -685,6 +696,7 @@ final class WP_Codebox_Abilities {
 				'task_input' => self::task_input_schema(),
 				'playground' => array( 'type' => 'object' ),
 				'recipe'     => array( 'type' => 'object' ),
+				'signals'    => array( 'type' => 'object' ),
 				'artifacts'  => array( 'type' => 'object' ),
 			),
 		);
@@ -770,6 +782,7 @@ final class WP_Codebox_Abilities {
 		if ( is_wp_error( $artifacts ) ) {
 			return $artifacts;
 		}
+		$ready_to_code = self::browser_ready_to_code_signal( $input );
 
 		$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground );
 		if ( is_wp_error( $recipe ) ) {
@@ -791,11 +804,14 @@ final class WP_Codebox_Abilities {
 			'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 			'plugins'    => $browser_plugins,
 			'playground' => array(
-				'client_module_url' => (string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
-				'remote_url'        => (string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
-				'scope'             => (string) ( $playground['scope'] ?? $session_id ),
-				'blueprint'         => self::browser_playground_blueprint( $blueprint, $playground ),
-				'capabilities'      => array(
+				'client_module_url'  => (string) ( $playground['client_module_url'] ?? 'https://playground.automattic.ai/client/index.js' ),
+				'remote_url'         => (string) ( $playground['remote_url'] ?? 'https://playground.automattic.ai/remote.html' ),
+				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
+				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
+				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
+				'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
+				'blueprint'          => self::browser_playground_blueprint( $blueprint, $playground ),
+				'capabilities'       => array(
 					'compile_blueprint' => true,
 					'run_blueprint'     => true,
 					'write_file'        => true,
@@ -803,12 +819,83 @@ final class WP_Codebox_Abilities {
 				),
 			),
 			'recipe'     => $recipe,
+			'signals'    => array(
+				'ready_to_code' => $ready_to_code,
+			),
 			'artifacts'  => array(
 				'schema'             => 'wp-codebox/browser-artifacts/v1',
 				'files'              => $artifacts,
+				'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
 				'expected_artifacts' => $task_input['expected_artifacts'],
 			),
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private static function browser_ready_to_code_signal( array $input ): array {
+		$provider_plugin_paths = array_values(
+			array_filter(
+				array_map( 'strval', is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : array() ),
+				static fn( string $path ): bool => '' !== trim( $path )
+			)
+		);
+		$inherit      = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
+		$connectors   = array_values( array_filter( array_map( 'strval', is_array( $inherit['connectors'] ?? null ) ? $inherit['connectors'] : array() ) ) );
+		$secret_env   = array_values( array_filter( array_map( 'strval', is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array() ) ) );
+		$requirements = array(
+			'agents_api'        => self::agents_api_ready(),
+			'data_machine'      => self::plugin_path_ready( 'data-machine' ),
+			'data_machine_code' => self::plugin_path_ready( 'data-machine-code' ),
+			'provider_plugin'   => ! empty( $provider_plugin_paths ) && self::all_paths_ready( $provider_plugin_paths ),
+			'provider_secret'   => ! empty( $connectors ) || ! empty( $secret_env ),
+		);
+
+		/**
+		 * Filters browser sandbox readiness requirements before the signal is emitted.
+		 *
+		 * @param array<string,bool>  $requirements Named readiness checks.
+		 * @param array<string,mixed> $input        Ability input.
+		 */
+		$requirements = apply_filters( 'wp_codebox_browser_ready_to_code_requirements', $requirements, $input );
+		$requirements = is_array( $requirements ) ? array_map( 'boolval', $requirements ) : array();
+		$missing      = array_keys( array_filter( $requirements, static fn( bool $ready ): bool => ! $ready ) );
+		$emitted      = empty( $missing );
+
+		return array(
+			'schema'       => 'wp-codebox/signal/v1',
+			'name'         => 'ready_to_code',
+			'emitted'      => $emitted,
+			'message'      => $emitted ? 'Browser Playground sandbox is ready to code.' : 'Browser Playground sandbox is not ready to code.',
+			'requirements' => $requirements,
+			'missing'      => $missing,
+		);
+	}
+
+	private static function agents_api_ready(): bool {
+		if ( ! function_exists( 'wp_get_ability' ) ) {
+			return false;
+		}
+
+		return (bool) wp_get_ability( 'agents/chat' );
+	}
+
+	private static function plugin_path_ready( string $plugin_slug ): bool {
+		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
+			return false;
+		}
+
+		return is_dir( rtrim( WP_PLUGIN_DIR, '/\\' ) . '/' . $plugin_slug );
+	}
+
+	/** @param array<int,string> $paths Paths to verify. */
+	private static function all_paths_ready( array $paths ): bool {
+		foreach ( $paths as $path ) {
+			if ( ! is_dir( $path ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -879,7 +966,10 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,string>>|WP_Error */
 	private static function browser_artifact_files( array $input ): array|WP_Error {
-		$files = is_array( $input['artifact_files'] ?? null ) ? $input['artifact_files'] : array();
+		$files      = is_array( $input['artifact_files'] ?? null ) ? $input['artifact_files'] : array();
+		$playground = is_array( $input['playground'] ?? null ) ? $input['playground'] : array();
+		$base_path  = self::browser_artifact_base_path( $playground );
+		$base_url   = self::browser_artifact_base_url( $playground );
 		$normalized = array();
 		foreach ( $files as $index => $file ) {
 			if ( ! is_array( $file ) ) {
@@ -892,10 +982,12 @@ final class WP_Codebox_Abilities {
 			}
 
 			$normalized[] = array(
-				'path'        => $path,
-				'content'     => (string) ( $file['content'] ?? '' ),
-				'kind'        => (string) ( $file['kind'] ?? 'text' ),
-				'description' => (string) ( $file['description'] ?? '' ),
+				'path'            => $path,
+				'playground_path' => self::join_browser_path( $base_path, $path ),
+				'url_path'        => self::join_browser_path( $base_url, $path ),
+				'content'         => (string) ( $file['content'] ?? '' ),
+				'kind'            => (string) ( $file['kind'] ?? 'text' ),
+				'description'     => (string) ( $file['description'] ?? '' ),
 			);
 		}
 
@@ -1099,6 +1191,37 @@ if ( ! $ability instanceof WP_Ability ) {
 file_put_contents( $result_path, wp_json_encode( $result ) );
 echo wp_json_encode( $result );
 ';
+	}
+
+	/** @param array<string,mixed> $playground Playground config. */
+	private static function browser_artifact_base_path( array $playground ): string {
+		return self::normalize_absolute_browser_path( (string) ( $playground['artifact_base_path'] ?? '/wordpress/wp-content/uploads/wp-codebox/artifacts' ) );
+	}
+
+	/** @param array<string,mixed> $playground Playground config. */
+	private static function browser_artifact_base_url( array $playground ): string {
+		return self::normalize_absolute_browser_path( (string) ( $playground['artifact_base_url'] ?? '/wp-content/uploads/wp-codebox/artifacts' ) );
+	}
+
+	/** @param array<int,array<string,string>> $artifacts Artifact files. @param array<string,mixed> $playground Playground config. */
+	private static function browser_preview_url( array $artifacts, array $playground ): string {
+		$preview_url = trim( (string) ( $playground['preview_url'] ?? '' ) );
+		if ( '' !== $preview_url ) {
+			return self::normalize_absolute_browser_path( $preview_url );
+		}
+
+		$first_file = $artifacts[0]['url_path'] ?? '';
+		return '' !== $first_file ? $first_file : '/';
+	}
+
+	private static function normalize_absolute_browser_path( string $path ): string {
+		$path = '/' . ltrim( trim( $path ), '/' );
+		$path = rtrim( $path, '/' );
+		return '' === $path ? '/' : $path;
+	}
+
+	private static function join_browser_path( string $base, string $path ): string {
+		return rtrim( $base, '/' ) . '/' . ltrim( $path, '/' );
 	}
 
 	/** @param array<string,mixed> $blueprint Blueprint override. @param array<string,mixed> $playground Playground config. @return array<string,mixed> */

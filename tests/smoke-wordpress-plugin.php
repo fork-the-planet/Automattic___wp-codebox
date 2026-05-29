@@ -33,6 +33,7 @@ $GLOBALS['wp_codebox_registered_ability_categories'] = array();
 $GLOBALS['wp_codebox_actions']                      = array();
 $GLOBALS['wp_codebox_current_action']              = null;
 $GLOBALS['wp_codebox_filters']                      = array();
+$GLOBALS['wp_codebox_mock_abilities']              = array();
 $GLOBALS['wp_codebox_options']                      = array();
 $GLOBALS['wp_codebox_site_options']                 = array();
 
@@ -51,6 +52,7 @@ function wp_register_ability_category( string $slug, array $args ): void {
 
 	$GLOBALS['wp_codebox_registered_ability_categories'][ $slug ] = $args;
 }
+function wp_get_ability( string $name ): mixed { return $GLOBALS['wp_codebox_mock_abilities'][ $name ] ?? null; }
 
 function doing_action( string $hook ): bool {
 	return $hook === $GLOBALS['wp_codebox_current_action'];
@@ -188,23 +190,28 @@ $GLOBALS['wp_codebox_filters']['wp_codebox_default_agent'] = 'site-coder';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model'] = 'gpt-5.5';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_secret_env'] = array( 'OPENAI_API_KEY' );
+$GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
+mkdir( $root . '/plugin-root/data-machine', 0777, true );
+mkdir( $root . '/plugin-root/data-machine-code', 0777, true );
 
 $browser_session = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(
-		'goal'               => 'Prepare a Studio Web browser preview.',
-		'sandbox_session_id' => 'browser-session-123',
-		'target'             => array( 'kind' => 'static-site' ),
-		'allowed_tools'      => array( 'filesystem-write', 'filesystem-write', '' ),
-		'expected_artifacts' => array( 'static-site' ),
-		'orchestrator'       => array( 'id' => 'studio-web' ),
-		'browser_plugins'    => array(
+		'goal'                  => 'Prepare a Studio Web browser preview.',
+		'sandbox_session_id'    => 'browser-session-123',
+		'target'                => array( 'kind' => 'static-site' ),
+		'allowed_tools'         => array( 'filesystem-write', 'filesystem-write', '' ),
+		'expected_artifacts'    => array( 'static-site' ),
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'inherit'               => array( 'connectors' => array( 'openai' ) ),
+		'orchestrator'          => array( 'id' => 'studio-web' ),
+		'browser_plugins'       => array(
 			array(
 				'slug' => 'agents-api',
 				'url'  => 'https://example.test/agents-api.zip',
 			),
 		),
-		'artifact_files'     => array(
+		'artifact_files'        => array(
 			array(
 				'path'    => 'static-site/index.html',
 				'content' => '<main>Preview</main>',
@@ -222,8 +229,42 @@ $assert( 'browser Playground session defaults to latest WordPress and PHP', ! is
 $assert( 'browser Playground session installs browser plugins', ! is_wp_error( $browser_session ) && 'installPlugin' === ( $browser_session['playground']['blueprint']['steps'][0]['step'] ?? '' ) && 'https://example.test/agents-api.zip' === ( $browser_session['playground']['blueprint']['steps'][0]['pluginData']['url'] ?? '' ) );
 $assert( 'browser Playground session includes recipe', ! is_wp_error( $browser_session ) && 'wp-codebox/workspace-recipe/v1' === ( $browser_session['recipe']['schema'] ?? '' ) );
 $assert( 'browser Playground recipe calls agents/chat inside site', ! is_wp_error( $browser_session ) && str_contains( (string) ( $browser_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), "wp_get_ability( 'agents/chat' )" ) );
+$assert( 'browser Playground session emits ready-to-code signal only when prerequisites are present', ! is_wp_error( $browser_session ) && true === ( $browser_session['signals']['ready_to_code']['emitted'] ?? false ) && 'ready_to_code' === ( $browser_session['signals']['ready_to_code']['name'] ?? '' ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['agents_api'] ?? false ) && true === ( $browser_session['signals']['ready_to_code']['requirements']['provider_secret'] ?? false ) );
 $assert( 'browser Playground session preserves safe artifact files', ! is_wp_error( $browser_session ) && 'static-site/index.html' === ( $browser_session['artifacts']['files'][0]['path'] ?? '' ) );
+$assert( 'browser Playground session exposes artifact write paths', ! is_wp_error( $browser_session ) && '/wordpress/wp-content/uploads/wp-codebox/artifacts/static-site/index.html' === ( $browser_session['artifacts']['files'][0]['playground_path'] ?? '' ) );
+$assert( 'browser Playground session exposes artifact URL paths', ! is_wp_error( $browser_session ) && '/wp-content/uploads/wp-codebox/artifacts/static-site/index.html' === ( $browser_session['artifacts']['files'][0]['url_path'] ?? '' ) );
+$assert( 'browser Playground session exposes preview URL', ! is_wp_error( $browser_session ) && '/wp-content/uploads/wp-codebox/artifacts/static-site/index.html' === ( $browser_session['playground']['preview_url'] ?? '' ) && '/wp-content/uploads/wp-codebox/artifacts/static-site/index.html' === ( $browser_session['artifacts']['preview_url'] ?? '' ) );
 $assert( 'browser Playground session normalizes task input lists', ! is_wp_error( $browser_session ) && array( 'filesystem-write' ) === ( $browser_session['task_input']['allowed_tools'] ?? array() ) );
+
+$browser_session_missing_prereqs = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal' => 'Prepare a browser preview without coding prerequisites.',
+	)
+);
+$assert( 'browser Playground session with missing prerequisites does not emit ready-to-code', ! is_wp_error( $browser_session_missing_prereqs ) && false === ( $browser_session_missing_prereqs['signals']['ready_to_code']['emitted'] ?? true ) && in_array( 'provider_plugin', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) && in_array( 'provider_secret', $browser_session_missing_prereqs['signals']['ready_to_code']['missing'] ?? array(), true ) );
+rmdir( $root . '/plugin-root/data-machine-code' );
+rmdir( $root . '/plugin-root/data-machine' );
+
+$custom_browser_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'           => 'Prepare a custom browser preview.',
+		'playground'     => array(
+			'artifact_base_path' => '/wordpress/wp-content/uploads/studio-web',
+			'artifact_base_url'  => '/wp-content/uploads/studio-web',
+			'preview_url'        => '/wp-content/uploads/studio-web/static-site/index.html',
+		),
+		'artifact_files' => array(
+			array(
+				'path'    => 'static-site/index.html',
+				'content' => '<main>Custom</main>',
+			),
+		),
+	)
+);
+$assert( 'browser Playground session honors custom artifact base path', ! is_wp_error( $custom_browser_session ) && '/wordpress/wp-content/uploads/studio-web/static-site/index.html' === ( $custom_browser_session['artifacts']['files'][0]['playground_path'] ?? '' ) );
+$assert( 'browser Playground session honors custom preview URL', ! is_wp_error( $custom_browser_session ) && '/wp-content/uploads/studio-web/static-site/index.html' === ( $custom_browser_session['playground']['preview_url'] ?? '' ) );
 
 $invalid_browser_file = call_user_func(
 	$browser_session_ability['execute_callback'],
