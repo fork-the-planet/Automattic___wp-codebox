@@ -23,7 +23,7 @@ Any host: CLI, CI, mobile, Node service, WP plugin, GitHub Action, ...
 What you can build on top of WP Codebox:
 
 - **Agentic coding against a WordPress site.** Let users describe a change in chat — from any host: a WordPress plugin, a mobile app, a desktop tool, a Slack/Discord bot. Dispatch a sandbox with the target site's stack mounted, capture an artifact with a live Playground preview URL, then let the parent control plane review, apply, and open any PR. The contributor never needs shell access.
-- **Agent training and evaluation.** Run the same WordPress task side by side across multiple models in isolated Playground workspaces. Capture each model's output, grade against hidden quality checks, and produce per-model PRs as review surface. See [wp-gym](https://github.com/Automattic/wp-gym).
+- **Agent training and evaluation.** Run the same WordPress task side by side across multiple models in isolated Playground workspaces. Capture each model's output, grade against hidden quality checks, and produce per-model review artifacts. Example implementation: [wp-gym](https://github.com/Automattic/wp-gym).
 - **Long-running terrariums.** Boot a Playground that an agent evolves over time — software, content, configuration — with day-cycle automation driven from CI. See [world-of-wordpress](https://github.com/chubes4/world-of-wordpress).
 - **Static-site / WordPress-import factories.** Generate raw HTML/CSS sites in CI, validate them via Playground + WordPress import, post Playground preview links as PR evidence. See [wp-site-generator](https://github.com/chubes4/wp-site-generator).
 - **Untrusted patch evaluation.** Plugin and theme authors can accept community-submitted patches, run them in a sandbox, capture artifacts (diffs, test results, screenshots), and review before merging. The reviewing tool can be anything.
@@ -597,7 +597,7 @@ Supported workspace seeds:
 
 ### Bench Recipes
 
-Run `wordpress.bench` from a recipe workflow to execute plugin `tests/bench/*.php` workloads in a disposable WP Codebox runtime and emit the Homeboy-compatible `BenchResults` envelope.
+Run `wordpress.bench` from a recipe workflow to execute plugin `tests/bench/*.php` workloads in a disposable WP Codebox runtime and emit a normalized benchmark results envelope.
 
 ```bash
 npm run wp-codebox -- recipe-run \
@@ -840,7 +840,7 @@ Data Machine Code is a mounted coding-tools component inside the sandbox. It pro
 
 Apply-back is intentionally not part of `run-agent-task`. Sandbox execution returns proposed outputs and evidence. `list-artifacts`, `get-artifact`, and `discard-artifact` manage captured artifact bundles under the configured artifact root. `apply-approved-artifact` is the lower-level adapter/test API: it validates `artifact_id` plus an explicit `approved_files[]` list against canonical `changed-files.json`, recomputes the artifact content digest from `changed-files.json` and the exact `patch.diff` the reviewer approved, delegates to the `wp_codebox_apply_approved_artifact` filter, and requires the adapter to return `wp-codebox/apply-result/v1`. PR creation, direct deploy, package export, and bot identity policy live in adapters behind that reviewed boundary.
 
-When Data Machine is present, prefer `stage-artifact-apply` for user-facing apply flows. It stages that same apply input as a Data Machine pending action with kind `wp_codebox_apply_back`. Its preview includes `files/review.json`, canonical changed files, normalized test results, and the explicit approved file list. Accepting the pending action resolves through Data Machine's generic resolver and calls the existing `apply-approved-artifact` path; rejecting it leaves the artifact untouched. This keeps approval lifecycle in Data Machine without making WP Codebox depend on Homeboy or any site-specific apply adapter.
+When Data Machine is present, prefer `stage-artifact-apply` for user-facing apply flows. It stages that same apply input as a Data Machine pending action with kind `wp_codebox_apply_back`. Its preview includes `files/review.json`, canonical changed files, normalized test results, and the explicit approved file list. Accepting the pending action resolves through Data Machine's generic resolver and calls the existing `apply-approved-artifact` path; rejecting it leaves the artifact untouched. This keeps approval lifecycle in Data Machine without making WP Codebox depend on any site-specific apply adapter.
 
 ## Runtime Policy
 
@@ -881,7 +881,7 @@ WP Codebox does not own:
 - Agent identity, sessions, or model loop internals. Agents API and Data Machine own those.
 - Model provider authentication. Provider plugins and parent control planes own credentials.
 - Production mutation or deploy. Apply-back must be separate and reviewed.
-- CI/eval orchestration. Homeboy, wp-gym, or other consumers can invoke WP Codebox.
+- CI/eval orchestration. Parent control planes and other consumers can invoke WP Codebox; Homeboy is one example orchestrator.
 - Frontend review UX. WP Codebox should produce renderable artifacts for those UIs.
 
 ## Near-Term Gaps
@@ -893,6 +893,6 @@ WP Codebox does not own:
 
 ## Development Notes
 
-- Keep the runtime contract consumer-agnostic. Data Machine, Homeboy, Studio, wp-gym, and WordPress.com are consumers or mounted tools, not owners of the core artifact contract.
+- Keep the runtime contract consumer-agnostic. Parent control planes and mounted tools consume WP Codebox; they do not own the core artifact contract. Examples include Homeboy as an orchestrator and wp-gym as an evaluation implementation.
 - Prefer small seams: runtime lifecycle, command handlers, artifact capture, recipes, WordPress integration, and apply-back should stay separate.
 - When adding a new command or artifact type, update this README and `npm run check`.

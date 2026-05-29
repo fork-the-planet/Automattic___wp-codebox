@@ -201,7 +201,7 @@ if (interface_exists('DataMachine\\Engine\\AI\\Directives\\DirectiveInterface') 
             if ($depth > self::TREE_MAX_DEPTH) {
                 return array();
             }
-            $ignored = array('.git', 'node_modules', 'vendor', 'dist', 'build', '.homeboy-build');
+            $ignored = array('.git', 'node_modules', 'vendor', 'dist', 'build');
             $items = scandir($current);
             if (false === $items) {
                 return array();
