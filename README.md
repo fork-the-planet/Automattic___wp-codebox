@@ -398,21 +398,24 @@ the trace. Backend behavior still matters: command availability, WordPress
 version, installed packages, mounted files, network policy, and secrets policy
 must be reproduced by the replay harness.
 
-Runtime snapshots are explicit about their semantics. The current Playground
-backend returns `semantics: "metadata-only"`, which records runtime and mount
-metadata for audit context but is not a full replayable WordPress state image.
-These snapshots are trace markers, not database or filesystem checkpoints. Call
-`collectArtifacts()` when the caller needs replay inputs, changed files, patches,
-logs, observations, and artifact bundle refs. Future backends may emit stronger
-snapshot semantics such as runtime-state artifacts, but replay consumers should
-branch on the snapshot `semantics` field instead of assuming a portable restore
-point.
+Runtime snapshots are explicit about their semantics. The Playground backend
+returns `semantics: "runtime-state-artifact"` for generic WordPress runtime
+snapshots. The snapshot artifact declares `wp-codebox/wordpress-runtime-snapshot/v1`
+and captures database tables, `wp-content` files, mounted input metadata, active
+theme/plugins, WordPress/PHP compatibility metadata, and SHA-256 hashes. Call
+`restoreRuntime(snapshot, backend, { runtime, mounts })` to restore a compatible
+snapshot into a fresh runtime. The primitive is intentionally generic WordPress
+state capture: caller-specific scoring, evaluation, and success semantics belong
+outside WP Codebox.
+
+`collectArtifacts({ includeRuntimeSnapshotBundles: true })` includes snapshot
+artifact refs in the artifact manifest and runtime reference indexes. Consumers
+should branch on the snapshot `semantics` field and verify artifact hashes before
+restore or replay.
 
 The runtime reference manifest repeats each snapshot's `semantics` and adds an
-explicit `replay.status`. For current Playground snapshots that status is
-`metadata-only` with limitations explaining that replay must come from trace
-actions and artifact files. This keeps full WordPress replay as an incremental
-backend capability while giving consumers a concrete contract today.
+explicit `replay.status`. For Playground runtime-state artifacts that status is
+`runtime-state-artifact`, with snapshot artifact refs available for restore.
 
 ## CLI Commands
 

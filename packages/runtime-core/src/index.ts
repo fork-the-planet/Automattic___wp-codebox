@@ -1188,6 +1188,11 @@ export interface Snapshot {
   digest?: RuntimeEpisodeContentDigest
 }
 
+export interface RuntimeRestoreSpec {
+  runtime?: RuntimeCreateSpec
+  mounts?: MountSpec[]
+}
+
 export interface ArtifactSpec {
   includeFiles?: boolean
   includeLogs?: boolean
@@ -2422,6 +2427,7 @@ export class RuntimeActionPolicyError extends Error {
 export interface RuntimeBackend {
   readonly kind: RuntimeBackendKind
   create(spec: RuntimeCreateSpec): Promise<Runtime>
+  restore?(snapshot: Snapshot, spec?: RuntimeRestoreSpec): Promise<Runtime>
 }
 
 export class RuntimePolicyValidationError extends Error {
@@ -3241,6 +3247,14 @@ export async function createRuntime(spec: RuntimeCreateSpec, backend: RuntimeBac
   }
 
   return backend.create(spec)
+}
+
+export async function restoreRuntime(snapshot: Snapshot, backend: RuntimeBackend, spec?: RuntimeRestoreSpec): Promise<Runtime> {
+  if (!backend.restore) {
+    throw new Error(`Backend ${backend.kind} does not support runtime snapshot restore`)
+  }
+
+  return backend.restore(snapshot, spec)
 }
 
 export async function createRuntimeEpisode(spec: RuntimeEpisodeSpec, backend: RuntimeBackend): Promise<RuntimeEpisode> {
