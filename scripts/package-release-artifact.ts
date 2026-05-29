@@ -8,41 +8,42 @@ import { promisify } from "node:util"
 const execFileAsync = promisify(execFile)
 const repoRoot = resolve(import.meta.dirname, "..")
 const releaseRoot = resolve(repoRoot, "dist", "release")
-const packageRoot = join(releaseRoot, "wp-codebox-cli")
+const stagingReleaseRoot = await mkdtemp(join(tmpdir(), "wp-codebox-release-"))
+const packageRoot = join(stagingReleaseRoot, "wp-codebox-cli")
 const platformName = process.env.WP_CODEBOX_RELEASE_PLATFORM ?? normalizePlatform(platform())
 const archName = process.env.WP_CODEBOX_RELEASE_ARCH ?? normalizeArch(arch())
 const nodeRuntimeVersion = process.env.WP_CODEBOX_NODE_RUNTIME_VERSION ?? "24.16.0"
 const artifactName = `wp-codebox-cli-${platformName}-${archName}.tar.gz`
 const artifactPath = resolve(repoRoot, "dist", artifactName)
 
-await execFileAsync("npm", ["run", "build"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
+try {
+  await execFileAsync("npm", ["run", "build"], { cwd: repoRoot, maxBuffer: 1024 * 1024 * 10 })
 
-await rm(releaseRoot, { recursive: true, force: true })
-await mkdir(packageRoot, { recursive: true })
+  await mkdir(packageRoot, { recursive: true })
 
-await copyIfPresent("README.md")
-await copyIfPresent("LICENSE")
-await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
-await cp(resolve(repoRoot, "package-lock.json"), join(packageRoot, "package-lock.json"))
+  await copyIfPresent("README.md")
+  await copyIfPresent("LICENSE")
+  await cp(resolve(repoRoot, "package.json"), join(packageRoot, "package.json"))
+  await cp(resolve(repoRoot, "package-lock.json"), join(packageRoot, "package-lock.json"))
 
-for (const packageName of ["runtime-core", "runtime-playground", "cli"]) {
-  const sourceRoot = resolve(repoRoot, "packages", packageName)
-  const targetRoot = join(packageRoot, "packages", packageName)
-  await mkdir(targetRoot, { recursive: true })
-  await cp(join(sourceRoot, "package.json"), join(targetRoot, "package.json"))
-  await cp(join(sourceRoot, "dist"), join(targetRoot, "dist"), { recursive: true })
-}
+  for (const packageName of ["runtime-core", "runtime-playground", "cli"]) {
+    const sourceRoot = resolve(repoRoot, "packages", packageName)
+    const targetRoot = join(packageRoot, "packages", packageName)
+    await mkdir(targetRoot, { recursive: true })
+    await cp(join(sourceRoot, "package.json"), join(targetRoot, "package.json"))
+    await cp(join(sourceRoot, "dist"), join(targetRoot, "dist"), { recursive: true })
+  }
 
-await execFileAsync("npm", ["install", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
-  cwd: packageRoot,
-  maxBuffer: 1024 * 1024 * 20,
-})
-await bundleNodeRuntime(packageRoot, platformName, archName)
+  await execFileAsync("npm", ["install", "--omit=dev", "--omit=optional", "--ignore-scripts", "--no-fund", "--no-audit"], {
+    cwd: packageRoot,
+    maxBuffer: 1024 * 1024 * 20,
+  })
+  await bundleNodeRuntime(packageRoot, platformName, archName)
 
-const binDir = join(packageRoot, "bin")
-await mkdir(binDir, { recursive: true })
-const binPath = join(binDir, "wp-codebox")
-await writeFile(binPath, `#!/usr/bin/env bash
+  const binDir = join(packageRoot, "bin")
+  await mkdir(binDir, { recursive: true })
+  const binPath = join(binDir, "wp-codebox")
+  await writeFile(binPath, `#!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 NODE_BIN="\${WP_CODEBOX_NODE_BIN:-}"
@@ -60,14 +61,21 @@ if [ -z "\${NODE_BIN}" ]; then
 fi
 exec "\${NODE_BIN}" "\${SCRIPT_DIR}/../packages/cli/dist/index.js" "$@"
 `)
-await chmod(binPath, 0o755)
+  await chmod(binPath, 0o755)
 
-await execFileAsync("tar", ["-czf", artifactPath, "-C", releaseRoot, "wp-codebox-cli"], {
-  cwd: repoRoot,
-  maxBuffer: 1024 * 1024 * 10,
-})
+  await rm(releaseRoot, { recursive: true, force: true })
+  await mkdir(releaseRoot, { recursive: true })
+  await cp(packageRoot, join(releaseRoot, "wp-codebox-cli"), { recursive: true })
 
-process.stdout.write(JSON.stringify([{ path: `dist/${artifactName}`, type: "node-cli-tarball", platform: `${platformName}-${archName}` }]) + "\n")
+  await execFileAsync("tar", ["-czf", artifactPath, "-C", stagingReleaseRoot, "wp-codebox-cli"], {
+    cwd: repoRoot,
+    maxBuffer: 1024 * 1024 * 10,
+  })
+
+  process.stdout.write(JSON.stringify([{ path: `dist/${artifactName}`, type: "node-cli-tarball", platform: `${platformName}-${archName}` }]) + "\n")
+} finally {
+  await rm(stagingReleaseRoot, { recursive: true, force: true })
+}
 
 async function copyIfPresent(relativePath: string): Promise<void> {
   try {
