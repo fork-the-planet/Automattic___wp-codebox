@@ -9,6 +9,7 @@ export type RuntimeBackendKind = "wordpress-playground" | (string & {})
 export const RUNTIME_EPISODE_TRACE_SCHEMA = "wp-codebox/runtime-episode-trace/v1" as const
 export const RUNTIME_EPISODE_ACTION_SCHEMA = "wp-codebox/runtime-episode-action/v1" as const
 export const RUNTIME_EPISODE_OBSERVATION_SCHEMA = "wp-codebox/runtime-episode-observation/v1" as const
+export const RUNTIME_EPISODE_SNAPSHOT_SCHEMA = "wp-codebox/runtime-episode-snapshot/v1" as const
 
 export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
   $id: RUNTIME_EPISODE_TRACE_SCHEMA,
@@ -59,7 +60,7 @@ export const RUNTIME_EPISODE_TRACE_JSON_SCHEMA = {
     },
     snapshots: {
       type: "array",
-      items: { type: "object", required: ["id", "createdAt", "semantics", "metadata"] },
+      items: { type: "object", required: ["schema", "id", "createdAt", "semantics", "metadata", "digest"] },
     },
     artifacts: { type: "object" },
     artifactRef: { type: "object", required: ["kind", "id"] },
@@ -502,11 +503,13 @@ export interface LifecycleEvent {
 }
 
 export interface Snapshot {
+  schema?: typeof RUNTIME_EPISODE_SNAPSHOT_SCHEMA
   id: string
   createdAt: string
   semantics?: "metadata-only" | "runtime-state-artifact" | (string & {})
   metadata: Record<string, unknown>
   artifactRefs?: RuntimeEpisodeTraceRef[]
+  digest?: RuntimeEpisodeContentDigest
 }
 
 export interface ArtifactSpec {
@@ -1388,6 +1391,17 @@ function runtimeEpisodeObservationDigestPayload(observation: ObservationResult):
   }
 }
 
+function runtimeEpisodeSnapshotDigestPayload(snapshot: Snapshot): Record<string, unknown> {
+  return {
+    schema: RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
+    id: snapshot.id,
+    createdAt: snapshot.createdAt,
+    semantics: snapshot.semantics,
+    metadata: snapshot.metadata,
+    artifactRefs: snapshot.artifactRefs ?? [],
+  }
+}
+
 export function validateRuntimeEpisodeTrace(trace: unknown): RuntimeEpisodeTraceValidationResult {
   const issues: RuntimeEpisodeTraceValidationIssue[] = []
   const candidate = trace as Partial<RuntimeEpisodeTrace> | null
@@ -1440,14 +1454,7 @@ export function validateRuntimeEpisodeTrace(trace: unknown): RuntimeEpisodeTrace
   if (!Array.isArray(candidate.snapshots)) {
     issues.push({ path: "$.snapshots", message: "snapshots must be an array" })
   } else {
-    candidate.snapshots.forEach((snapshot, index) => {
-      if (!nonEmptyString(snapshot.id)) {
-        issues.push({ path: `$.snapshots[${index}].id`, message: "snapshot id is required" })
-      }
-      if (!nonEmptyString(snapshot.semantics)) {
-        issues.push({ path: `$.snapshots[${index}].semantics`, message: "snapshot semantics are required" })
-      }
-    })
+    candidate.snapshots.forEach((snapshot, index) => validateRuntimeEpisodeSnapshot(snapshot, `$.snapshots[${index}]`, issues))
   }
 
   collectForbiddenRuntimeEpisodeTraceFields(candidate, "$", issues)
@@ -1576,10 +1583,53 @@ function validateRuntimeEpisodeObservation(
   }
 }
 
+function validateRuntimeEpisodeSnapshot(
+  snapshot: Snapshot | unknown,
+  path: string,
+  issues: RuntimeEpisodeTraceValidationIssue[],
+): void {
+  if (!isRecord(snapshot)) {
+    issues.push({ path, message: "snapshot must be an object" })
+    return
+  }
+
+  if (snapshot.schema !== RUNTIME_EPISODE_SNAPSHOT_SCHEMA) {
+    issues.push({ path: `${path}.schema`, message: `snapshot schema must be ${RUNTIME_EPISODE_SNAPSHOT_SCHEMA}` })
+  }
+  if (!nonEmptyString(snapshot.id)) {
+    issues.push({ path: `${path}.id`, message: "snapshot id is required" })
+  }
+  if (!nonEmptyString(snapshot.createdAt)) {
+    issues.push({ path: `${path}.createdAt`, message: "snapshot createdAt is required" })
+  }
+  if (!nonEmptyString(snapshot.semantics)) {
+    issues.push({ path: `${path}.semantics`, message: "snapshot semantics are required" })
+  }
+  if (!isRecord(snapshot.metadata)) {
+    issues.push({ path: `${path}.metadata`, message: "snapshot metadata must be an object" })
+  }
+  if (snapshot.artifactRefs !== undefined) {
+    if (!Array.isArray(snapshot.artifactRefs)) {
+      issues.push({ path: `${path}.artifactRefs`, message: "snapshot artifactRefs must be an array when present" })
+    } else {
+      snapshot.artifactRefs.forEach((ref, index) => validateRuntimeEpisodeTraceRef(ref, `${path}.artifactRefs[${index}]`, undefined, issues))
+    }
+  }
+  if (!validDigest(snapshot.digest)) {
+    issues.push({ path: `${path}.digest`, message: "snapshot digest must be a sha256 digest" })
+    return
+  }
+
+  const expected = runtimeEpisodeDigest(runtimeEpisodeSnapshotDigestPayload(snapshot as unknown as Snapshot))
+  if (snapshot.digest.value !== expected.value) {
+    issues.push({ path: `${path}.digest`, message: "snapshot digest must match the canonical snapshot payload" })
+  }
+}
+
 function validateRuntimeEpisodeTraceRef(
   ref: RuntimeEpisodeTraceRef | unknown,
   path: string,
-  kind: RuntimeEpisodeTraceRef["kind"],
+  kind: RuntimeEpisodeTraceRef["kind"] | undefined,
   issues: RuntimeEpisodeTraceValidationIssue[],
 ): void {
   if (!isRecord(ref)) {
@@ -1587,8 +1637,11 @@ function validateRuntimeEpisodeTraceRef(
     return
   }
 
-  if (ref.kind !== kind) {
+  if (kind !== undefined && ref.kind !== kind) {
     issues.push({ path: `${path}.kind`, message: `ref kind must be ${kind}` })
+  }
+  if (!nonEmptyString(ref.kind)) {
+    issues.push({ path: `${path}.kind`, message: "ref kind is required" })
   }
   if (!nonEmptyString(ref.id)) {
     issues.push({ path: `${path}.id`, message: "ref id is required" })
@@ -1673,7 +1726,13 @@ function observationWithId(observation: ObservationResult, fallbackId: string): 
 }
 
 function snapshotWithSemantics(snapshot: Snapshot): Snapshot {
-  return { semantics: "metadata-only", ...snapshot }
+  const enveloped = {
+    ...snapshot,
+    schema: RUNTIME_EPISODE_SNAPSHOT_SCHEMA,
+    semantics: snapshot.semantics ?? "metadata-only",
+  }
+
+  return { ...enveloped, digest: runtimeEpisodeDigest(runtimeEpisodeSnapshotDigestPayload(enveloped)) }
 }
 
 function runtimeEpisodeJsonLines(trace: RuntimeEpisodeTrace): string {
