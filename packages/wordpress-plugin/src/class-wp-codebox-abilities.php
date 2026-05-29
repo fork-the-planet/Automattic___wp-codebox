@@ -1288,7 +1288,12 @@ final class WP_Codebox_Abilities {
 	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $legacy_plugins Legacy browser_plugins specs. @return array<string,mixed>|WP_Error */
 	private static function browser_runtime_dependencies( array $input, array $legacy_plugins ): array|WP_Error {
 		$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
-		$runtime_plugins = self::normalize_browser_plugins( is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array(), 'runtime.plugins' );
+		$runtime_plugin_specs = self::browser_runtime_plugin_specs( is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array() );
+		if ( is_wp_error( $runtime_plugin_specs ) ) {
+			return $runtime_plugin_specs;
+		}
+
+		$runtime_plugins = self::normalize_browser_plugins( $runtime_plugin_specs, 'runtime.plugins' );
 		if ( is_wp_error( $runtime_plugins ) ) {
 			return $runtime_plugins;
 		}
@@ -1330,6 +1335,55 @@ final class WP_Codebox_Abilities {
 				'bootstrap'  => count( $bootstrap ),
 			),
 		);
+	}
+
+	/** @param array<int,mixed> $plugins Runtime plugin specs. @return array<int,array<string,mixed>>|WP_Error */
+	private static function browser_runtime_plugin_specs( array $plugins ): array|WP_Error {
+		$resolved = array();
+
+		foreach ( $plugins as $index => $plugin ) {
+			if ( ! is_array( $plugin ) ) {
+				return new WP_Error( 'wp_codebox_browser_plugin_invalid', 'Each browser plugin must be an object.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
+			}
+
+			$resource = (string) ( $plugin['resource'] ?? 'url' );
+			$path     = 'git:directory' === $resource ? '' : self::browser_clean_path( (string) ( $plugin['path'] ?? '' ) );
+			if ( '' === $path ) {
+				$resolved[] = $plugin;
+				continue;
+			}
+
+			$slug = self::safe_key( (string) ( $plugin['slug'] ?? basename( $path ) ) );
+			if ( '' === $slug ) {
+				return new WP_Error( 'wp_codebox_browser_plugin_slug_missing', 'Browser plugin path specs require a slug.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
+			}
+
+			if ( ! is_dir( $path ) ) {
+				return new WP_Error( 'wp_codebox_browser_plugin_path_missing', 'Browser plugin path does not exist.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index, 'slug' => $slug ) );
+			}
+
+			$package = self::browser_package_component_plugin( $slug, $path );
+			if ( is_wp_error( $package ) ) {
+				return $package;
+			}
+
+			$resolved[] = array_merge(
+				$plugin,
+				array(
+					'slug'          => $slug,
+					'url'           => $package['url'],
+					'sha256'        => $package['sha256'],
+					'local_package' => true,
+					'provenance'    => array(
+						'schema' => 'wp-codebox/browser-plugin-provenance/v1',
+						'source' => 'runtime-plugin-path',
+						'path'   => $path,
+					),
+				)
+			);
+		}
+
+		return $resolved;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $declared_plugins Caller/runtime plugin specs. @return array<int,array<string,mixed>>|WP_Error */
@@ -1584,9 +1638,14 @@ final class WP_Codebox_Abilities {
 				return new WP_Error( 'wp_codebox_browser_plugin_invalid', 'Each browser plugin must be an object.', array( 'status' => 400, 'field' => $field, 'index' => $index ) );
 			}
 
-			$url = trim( (string) ( $plugin['url'] ?? '' ) );
-			$slug = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
-			$source = self::browser_plugin_url( $url, $index );
+			$url      = trim( (string) ( $plugin['url'] ?? '' ) );
+			$slug     = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
+			$resource = (string) ( $plugin['resource'] ?? 'url' );
+			if ( ! in_array( $resource, array( 'url', 'git:directory' ), true ) ) {
+				return new WP_Error( 'wp_codebox_browser_plugin_resource_invalid', 'Browser plugin resource is not supported.', array( 'status' => 400, 'index' => $index, 'resource' => $resource ) );
+			}
+
+			$source = ! empty( $plugin['local_package'] ) ? self::browser_local_plugin_url( $url, $index ) : self::browser_plugin_url( $url, $index );
 			if ( is_wp_error( $source ) ) {
 				return $source;
 			}
@@ -1596,16 +1655,24 @@ final class WP_Codebox_Abilities {
 				return new WP_Error( 'wp_codebox_browser_plugin_sha256_invalid', 'Browser plugin sha256 must be a 64-character hex digest.', array( 'status' => 400, 'index' => $index ) );
 			}
 
+			$provenance = is_array( $plugin['provenance'] ?? null ) ? $plugin['provenance'] : array();
+
 			$normalized[] = array(
-				'url'      => $source['url'],
-				'slug'     => $slug,
-				'activate' => ! array_key_exists( 'activate', $plugin ) || (bool) $plugin['activate'],
-				'provenance' => array_filter(
+				'url'              => $source['url'],
+				'slug'             => $slug,
+				'resource'         => $resource,
+				'activate'         => ! array_key_exists( 'activate', $plugin ) || (bool) $plugin['activate'],
+				'ref'              => sanitize_text_field( (string) ( $plugin['ref'] ?? '' ) ),
+				'refType'          => sanitize_key( (string) ( $plugin['refType'] ?? '' ) ),
+				'path'             => 'git:directory' === $resource ? ltrim( str_replace( '\\', '/', (string) ( $plugin['path'] ?? '' ) ), '/' ) : '',
+				'targetFolderName' => sanitize_key( (string) ( $plugin['targetFolderName'] ?? '' ) ),
+				'provenance'       => array_filter(
 					array(
 						'schema' => 'wp-codebox/browser-plugin-provenance/v1',
 						'url'    => $source['url'],
 						'origin' => $source['origin'],
 						'host'   => $source['host'],
+						'source' => is_string( $provenance['source'] ?? null ) ? $provenance['source'] : '',
 						'sha256' => $sha256,
 					)
 				),
@@ -1613,6 +1680,20 @@ final class WP_Codebox_Abilities {
 		}
 
 		return $normalized;
+	}
+
+	/** @return array{url:string,origin:string,host:string}|WP_Error */
+	private static function browser_local_plugin_url( string $url, int $index ): array|WP_Error {
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_invalid', 'Browser plugin URL must be absolute.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		return array(
+			'url'    => $url,
+			'origin' => self::url_origin( $parts ),
+			'host'   => strtolower( (string) $parts['host'] ),
+		);
 	}
 
 	/** @return array{url:string,origin:string,host:string}|WP_Error */
@@ -1744,15 +1825,30 @@ final class WP_Codebox_Abilities {
 		}
 
 		foreach ( $runtime['plugins'] as $plugin ) {
+			$plugin_data = array(
+				'resource' => (string) ( $plugin['resource'] ?? 'url' ),
+				'url'      => $plugin['url'],
+			);
+
+			if ( 'git:directory' === $plugin_data['resource'] ) {
+				$plugin_data['ref']     = (string) ( $plugin['ref'] ?? 'main' );
+				$plugin_data['refType'] = (string) ( $plugin['refType'] ?? 'branch' );
+				if ( '' !== (string) ( $plugin['path'] ?? '' ) ) {
+					$plugin_data['path'] = (string) $plugin['path'];
+				}
+			}
+
+			$options = array(
+				'activate' => (bool) $plugin['activate'],
+			);
+			if ( '' !== (string) ( $plugin['targetFolderName'] ?? '' ) ) {
+				$options['targetFolderName'] = (string) $plugin['targetFolderName'];
+			}
+
 			$steps[] = array(
 				'step'       => 'installPlugin',
-				'pluginData' => array(
-					'resource' => 'url',
-					'url'      => $plugin['url'],
-				),
-				'options'    => array(
-					'activate' => (bool) $plugin['activate'],
-				),
+				'pluginData' => $plugin_data,
+				'options'    => $options,
 			);
 		}
 
