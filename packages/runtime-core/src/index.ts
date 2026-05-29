@@ -176,6 +176,19 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runBrowserProbe" },
   },
   {
+    id: "wordpress.browser-actions",
+    description: "Run generic browser interactions against the live Playground preview and capture replay/audit evidence artifacts.",
+    acceptedArgs: [
+      { name: "url", description: "Initial preview path or absolute URL to visit when actions-json omits an initial navigate action.", format: "path or URL" },
+      { name: "actions-json", description: "Ordered browser actions to run: navigate, click, fill, press, wait, and capture.", required: true, format: "JSON array" },
+      { name: "capture", description: "Comma-separated artifacts to capture after interactions.", format: "actions,console,errors,html,network,screenshot" },
+    ],
+    outputShape: "JSON summary plus files/browser/actions.jsonl, action-summary.json, and optional console/errors/network/html/screenshot artifacts.",
+    policyRequirement: "Runtime policy commands must include wordpress.browser-actions.",
+    recipe: true,
+    handler: { kind: "playground", method: "runBrowserActions" },
+  },
+  {
     id: "wp-codebox.agent-runtime-probe",
     description: "Recipe-only probe that boots Agents API, Data Machine, and Data Machine Code and verifies the stack loads.",
     acceptedArgs: [
@@ -489,6 +502,27 @@ export interface WorkspaceRecipeStep {
   args?: string[]
 }
 
+export interface WorkspaceRecipePluginRuntimePhp {
+  memoryLimit?: string
+  maxExecutionTime?: number
+}
+
+export interface WorkspaceRecipePluginRuntimeHealthProbe {
+  name: string
+  type: "plugin-active" | "php" | "wp-cli"
+  pluginFile?: string
+  code?: string
+  command?: string
+}
+
+export interface WorkspaceRecipePluginRuntime {
+  label?: string
+  php?: WorkspaceRecipePluginRuntimePhp
+  wpConfigDefines?: Record<string, string | number | boolean | null>
+  setup?: WorkspaceRecipeStep[]
+  healthProbes?: WorkspaceRecipePluginRuntimeHealthProbe[]
+}
+
 export interface WorkspaceRecipeExtraPlugin {
   source: string
   slug?: string
@@ -585,6 +619,7 @@ export interface WorkspaceRecipe {
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
     extraPlugins?: WorkspaceRecipeExtraPlugin[]
     secretEnv?: string[]
+    pluginRuntime?: WorkspaceRecipePluginRuntime
     siteSeeds?: WorkspaceRecipeSiteSeed[]
     stagedFiles?: WorkspaceRecipeStagedFile[]
     inherit?: WorkspaceRecipeInheritanceRequest
@@ -713,6 +748,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },
           },
+          pluginRuntime: { $ref: "#/$defs/pluginRuntime" },
           siteSeeds: {
             type: "array",
             description: "Explicit site/content seed declarations. Local JSON fixture seeds are imported into the sandbox before workflow steps. Parent-site declarations remain bounded, auditable metadata until export support lands.",
@@ -838,6 +874,48 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           pluginFile: { type: "string" },
           activate: { type: "boolean" },
           sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+        },
+      },
+      pluginRuntime: {
+        type: "object",
+        additionalProperties: false,
+        description: "Generic runtime options for heavyweight plugin stacks. Consumers can tune PHP/WP config, run ordered setup hooks, and declare health probes without consumer-specific semantics.",
+        properties: {
+          label: { type: "string" },
+          php: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              memoryLimit: { type: "string", pattern: "^[0-9]+[KMG]?$" },
+              maxExecutionTime: { type: "integer", minimum: 0, maximum: 3600 },
+            },
+          },
+          wpConfigDefines: {
+            type: "object",
+            additionalProperties: {
+              type: ["string", "number", "boolean", "null"],
+            },
+          },
+          setup: {
+            type: "array",
+            items: { $ref: "#/$defs/step" },
+          },
+          healthProbes: {
+            type: "array",
+            items: { $ref: "#/$defs/pluginRuntimeHealthProbe" },
+          },
+        },
+      },
+      pluginRuntimeHealthProbe: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "type"],
+        properties: {
+          name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+          type: { enum: ["plugin-active", "php", "wp-cli"] },
+          pluginFile: { type: "string" },
+          code: { type: "string" },
+          command: { type: "string" },
         },
       },
       siteSeed: {
@@ -1067,6 +1145,11 @@ export interface ObservationSpec {
   headers?: Record<string, string>
   body?: string
   includeBody?: boolean
+  sections?: string[]
+  redaction?: "safe" | "none" | (string & {})
+  includeContent?: boolean
+  optionNames?: string[]
+  userFields?: string[]
 }
 
 export interface ObservationResult {
@@ -1373,6 +1456,9 @@ export interface ArtifactReviewBrowserSummary {
     screenshot?: string
     console?: string
     errorsFile?: string
+    actions?: string
+    actionCount?: number
+    summaryFile?: string
   }>
 }
 
@@ -2281,7 +2367,7 @@ export interface RuntimeEpisode {
   close(): Promise<void>
 }
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimeFilesystemAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimeFilesystemAction | RuntimeBrowserAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -2294,6 +2380,20 @@ export interface RuntimeFilesystemAction {
   operation: "list" | "read" | "write" | "delete"
   path: string
   content?: string
+}
+
+export interface RuntimeBrowserAction {
+  type: "browser"
+  operation: "navigate" | "click" | "fill" | "press" | "wait" | "capture"
+  url?: string
+  selector?: string
+  text?: string
+  value?: string
+  key?: string
+  wait_for?: string
+  duration?: string
+  capture?: string[]
+  timeout_ms?: number
 }
 
 export interface RuntimeActionAdapterPolicy {
@@ -3170,6 +3270,10 @@ export async function runRuntimeAction(
     return runRuntimeWpCliAction(episode, action)
   }
 
+  if (action.type === "browser") {
+    return runRuntimeBrowserAction(episode, action)
+  }
+
   return runRuntimeFilesystemAction(episode, action, policy)
 }
 
@@ -3240,6 +3344,69 @@ async function runRuntimeFilesystemAction(
     },
     artifactRefs: step?.observation?.artifactRefs,
   })
+}
+
+async function runRuntimeBrowserAction(episode: RuntimeEpisode, action: RuntimeBrowserAction): Promise<RuntimeActionObservation> {
+  const args = [`actions-json=${JSON.stringify([runtimeBrowserCommandAction(action)])}`]
+  if (action.url && action.operation !== "navigate") {
+    args.unshift(`url=${action.url}`)
+  }
+  if (action.capture && action.capture.length > 0) {
+    args.push(`capture=${action.capture.join(",")}`)
+  }
+
+  const step = await episode.step(
+    {
+      kind: "browser",
+      command: "wordpress.browser-actions",
+      args,
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+      ...(action.selector ? { selector: action.selector } : {}),
+      ...(action.url ? { url: action.url } : {}),
+      operation: action.operation,
+    },
+    { type: "browser-result" },
+  )
+
+  let stdout: unknown = step.execution.stdout
+  try {
+    stdout = JSON.parse(step.execution.stdout)
+  } catch {
+    // Keep raw stdout when a backend returns non-JSON diagnostics.
+  }
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      operation: action.operation,
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+function runtimeBrowserCommandAction(action: RuntimeBrowserAction): Record<string, unknown> {
+  const commandAction: Record<string, unknown> = { type: action.operation }
+  for (const key of ["url", "selector", "text", "value", "key", "duration"] as const) {
+    if (typeof action[key] === "string") {
+      commandAction[key] = action[key]
+    }
+  }
+  if (typeof action.wait_for === "string") {
+    commandAction.waitFor = action.wait_for
+  }
+  if (action.operation === "capture" && Array.isArray(action.capture)) {
+    commandAction.capture = action.capture
+  }
+  return commandAction
 }
 
 function normalizeWpCliRuntimeActionCommand(command: string): string {

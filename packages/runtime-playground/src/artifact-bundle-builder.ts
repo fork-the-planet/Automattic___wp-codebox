@@ -156,7 +156,7 @@ export class ArtifactBundleBuilder {
       runtimeReplayReferenceIndex: relative(source.artifactRoot, runtimeReplayReferenceIndexPath),
       mountDiffs: relative(source.artifactRoot, diffsPath),
       ...(runtimeSnapshotFiles.length > 0 ? { runtimeSnapshots: runtimeSnapshotFiles.map((file) => relative(source.artifactRoot, file.path)) } : {}),
-      ...(browser ? { browser: "files/browser/summary.json" } : {}),
+      ...(browser ? { browser: browser.probes.find((probe) => probe.summaryFile)?.summaryFile ?? "files/browser/summary.json" } : {}),
       ...(source.pluginCheckArtifactPaths().length > 0 ? { pluginChecks: source.pluginCheckArtifactPaths() } : {}),
       ...(source.themeCheckArtifactPaths().length > 0 ? { themeChecks: source.themeCheckArtifactPaths() } : {}),
     }
