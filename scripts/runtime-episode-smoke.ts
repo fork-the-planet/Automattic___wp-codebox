@@ -76,6 +76,34 @@ try {
     assert.equal(queryPost.index, 1)
     assert.equal(queryPost.execution.stdout.trim(), "Episode Smoke")
 
+    const semanticHttpAction = await episode.step({
+      kind: "http",
+      method: "GET",
+      url: "/?p=1",
+      command: "wordpress.run-php",
+      args: ["code=echo get_bloginfo('name');"],
+      metadata: { source: "runtime-episode-smoke" },
+    }, { type: "wordpress-state" })
+    assert.equal(semanticHttpAction.index, 2)
+    assert.equal(semanticHttpAction.action.kind, "http")
+    assert.equal(semanticHttpAction.action.command, "wordpress.run-php")
+    assert.equal(semanticHttpAction.action.method, "GET")
+    assert.equal(semanticHttpAction.action.url, "/?p=1")
+    assert.equal(semanticHttpAction.actionRef.digest?.value, semanticHttpAction.action.digest.value)
+    assert.equal(semanticHttpAction.executionRef.id, semanticHttpAction.execution.id)
+    assert.equal(semanticHttpAction.observation?.type, "wordpress-state")
+    assert.equal(typeof (semanticHttpAction.observation?.data as { wordpressVersion?: unknown }).wordpressVersion, "string")
+    assert.equal(semanticHttpAction.observationRef?.digest?.value, semanticHttpAction.observation?.digest?.value)
+
+    const httpObservation = await episode.observe({ type: "http-response", url: "/" })
+    assert.equal(httpObservation.type, "http-response")
+    assert.equal(httpObservation.digest?.algorithm, "sha256")
+    assert.equal((httpObservation.data as { status?: number }).status, 200)
+    assert.match((httpObservation.data as { bodySha256?: string }).bodySha256 ?? "", /^[a-f0-9]{64}$/)
+    assert.equal(httpObservation.artifactRefs?.[0].kind, "observation-artifact")
+    assert.match(httpObservation.artifactRefs?.[0].path ?? "", /^files\/observations\/observation-.+-body\.txt$/)
+    assert.equal(httpObservation.artifactRefs?.[0].digest?.value, (httpObservation.data as { bodySha256?: string }).bodySha256)
+
     const snapshot = await episode.snapshot()
     assert.match(snapshot.id, /^snapshot-/)
     assert.equal(snapshot.schema, RUNTIME_EPISODE_SNAPSHOT_SCHEMA)
@@ -94,6 +122,7 @@ try {
     const manifest = JSON.parse(await readFile(artifacts.manifestPath, "utf8"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-episode-trace.json" && file.kind === "runtime-episode-trace"))
     assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === "files/runtime-episode.jsonl" && file.kind === "runtime-episode-events"))
+    assert.ok(manifest.files.some((file: { path: string; kind: string }) => file.path === httpObservation.artifactRefs?.[0].path && file.kind === "observation-artifact"))
 
     const review = JSON.parse(await readFile(artifacts.reviewPath, "utf8"))
     assert.equal(review.evidence.runtimeEpisodeTrace, "files/runtime-episode-trace.json")
@@ -112,7 +141,7 @@ try {
     assert.equal(trace.schema, RUNTIME_EPISODE_TRACE_SCHEMA)
     assert.equal(trace.version, 1)
     assert.match(trace.id, /^trace-runtime-/)
-    assert.equal(trace.steps.length, 2)
+    assert.equal(trace.steps.length, 3)
     assert.equal(trace.snapshots.length, 1)
     assert.equal(trace.snapshots[0].schema, RUNTIME_EPISODE_SNAPSHOT_SCHEMA)
     assert.equal(trace.snapshots[0].digest?.value, snapshot.digest?.value)
@@ -129,6 +158,22 @@ try {
       validateRuntimeEpisodeTrace({ ...trace, reward: 1 }).valid,
       false,
       "trace validator must reject eval-specific fields",
+    )
+
+    const evalSemanticAction = structuredClone(trace)
+    ;(evalSemanticAction.steps[2].action as unknown as { grader: string }).grader = "not-generic"
+    assert.equal(
+      validateRuntimeEpisodeTrace(evalSemanticAction).valid,
+      false,
+      "trace validator must reject eval-specific fields inside semantic action envelopes",
+    )
+
+    const malformedActionKind = structuredClone(trace)
+    ;(malformedActionKind.steps[2].action as unknown as { kind: string }).kind = "grader"
+    assert.equal(
+      validateRuntimeEpisodeTrace(malformedActionKind).valid,
+      false,
+      "trace validator must reject non-generic action kinds",
     )
 
     const missingActionSchema = structuredClone(trace)
