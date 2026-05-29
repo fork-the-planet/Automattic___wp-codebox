@@ -17,6 +17,7 @@ if ( ! defined( 'WPINC' ) ) {
 
 define( 'WP_CODEBOX_PLUGIN_VERSION', '0.1.0' );
 define( 'WP_CODEBOX_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
+define( 'WP_CODEBOX_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
 require_once __DIR__ . '/src/class-wp-codebox-agent-sandbox-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-artifacts.php';
@@ -28,3 +29,21 @@ new WP_Codebox_Abilities();
 add_action( 'plugins_loaded', static function (): void {
 	new WP_Codebox_Data_Machine_Pending_Actions();
 }, 20 );
+
+add_action(
+	'wp_enqueue_scripts',
+	static function (): void {
+		$script = WP_CODEBOX_PLUGIN_PATH . 'assets/browser-runtime.js';
+		if ( ! file_exists( $script ) ) {
+			return;
+		}
+
+		wp_register_script(
+			'wp-codebox-browser-runtime',
+			WP_CODEBOX_PLUGIN_URL . 'assets/browser-runtime.js',
+			array(),
+			(string) filemtime( $script ),
+			array( 'in_footer' => true )
+		);
+	}
+);
