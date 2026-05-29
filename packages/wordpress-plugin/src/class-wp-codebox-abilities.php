@@ -299,6 +299,17 @@ final class WP_Codebox_Abilities {
 							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
 							'policy'             => $task_input_schema['properties']['policy'],
 							'context'            => $task_input_schema['properties']['context'],
+							'provider_plugin_paths' => array(
+								'type'        => 'array',
+								'description' => 'AI provider plugin directories the browser sandbox should have available before code execution.',
+								'items'       => array( 'type' => 'string' ),
+							),
+							'inherit'            => $inherit_schema,
+							'secret_env'         => array(
+								'type'        => 'array',
+								'description' => 'Parent environment variable names expected to be available to the browser sandbox. Values are never accepted in this payload.',
+								'items'       => array( 'type' => 'string' ),
+							),
 							'sandbox_session_id' => $session_input['sandbox_session_id'],
 							'orchestrator'       => $session_input['orchestrator'],
 							'playground'         => array(
@@ -755,6 +766,7 @@ final class WP_Codebox_Abilities {
 		if ( is_wp_error( $artifacts ) ) {
 			return $artifacts;
 		}
+		$ready_to_code = self::browser_ready_to_code_signal( $input );
 
 		return array(
 			'success'    => true,
@@ -784,12 +796,7 @@ final class WP_Codebox_Abilities {
 				),
 			),
 			'signals'    => array(
-				'ready_to_code' => array(
-					'schema'  => 'wp-codebox/signal/v1',
-					'name'    => 'ready_to_code',
-					'emitted' => true,
-					'message' => 'Browser Playground sandbox is ready to code.',
-				),
+				'ready_to_code' => $ready_to_code,
 			),
 			'artifacts'  => array(
 				'schema'             => 'wp-codebox/browser-artifacts/v1',
@@ -798,6 +805,73 @@ final class WP_Codebox_Abilities {
 				'expected_artifacts' => $task_input['expected_artifacts'],
 			),
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private static function browser_ready_to_code_signal( array $input ): array {
+		$provider_plugin_paths = array_values(
+			array_filter(
+				array_map( 'strval', is_array( $input['provider_plugin_paths'] ?? null ) ? $input['provider_plugin_paths'] : array() ),
+				static fn( string $path ): bool => '' !== trim( $path )
+			)
+		);
+		$inherit      = is_array( $input['inherit'] ?? null ) ? $input['inherit'] : array();
+		$connectors   = array_values( array_filter( array_map( 'strval', is_array( $inherit['connectors'] ?? null ) ? $inherit['connectors'] : array() ) ) );
+		$secret_env   = array_values( array_filter( array_map( 'strval', is_array( $input['secret_env'] ?? null ) ? $input['secret_env'] : array() ) ) );
+		$requirements = array(
+			'agents_api'        => self::agents_api_ready(),
+			'data_machine'      => self::plugin_path_ready( 'data-machine' ),
+			'data_machine_code' => self::plugin_path_ready( 'data-machine-code' ),
+			'provider_plugin'   => ! empty( $provider_plugin_paths ) && self::all_paths_ready( $provider_plugin_paths ),
+			'provider_secret'   => ! empty( $connectors ) || ! empty( $secret_env ),
+		);
+
+		/**
+		 * Filters browser sandbox readiness requirements before the signal is emitted.
+		 *
+		 * @param array<string,bool>  $requirements Named readiness checks.
+		 * @param array<string,mixed> $input        Ability input.
+		 */
+		$requirements = apply_filters( 'wp_codebox_browser_ready_to_code_requirements', $requirements, $input );
+		$requirements = is_array( $requirements ) ? array_map( 'boolval', $requirements ) : array();
+		$missing      = array_keys( array_filter( $requirements, static fn( bool $ready ): bool => ! $ready ) );
+		$emitted      = empty( $missing );
+
+		return array(
+			'schema'       => 'wp-codebox/signal/v1',
+			'name'         => 'ready_to_code',
+			'emitted'      => $emitted,
+			'message'      => $emitted ? 'Browser Playground sandbox is ready to code.' : 'Browser Playground sandbox is not ready to code.',
+			'requirements' => $requirements,
+			'missing'      => $missing,
+		);
+	}
+
+	private static function agents_api_ready(): bool {
+		if ( ! function_exists( 'wp_get_ability' ) ) {
+			return false;
+		}
+
+		return (bool) wp_get_ability( 'agents/chat' );
+	}
+
+	private static function plugin_path_ready( string $plugin_slug ): bool {
+		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
+			return false;
+		}
+
+		return is_dir( rtrim( WP_PLUGIN_DIR, '/\\' ) . '/' . $plugin_slug );
+	}
+
+	/** @param array<int,string> $paths Paths to verify. */
+	private static function all_paths_ready( array $paths ): bool {
+		foreach ( $paths as $path ) {
+			if ( ! is_dir( $path ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
