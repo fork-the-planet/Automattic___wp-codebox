@@ -319,8 +319,17 @@ those files with `runtime-episode-trace` and `runtime-episode-events` kinds,
 checks the advertised trace file exists and validates against
 `wp-codebox/runtime-episode-trace/v1`.
 
-Products can project this generic episode trace into their own domain schemas
-outside WP Codebox.
+Artifact bundles also include `files/runtime-reference-manifest.json` using
+schema `wp-codebox/runtime-reference-manifest/v1`. This manifest is a stable,
+hashable index of runtime-related refs: the artifact-bundle id/digest,
+bundle-relative artifact file refs with SHA-256 values, optional trace/events
+refs, and snapshot refs. Its id is `runtime-reference-manifest-sha256-<digest>`,
+where the digest is computed from the declared refs rather than presentation
+fields such as `createdAt`. `verifyArtifactBundle()` validates the manifest
+shape, referenced file hashes, artifact-bundle digest, and id/digest pairing.
+
+Products such as eval harnesses can project this generic episode trace into their
+own action, observation, reward, and report schemas outside WP Codebox.
 
 The episode trace is a versioned machine-verifiable contract with schema
 `wp-codebox/runtime-episode-trace/v1`. `@chubes4/wp-codebox-core` exports
@@ -368,6 +377,12 @@ snapshot semantics such as runtime-state artifacts, but replay consumers should
 branch on the snapshot `semantics` field instead of assuming a portable restore
 point.
 
+The runtime reference manifest repeats each snapshot's `semantics` and adds an
+explicit `replay.status`. For current Playground snapshots that status is
+`metadata-only` with limitations explaining that replay must come from trace
+actions and artifact files. This keeps full WordPress replay as an incremental
+backend capability while giving consumers a concrete contract today.
+
 ## CLI Commands
 
 ### `commands`
@@ -411,13 +426,13 @@ Supported runtime commands today:
 - `wordpress.run-php`: run PHP; accepts `code=<php>` or `code-file=<path>`.
 - `wordpress.wp-cli`: run WP-CLI; accepts `command='wp option get home'` or plain args.
 - `wordpress.ability`: execute a registered WordPress Ability; accepts `name=<ability>` and optional JSON `input=<object>`.
-- `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture browser console, page errors, and screenshot artifacts under `files/browser/`.
+- `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture generic browser replay/audit evidence under `files/browser/`.
 
 `wordpress.run-php` loads `/wordpress/wp-load.php` by default. Use `--arg bootstrap=none` for raw PHP.
 
 `wordpress.wp-cli` automatically enables Playground's `wp-cli` extra library when the command is allowed by runtime policy.
 
-`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, and `capture=console,errors,screenshot`. It records `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled, and the artifact review includes a concise browser summary with counts.
+`wordpress.browser-probe` accepts `wait-for=domcontentloaded|load|networkidle|selector:<selector>|duration`, `duration=<n>s`, and `capture=console,errors,html,network,screenshot`. It records machine-readable evidence refs such as `files/browser/console.jsonl`, `files/browser/errors.jsonl`, `files/browser/network.jsonl`, `files/browser/snapshot.html`, `files/browser/screenshot.png`, and `files/browser/summary.json` when those captures are enabled. The summary includes requested/final URLs, viewport/device metadata, HTML and screenshot hashes, network event counts, and a generic `artifact-backed|partial|diagnostic-only` replayability classification. WP Codebox intentionally keeps these browser evidence fields generic; consumers such as eval harnesses may interpret them without WP Codebox adding scoring, grading, or benchmark semantics.
 
 WP Codebox defaults to WordPress `7.0` because the agent and AI plugin stacks need the modern WordPress AI surface. Override with `--wp trunk`, `--wp nightly`, or another supported Playground version.
 
@@ -642,6 +657,7 @@ Current bundles include:
 - `files/patch.diff`: canonical combined text patch for changed readwrite mounts that declare a baseline.
 - `files/test-results.json`: normalized test-results artifact with schema, summary counts, suites, and raw log references. When WP Codebox has not run test-aware commands, the artifact is present with `status: "unknown"`, zero counts, an empty `suites` array, and pointers to raw command logs instead of inferred pass/fail data.
 - `files/review.json`: frontend-oriented review payload with summary, progress labels, changed file labels, evidence links, and approval actions.
+- `files/runtime-reference-manifest.json`: stable runtime ref index with artifact-bundle, file, trace/events, and snapshot refs plus SHA-256 digests.
 - `files/diffs.json`: diff index for readwrite mounts that declare a baseline.
 - `files/diffs/<mount>.patch`: unified text diff from a seeded baseline to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
