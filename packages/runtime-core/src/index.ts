@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises"
-import { isAbsolute, join, normalize, relative, sep } from "node:path"
+import { lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path"
 
 export * from "./workspace-policy.js"
 export * from "./sandbox-datamachine-tool-policy.js"
@@ -12,6 +12,7 @@ export const RUNTIME_EPISODE_ACTION_SCHEMA = "wp-codebox/runtime-episode-action/
 export const RUNTIME_EPISODE_OBSERVATION_SCHEMA = "wp-codebox/runtime-episode-observation/v1" as const
 export const RUNTIME_EPISODE_SNAPSHOT_SCHEMA = "wp-codebox/runtime-episode-snapshot/v1" as const
 export const RUNTIME_REFERENCE_MANIFEST_SCHEMA = "wp-codebox/runtime-reference-manifest/v1" as const
+export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-observation/v1" as const
 
 export type CommandHandlerBinding =
   | { kind: "playground"; method: string }
@@ -2071,6 +2072,49 @@ export interface RuntimeEpisode {
   close(): Promise<void>
 }
 
+export type RuntimeAction = RuntimeWpCliAction | RuntimeFilesystemAction
+
+export interface RuntimeWpCliAction {
+  type: "wp_cli"
+  command: string
+  timeout_ms?: number
+}
+
+export interface RuntimeFilesystemAction {
+  type: "filesystem"
+  operation: "list" | "read" | "write" | "delete"
+  path: string
+  content?: string
+}
+
+export interface RuntimeActionAdapterPolicy {
+  mounts?: MountSpec[]
+  writableRoots?: string[]
+  filesystem?: RuntimePolicy["filesystem"]
+  filesystemTraceCommand?: string | false
+}
+
+export interface RuntimeActionObservation {
+  schema: typeof RUNTIME_ACTION_OBSERVATION_SCHEMA
+  type: RuntimeAction["type"]
+  status: "ok"
+  action: RuntimeAction
+  data: Record<string, unknown>
+  observedAt: string
+  step?: RuntimeEpisodeStepResult
+  artifactRefs?: RuntimeEpisodeTraceRef[]
+  digest: RuntimeEpisodeContentDigest
+}
+
+export class RuntimeActionPolicyError extends Error {
+  readonly code = "runtime-action-policy-violation" as const
+
+  constructor(message: string, readonly action: RuntimeAction) {
+    super(message)
+    this.name = "RuntimeActionPolicyError"
+  }
+}
+
 export interface RuntimeBackend {
   readonly kind: RuntimeBackendKind
   create(spec: RuntimeCreateSpec): Promise<Runtime>
@@ -2778,6 +2822,245 @@ export async function createRuntime(spec: RuntimeCreateSpec, backend: RuntimeBac
 
 export async function createRuntimeEpisode(spec: RuntimeEpisodeSpec, backend: RuntimeBackend): Promise<RuntimeEpisode> {
   return RuntimeEpisodeRunner.create(spec, backend)
+}
+
+export async function runRuntimeAction(
+  episode: RuntimeEpisode,
+  action: RuntimeAction,
+  policy: RuntimeActionAdapterPolicy = {},
+): Promise<RuntimeActionObservation> {
+  if (action.type === "wp_cli") {
+    return runRuntimeWpCliAction(episode, action)
+  }
+
+  return runRuntimeFilesystemAction(episode, action, policy)
+}
+
+async function runRuntimeWpCliAction(episode: RuntimeEpisode, action: RuntimeWpCliAction): Promise<RuntimeActionObservation> {
+  const step = await episode.step(
+    {
+      kind: "command",
+      command: "wordpress.wp-cli",
+      args: [`command=${normalizeWpCliRuntimeActionCommand(action.command)}`],
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+    },
+    { type: "command-result" },
+  )
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      command: action.command,
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout: step.execution.stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+async function runRuntimeFilesystemAction(
+  episode: RuntimeEpisode,
+  action: RuntimeFilesystemAction,
+  policy: RuntimeActionAdapterPolicy,
+): Promise<RuntimeActionObservation> {
+  const mountedPath = await resolveRuntimeActionMountedPath(action, policy)
+  const data = await executeRuntimeFilesystemAction(action, mountedPath)
+  const traceCommand = policy.filesystemTraceCommand ?? "inspect-mounted-inputs"
+  const step = traceCommand
+    ? await episode.step(
+        {
+          kind: "filesystem",
+          command: traceCommand,
+          path: mountedPath.sandboxPath,
+          operation: action.operation,
+          description: `filesystem.${action.operation}`,
+          metadata: {
+            mountTarget: mountedPath.mount.target,
+            mountMode: mountedPath.mount.mode,
+          },
+        },
+        { type: "mounts" },
+      )
+    : undefined
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      operation: action.operation,
+      path: mountedPath.sandboxPath,
+      mountTarget: mountedPath.mount.target,
+      mountMode: mountedPath.mount.mode,
+      ...data,
+    },
+    artifactRefs: step?.observation?.artifactRefs,
+  })
+}
+
+function normalizeWpCliRuntimeActionCommand(command: string): string {
+  const trimmed = command.trim()
+  return trimmed.startsWith("wp ") ? trimmed.slice(3).trimStart() : trimmed
+}
+
+interface RuntimeActionMountedPath {
+  mount: MountSpec
+  sandboxPath: string
+  hostPath: string
+}
+
+async function resolveRuntimeActionMountedPath(
+  action: RuntimeFilesystemAction,
+  policy: RuntimeActionAdapterPolicy,
+): Promise<RuntimeActionMountedPath> {
+  if (!action.path || action.path.includes("\0")) {
+    throw new RuntimeActionPolicyError("Filesystem action path must be a non-empty path without null bytes", action)
+  }
+
+  const mounts = policy.mounts ?? []
+  const sandboxPath = normalizeSandboxRuntimeActionPath(action.path)
+  const mount = mounts.find((candidate) => isRuntimeActionPathWithinRoot(sandboxPath, candidate.target))
+  if (!mount) {
+    throw new RuntimeActionPolicyError(`Filesystem action path is outside mounted workspace roots: ${action.path}`, action)
+  }
+
+  const hostPath = resolve(mount.source, relative(normalizeSandboxRuntimeActionPath(mount.target), sandboxPath))
+  await assertRuntimeActionHostPathWithinMount(action, hostPath, mount.source)
+
+  if (action.operation === "write" || action.operation === "delete") {
+    assertRuntimeFilesystemWritable(action, sandboxPath, mount, policy)
+  }
+
+  return { mount, sandboxPath, hostPath }
+}
+
+function normalizeSandboxRuntimeActionPath(path: string): string {
+  const absolutePath = path.startsWith("/") ? path : join(SANDBOX_WORKSPACE_ROOT, path)
+  const normalized = normalize(absolutePath)
+  if (!normalized.startsWith("/")) {
+    return `/${normalized}`
+  }
+
+  return normalized
+}
+
+function isRuntimeActionPathWithinRoot(path: string, root: string): boolean {
+  const normalizedRoot = normalizeSandboxRuntimeActionPath(root)
+  const relativePath = relative(normalizedRoot, normalizeSandboxRuntimeActionPath(path))
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+}
+
+async function assertRuntimeActionHostPathWithinMount(action: RuntimeFilesystemAction, hostPath: string, source: string): Promise<void> {
+  const root = await realpath(source)
+  const existingPath = action.operation === "write" ? dirname(hostPath) : hostPath
+  let real
+  try {
+    real = await realpath(existingPath)
+  } catch (error) {
+    if (action.operation !== "write") {
+      throw error
+    }
+    real = await nearestExistingRuntimeActionParent(existingPath, root)
+  }
+  const relativePath = relative(root, real)
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new RuntimeActionPolicyError(`Filesystem action path resolves outside mounted workspace root: ${action.path}`, action)
+  }
+}
+
+async function nearestExistingRuntimeActionParent(path: string, root: string): Promise<string> {
+  let current = path
+  while (current !== dirname(current)) {
+    try {
+      return await realpath(current)
+    } catch {
+      current = dirname(current)
+      if (!current.startsWith(root)) {
+        return root
+      }
+    }
+  }
+
+  return root
+}
+
+function assertRuntimeFilesystemWritable(
+  action: RuntimeFilesystemAction,
+  sandboxPath: string,
+  mount: MountSpec,
+  policy: RuntimeActionAdapterPolicy,
+): void {
+  if (policy.filesystem && policy.filesystem !== "readwrite-mounts") {
+    throw new RuntimeActionPolicyError(`Filesystem action requires readwrite-mounts policy: ${action.operation}`, action)
+  }
+  if (mount.mode !== "readwrite") {
+    throw new RuntimeActionPolicyError(`Filesystem action requires a readwrite mount: ${mount.target}`, action)
+  }
+
+  const writableRoots = policy.writableRoots ?? [mount.target]
+  if (!writableRoots.some((root) => isRuntimeActionPathWithinRoot(sandboxPath, root))) {
+    throw new RuntimeActionPolicyError(`Filesystem action path is outside writable roots: ${action.path}`, action)
+  }
+}
+
+async function executeRuntimeFilesystemAction(
+  action: RuntimeFilesystemAction,
+  mountedPath: RuntimeActionMountedPath,
+): Promise<Record<string, unknown>> {
+  if (action.operation === "list") {
+    const entries = await readdir(mountedPath.hostPath, { withFileTypes: true })
+    return {
+      entries: entries
+        .map((entry) => ({ name: entry.name, type: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other" }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    }
+  }
+
+  if (action.operation === "read") {
+    const content = await readFile(mountedPath.hostPath, "utf8")
+    return { content, bytes: Buffer.byteLength(content, "utf8") }
+  }
+
+  if (action.operation === "write") {
+    await mkdir(dirname(mountedPath.hostPath), { recursive: true })
+    await writeFile(mountedPath.hostPath, action.content ?? "")
+    return { bytes: Buffer.byteLength(action.content ?? "", "utf8") }
+  }
+
+  await rm(mountedPath.hostPath, { recursive: true, force: true })
+  return { deleted: true }
+}
+
+function runtimeActionObservation(input: {
+  type: RuntimeAction["type"]
+  action: RuntimeAction
+  data: Record<string, unknown>
+  step?: RuntimeEpisodeStepResult
+  artifactRefs?: RuntimeEpisodeTraceRef[]
+}): RuntimeActionObservation {
+  const observedAt = new Date().toISOString()
+  const observation = {
+    schema: RUNTIME_ACTION_OBSERVATION_SCHEMA,
+    type: input.type,
+    status: "ok" as const,
+    action: input.action,
+    data: input.data,
+    observedAt,
+    ...(input.step ? { step: input.step } : {}),
+    ...(input.artifactRefs && input.artifactRefs.length > 0 ? { artifactRefs: input.artifactRefs } : {}),
+  }
+
+  return {
+    ...observation,
+    digest: runtimeEpisodeDigest(observation),
+  }
 }
 
 class RuntimeEpisodeRunner implements RuntimeEpisode {
