@@ -1067,6 +1067,11 @@ export interface ObservationSpec {
   headers?: Record<string, string>
   body?: string
   includeBody?: boolean
+  sections?: string[]
+  redaction?: "safe" | "none" | (string & {})
+  includeContent?: boolean
+  optionNames?: string[]
+  userFields?: string[]
 }
 
 export interface ObservationResult {
