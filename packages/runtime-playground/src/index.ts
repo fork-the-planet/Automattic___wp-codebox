@@ -1234,9 +1234,10 @@ class PlaygroundRuntime implements Runtime {
     let screenshotSha256: string | undefined
     let viewport: BrowserProbeViewport | null = null
     let scriptResult: unknown
+    let page: Page | null = null
 
     try {
-      const page = await browser.newPage()
+      page = await browser.newPage()
       viewport = await browserProbeViewport(page)
       if (capture.has("console")) {
         page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
@@ -1261,20 +1262,23 @@ class PlaygroundRuntime implements Runtime {
       }
       finalUrl = page.url()
 
-      if (capture.has("html")) {
-        const html = await page.content()
-        await writeFile(htmlPath, html)
-        htmlSha256 = sha256(Buffer.from(html, "utf8"))
-      }
-
-      if (capture.has("screenshot")) {
-        await page.screenshot({ path: screenshotPath, fullPage: true })
-        screenshotSha256 = await fileSha256(screenshotPath)
-      }
     } catch (error) {
       errors.push(serializeBrowserError("probe-error", error))
       throw error
     } finally {
+      if (page) {
+        finalUrl = page.url()
+        if (capture.has("html")) {
+          const html = await page.content()
+          await writeFile(htmlPath, html)
+          htmlSha256 = sha256(Buffer.from(html, "utf8"))
+        }
+
+        if (capture.has("screenshot")) {
+          await page.screenshot({ path: screenshotPath, fullPage: true })
+          screenshotSha256 = await fileSha256(screenshotPath)
+        }
+      }
       await browser.close()
       if (capture.has("console")) {
         await writeFile(consolePath, jsonLines(consoleMessages))
