@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises"
-import { spawn } from "node:child_process"
 import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { checkWorkspacePolicy, commandRegistry, createRuntime, createWorkspaceRecipeJsonSchema, recipeCommandDefinitions, verifyArtifactBundle, type ArtifactBundle, type ArtifactBundleVerificationResult, type CommandDefinition, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimePolicy, type WorkspacePolicyResult, type WorkspaceRecipe, type WorkspaceRecipeJsonSchema, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@chubes4/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@chubes4/wp-codebox-playground"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "./agent-sandbox.js"
+import { routeCliCommand } from "./command-router.js"
 import { captureStdout, printArtifactVerifyHumanOutput, printBatchHumanOutput, printBlueprintValidateHumanOutput, printBootHumanOutput, printCommandCatalogHumanOutput, printHelp, printHumanOutput, printRecipeHumanOutput, printRecipeSchemaHumanOutput, printRecipeValidateHumanOutput, serializeError } from "./output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "./preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "./recipe-dry-run.js"
@@ -147,178 +147,147 @@ interface BenchResults {
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(moduleDirectory, "..", "..", "..")
 
-async function main(args: string[]): Promise<number> {
-  const command = args.shift()
+async function runCli(args: string[]): Promise<number> {
+  return routeCliCommand(args, {
+    printHelp,
+    boot: runBootCommand,
+    validateBlueprint: runValidateBlueprintCommand,
+    recipeRun: runRecipeRunCommand,
+    recipeValidate: runRecipeValidateCommand,
+    workspacePolicyCheck: runWorkspacePolicyCheckCommand,
+    artifactsVerify: runArtifactsVerifyCommand,
+    commands: runCommandsCommand,
+    recipeSchema: runRecipeSchemaCommand,
+    run: runRunCommand,
+  })
+}
 
-  const jspiRespawnExitCode = await maybeRespawnWithJspi(command, args)
-  if (jspiRespawnExitCode !== undefined) {
-    return jspiRespawnExitCode
-  }
+async function runBootCommand(args: string[]): Promise<number> {
+  const options = await parseBootOptions(args)
+  const execute = () => boot(options)
 
-  if (!command || command === "help" || command === "--help" || command === "-h") {
-    printHelp()
-    return command ? 0 : 1
-  }
-
-  if (command === "boot") {
-    const options = await parseBootOptions(args)
-    const execute = () => boot(options)
-
-    if (!options.json) {
-      const output = await execute()
-      printBootHumanOutput(output)
-      return output.success ? 0 : 1
-    }
-
-    const { result, logs } = await captureStdout(execute)
-    const output = logs.length > 0 ? { ...result, logs } : result
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-    printJsonFailureDiagnostic(output)
+  if (!options.json) {
+    const output = await execute()
+    printBootHumanOutput(output)
     return output.success ? 0 : 1
   }
 
-  if (command === "validate-blueprint") {
-    const options = await parseBlueprintValidateOptions(args)
-    const execute = () => validateBlueprint(options)
+  const { result, logs } = await captureStdout(execute)
+  const output = logs.length > 0 ? { ...result, logs } : result
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  printJsonFailureDiagnostic(output)
+  return output.success ? 0 : 1
+}
 
-    if (!options.json) {
-      const output = await execute()
-      printBlueprintValidateHumanOutput(output)
-      return output.success ? 0 : 1
-    }
+async function runValidateBlueprintCommand(args: string[]): Promise<number> {
+  const options = await parseBlueprintValidateOptions(args)
+  const execute = () => validateBlueprint(options)
 
-    const { result, logs } = await captureStdout(execute)
-    const output = logs.length > 0 ? { ...result, logs } : result
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-    printJsonFailureDiagnostic(output)
+  if (!options.json) {
+    const output = await execute()
+    printBlueprintValidateHumanOutput(output)
     return output.success ? 0 : 1
   }
 
-  if (command === "recipe-run") {
-    const options = parseRecipeRunOptions(args)
-    const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
-    interruption?.install()
-    const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
+  const { result, logs } = await captureStdout(execute)
+  const output = logs.length > 0 ? { ...result, logs } : result
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  printJsonFailureDiagnostic(output)
+  return output.success ? 0 : 1
+}
 
-    try {
-      if (!options.json) {
-        const output = interruptedRecipeOutput(await execute(), interruption)
-        printRecipeHumanOutput(output)
-        interruption?.propagateIfInterrupted()
-        return output.success ? 0 : 1
-      }
+async function runRecipeRunCommand(args: string[]): Promise<number> {
+  const options = parseRecipeRunOptions(args)
+  const interruption = options.dryRun ? undefined : createRecipeInterruptionController()
+  interruption?.install()
+  const execute = (): Promise<RecipeRunCommandOutput> => options.dryRun ? dryRunRecipe(options, { defaultWordPressVersion: DEFAULT_WORDPRESS_VERSION, resolveExecutionSpec: recipeExecutionSpec }) : runRecipe(options, interruption)
 
-      const { result, logs } = await captureStdout(execute)
-      const interruptedResult = interruptedRecipeOutput(result, interruption)
-      const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
-      process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
-      printJsonFailureDiagnostic(output)
+  try {
+    if (!options.json) {
+      const output = interruptedRecipeOutput(await execute(), interruption)
+      printRecipeHumanOutput(output)
       interruption?.propagateIfInterrupted()
       return output.success ? 0 : 1
-    } finally {
-      interruption?.dispose()
-    }
-  }
-
-  if (command === "recipe") {
-    const subcommand = args.shift()
-    if (subcommand !== "validate") {
-      console.error(`Unknown recipe command: ${subcommand ?? ""}`)
-      printHelp()
-      return 1
     }
 
-    const options = parseRecipeValidateOptions(args)
-    const output = await validateRecipe(options)
-    if (!options.json) {
-      printRecipeValidateHumanOutput(output)
-      return output.success ? 0 : 1
-    }
-
+    const { result, logs } = await captureStdout(execute)
+    const interruptedResult = interruptedRecipeOutput(result, interruption)
+    const output = logs.length > 0 ? { ...interruptedResult, logs } : interruptedResult
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+    printJsonFailureDiagnostic(output)
+    interruption?.propagateIfInterrupted()
+    return output.success ? 0 : 1
+  } finally {
+    interruption?.dispose()
+  }
+}
+
+async function runRecipeValidateCommand(args: string[]): Promise<number> {
+  const options = parseRecipeValidateOptions(args)
+  const output = await validateRecipe(options)
+  if (!options.json) {
+    printRecipeValidateHumanOutput(output)
     return output.success ? 0 : 1
   }
 
-  if (command === "workspace-policy") {
-    const subcommand = args.shift()
-    if (subcommand !== "check") {
-      console.error(`Unknown workspace-policy command: ${subcommand ?? ""}`)
-      printHelp()
-      return 1
-    }
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return output.success ? 0 : 1
+}
 
-    const options = parseWorkspacePolicyOptions(args)
-    const output = await checkWorkspacePolicy({
-      workspaceRoot: options.workspaceRoot,
-      writableRoots: options.writableRoots,
-      hiddenPaths: options.hiddenPaths,
-      gitBacked: options.gitBacked,
-    })
-    if (!options.json) {
-      printWorkspacePolicyHumanOutput(output)
-      return output.passed ? 0 : 1
-    }
-
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+async function runWorkspacePolicyCheckCommand(args: string[]): Promise<number> {
+  const options = parseWorkspacePolicyOptions(args)
+  const output = await checkWorkspacePolicy({
+    workspaceRoot: options.workspaceRoot,
+    writableRoots: options.writableRoots,
+    hiddenPaths: options.hiddenPaths,
+    gitBacked: options.gitBacked,
+  })
+  if (!options.json) {
+    printWorkspacePolicyHumanOutput(output)
     return output.passed ? 0 : 1
   }
 
-  if (command === "artifacts") {
-    const subcommand = args.shift()
-    if (subcommand !== "verify") {
-      console.error(`Unknown artifacts command: ${subcommand ?? ""}`)
-      printHelp()
-      return 1
-    }
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return output.passed ? 0 : 1
+}
 
-    const options = parseArtifactVerifyOptions(args)
-    const output = await verifyArtifacts(options)
-    if (!options.json) {
-      printArtifactVerifyHumanOutput(output)
-      return output.valid ? 0 : 1
-    }
-
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+async function runArtifactsVerifyCommand(args: string[]): Promise<number> {
+  const options = parseArtifactVerifyOptions(args)
+  const output = await verifyArtifacts(options)
+  if (!options.json) {
+    printArtifactVerifyHumanOutput(output)
     return output.valid ? 0 : 1
   }
 
-  if (command === "commands") {
-    const json = parseDiscoveryJsonOption(args)
-    const output = commandCatalogOutput()
-    if (!json) {
-      printCommandCatalogHumanOutput(output)
-      return 0
-    }
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return output.valid ? 0 : 1
+}
 
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+async function runCommandsCommand(args: string[]): Promise<number> {
+  const json = parseDiscoveryJsonOption(args)
+  const output = commandCatalogOutput()
+  if (!json) {
+    printCommandCatalogHumanOutput(output)
     return 0
   }
 
-  if (command === "schema") {
-    const subcommand = args.shift()
-    if (subcommand !== "recipe") {
-      console.error(`Unknown schema command: ${subcommand ?? ""}`)
-      printHelp()
-      return 1
-    }
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
 
-    const json = parseDiscoveryJsonOption(args)
-    const output = recipeSchemaOutput()
-    if (!json) {
-      printRecipeSchemaHumanOutput(output)
-      return 0
-    }
-
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+async function runRecipeSchemaCommand(args: string[]): Promise<number> {
+  const json = parseDiscoveryJsonOption(args)
+  const output = recipeSchemaOutput()
+  if (!json) {
+    printRecipeSchemaHumanOutput(output)
     return 0
   }
 
-  if (command !== "run") {
-    console.error(`Unknown command: ${command}`)
-    printHelp()
-    return 1
-  }
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
 
+async function runRunCommand(args: string[]): Promise<number> {
   const options = await parseRunOptions(args)
   const execute = () => run(options)
 
@@ -333,80 +302,6 @@ async function main(args: string[]): Promise<number> {
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
   printJsonFailureDiagnostic(output)
   return output.success ? 0 : 1
-}
-
-async function maybeRespawnWithJspi(command: string | undefined, args: string[]): Promise<number | undefined> {
-  if (!command || !["boot", "run", "recipe-run"].includes(command)) {
-    return undefined
-  }
-
-  if (!shouldRespawnWithJspi()) {
-    return undefined
-  }
-
-  const requiredFlags = ["--experimental-wasm-jspi", "--experimental-wasm-stack-switching"]
-  const missingFlags = requiredFlags.filter((flag) => !process.execArgv.includes(flag))
-  const child = spawn(process.execPath, [...missingFlags, ...process.execArgv, ...process.argv.slice(1, 2), command, ...args], {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      WP_CODEBOX_JSPI_RESPAWNED: "1",
-    },
-  })
-
-  let parentSignal: NodeJS.Signals | undefined
-  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"]
-  const forwardSignal = (signal: NodeJS.Signals): void => {
-    parentSignal ??= signal
-    child.kill(signal)
-  }
-  for (const signal of signals) {
-    process.on(signal, forwardSignal)
-  }
-
-  try {
-    const exit = await new Promise<{ status: number | null; signal: NodeJS.Signals | null }>((resolveExit, reject) => {
-      child.once("error", reject)
-      child.once("close", (status, signal) => resolveExit({ status, signal }))
-    })
-
-    const signal = exit.signal ?? parentSignal
-    if (signal) {
-      for (const forwardedSignal of signals) {
-        process.off(forwardedSignal, forwardSignal)
-      }
-      process.kill(process.pid, signal)
-      return 1
-    }
-
-    return exit.status ?? 1
-  } catch {
-    return undefined
-  } finally {
-    for (const signal of signals) {
-      process.off(signal, forwardSignal)
-    }
-  }
-}
-
-function shouldRespawnWithJspi(): boolean {
-  if (process.env.WP_CODEBOX_JSPI_RESPAWNED || process.env.WP_CODEBOX_NO_JSPI_RESPAWN || process.env.PLAYGROUND_NO_JSPI_RESPAWN) {
-    return false
-  }
-
-  if ("Suspending" in WebAssembly) {
-    return false
-  }
-
-  if (process.versions.bun || "Deno" in globalThis) {
-    return false
-  }
-
-  if (Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10) < 23) {
-    return false
-  }
-
-  return !["--experimental-wasm-jspi", "--experimental-wasm-stack-switching"].every((flag) => process.execArgv.includes(flag))
 }
 
 function parseDiscoveryJsonOption(args: string[]): boolean {
@@ -1916,7 +1811,7 @@ function stripUndefined<T extends Record<string, unknown>>(record: T): T {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 }
 
-main(process.argv.slice(2)).then(
+runCli(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code
   },
