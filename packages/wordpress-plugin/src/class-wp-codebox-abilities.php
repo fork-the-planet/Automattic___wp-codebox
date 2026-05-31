@@ -2379,10 +2379,6 @@ if ( is_readable( $task_path ) ) {
 	}
 }
 
-if ( isset( $payload[\'invocation\'] ) && is_array( $payload[\'invocation\'] ) ) {
-	$invocation = array_replace_recursive( $invocation, $payload[\'invocation\'] );
-}
-
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );
