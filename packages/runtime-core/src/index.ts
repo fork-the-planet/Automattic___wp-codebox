@@ -19,7 +19,6 @@ export * from "./browser-interaction.js"
 export * from "./recipe-schema.js"
 export * from "./runtime-reference.js"
 export * from "./object-utils.js"
-export * from "./runtime-reference.js"
 
 export type RuntimeBackendKind = "wordpress-playground" | (string & {})
 
