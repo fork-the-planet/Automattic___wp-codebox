@@ -101,6 +101,7 @@ async function portAvailable(port: number): Promise<boolean> {
 
 async function runPlaygroundCliWithoutProcessExit<T>(callback: () => Promise<T>): Promise<T> {
   const exit = process.exit
+  const activeHandles = activeProcessHandles()
   process.exit = ((code?: string | number | null | undefined): never => {
     const exitCode = typeof code === "number" ? code : 1
     throw new PlaygroundCliExitError(exitCode)
@@ -108,7 +109,58 @@ async function runPlaygroundCliWithoutProcessExit<T>(callback: () => Promise<T>)
 
   try {
     return await callback()
+  } catch (error) {
+    await disposeNewProcessHandles(activeHandles)
+    throw error
   } finally {
     process.exit = exit
+  }
+}
+
+function activeProcessHandles(): Set<unknown> {
+  const getActiveHandles = (process as typeof process & { _getActiveHandles?: () => unknown[] })._getActiveHandles
+  return new Set(getActiveHandles ? getActiveHandles.call(process) : [])
+}
+
+async function disposeNewProcessHandles(before: Set<unknown>): Promise<void> {
+  const handles = [...activeProcessHandles()].filter((handle) => !before.has(handle))
+  await Promise.all(handles.map(disposeProcessHandle))
+}
+
+async function disposeProcessHandle(handle: unknown): Promise<void> {
+  const candidate = handle as {
+    close?: (callback?: (error?: Error) => void) => unknown
+    destroy?: () => unknown
+    unref?: () => unknown
+  }
+
+  try {
+    if (typeof candidate.close === "function") {
+      await new Promise<void>((resolve) => {
+        let settled = false
+        const finish = () => {
+          if (!settled) {
+            settled = true
+            resolve()
+          }
+        }
+        const result = candidate.close?.(finish)
+        if (result && typeof (result as Promise<void>).then === "function") {
+          void (result as Promise<void>).then(finish, finish)
+        }
+        setTimeout(finish, 1000).unref()
+      })
+      return
+    }
+
+    if (typeof candidate.destroy === "function") {
+      candidate.destroy()
+    }
+
+    if (typeof candidate.unref === "function") {
+      candidate.unref()
+    }
+  } catch {
+    // The original Playground boot failure is the actionable error.
   }
 }
