@@ -20,9 +20,9 @@ from product-specific consumers.
   roles, plugin metadata, artifact shapes, and runtime backends.
 - Product-specific consumers may appear only as external examples, migration
   inventory, or caller-owned integrations.
-- Studio Web, Static Site Importer, Block Artifact Compiler, wp-gym, Homeboy,
-  Extra Chill, and personal project names must not become WP Codebox package
-  names, schema names, default runtime assumptions, or artifact contract fields.
+- Product, importer, compiler, benchmark, orchestration, company, and personal
+  project names must not become WP Codebox package names, schema names, default
+  runtime assumptions, or artifact contract fields.
 - External consumer docs should describe those projects as callers that pass
   recipes, mounts, runtime dependencies, and apply adapters into WP Codebox.
 
@@ -107,9 +107,9 @@ from product-specific consumers.
   `github.com/chubes4/wp-codebox` issue URLs in normalized task context.
 - `tests/smoke-wordpress-plugin.php` uses `chubes4/wp-codebox` repo and PR URLs
   in apply-adapter fixtures, audit assertions, and pending-action payloads.
-- `tests/smoke-wordpress-plugin.php` also creates a fake `studio-web` plugin path
-  for component path behavior. Treat this as a fixture name to review during the
-  external consumer pass; it should not define a WP Codebox contract.
+- `tests/smoke-wordpress-plugin.php` may include fake consumer plugin paths for
+  component path behavior. Treat fixture names as external-consumer inventory;
+  they should not define a WP Codebox contract.
 - Existing artifact schemas such as `wp-codebox/*/v1`, command ids such as
   `wp-codebox.agent-sandbox-run`, and the `wp-codebox` CLI binary are generic WP
   Codebox identifiers and should remain stable unless a separate API versioning
