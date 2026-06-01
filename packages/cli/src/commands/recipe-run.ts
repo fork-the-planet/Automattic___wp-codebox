@@ -7,7 +7,7 @@ import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, 
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import { collectAndFinalizeFailedRecipeArtifacts, finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultFailure, recipeAgentResultOutput, recipeArtifactEvidenceFailure } from "../recipe-evidence.js"
-import { activateExtraPluginsCode, cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { cleanupRecipePreparedSources, installMuPluginsCode, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspaces, recipeBlueprintWithBootActivePlugins, recipeExtraPlugins, recipeMountType, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { DEFAULT_WORDPRESS_VERSION, previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "../runtime-command-wrappers.js"
 
@@ -332,7 +332,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           kind: "wordpress",
           name: recipe.runtime?.name ?? "wp-codebox-recipe",
           version: recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION,
-          blueprint: recipe.runtime?.blueprint ?? { steps: [] },
+          blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
         },
         policy: effectivePolicy,
         secretEnv,
@@ -426,12 +426,6 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const muPluginInstallCode = installMuPluginsCode(extraPlugins)
     if (muPluginInstallCode) {
       executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2))
-    }
-
-    const pluginActivationCode = activateExtraPluginsCode(extraPlugins)
-    if (pluginActivationCode) {
-      executions.push(withRecipeExecutionPhase(await awaitRecipe(runtime.execute({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] })), "setup", -1))
-      interruption?.throwIfInterrupted()
     }
 
     for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
