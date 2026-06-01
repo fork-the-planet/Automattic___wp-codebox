@@ -1446,10 +1446,11 @@ final class WP_Codebox_Abilities {
 
 			$resource = (string) ( $plugin['resource'] ?? 'url' );
 			$path     = 'git:directory' === $resource ? '' : self::browser_clean_path( (string) ( $plugin['path'] ?? '' ) );
-			if ( 'server' === (string) ( $plugin['package'] ?? '' ) && '' === $path ) {
+			$package  = (string) ( $plugin['package'] ?? '' );
+			if ( 'url' === $resource && '' === $path && 'browser' !== $package ) {
 				$slug = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
 				if ( '' === $slug ) {
-					return new WP_Error( 'wp_codebox_browser_plugin_slug_missing', 'Server-packaged browser plugin specs require a slug.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
+					return new WP_Error( 'wp_codebox_browser_plugin_slug_missing', 'Packaged browser runtime plugin specs require a slug.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
 				}
 
 				$package = self::browser_package_remote_plugin( $slug, (string) ( $plugin['url'] ?? '' ), $index, (string) ( $plugin['sha256'] ?? '' ) );
@@ -1698,7 +1699,7 @@ final class WP_Codebox_Abilities {
 
 	/** @return array{url:string,path:string,sha256:string}|WP_Error */
 	private static function browser_package_remote_plugin( string $slug, string $url, int $index, string $expected_sha256 = '' ): array|WP_Error {
-		$source = self::browser_plugin_url( $url, $index );
+		$source = self::browser_remote_plugin_package_url( $url, $index );
 		if ( is_wp_error( $source ) ) {
 			return $source;
 		}
@@ -1756,7 +1757,7 @@ final class WP_Codebox_Abilities {
 	}
 
 	private static function browser_plugin_delivery_url( string $zip_path, string $public_url, string $slug ): string|WP_Error {
-		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 512 * 1024, $zip_path, $slug );
+		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 16 * 1024 * 1024, $zip_path, $slug );
 		$size      = filesize( $zip_path );
 		if ( is_int( $size ) && $size > $max_bytes ) {
 			return $public_url;
@@ -1959,6 +1960,28 @@ final class WP_Codebox_Abilities {
 			'origin' => self::url_origin( $parts ),
 			'host'   => strtolower( (string) $parts['host'] ),
 		);
+	}
+
+	/** @return array{url:string,origin:string,host:string}|WP_Error */
+	private static function browser_remote_plugin_package_url( string $url, int $index ): array|WP_Error {
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_invalid', 'Browser plugin URL must be absolute.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$scheme = strtolower( (string) $parts['scheme'] );
+		$host   = strtolower( (string) $parts['host'] );
+		if ( 'https' !== $scheme ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_insecure', 'Browser plugin URL must use https://.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$default_hosts = array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com' );
+		$allowed_hosts = array_map( 'strtolower', self::string_list( apply_filters( 'wp_codebox_browser_runtime_plugin_package_allowed_hosts', $default_hosts, $url, $index ) ) );
+		if ( ! in_array( $host, $allowed_hosts, true ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_host_not_allowed', 'Browser plugin URL host is not allowed.', array( 'status' => 400, 'index' => $index, 'host' => $host ) );
+		}
+
+		return array( 'url' => $url, 'origin' => self::url_origin( $parts ), 'host' => $host );
 	}
 
 	/** @return array{url:string,origin:string,host:string}|WP_Error */
