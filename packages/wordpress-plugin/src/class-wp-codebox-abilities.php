@@ -1661,6 +1661,18 @@ final class WP_Codebox_Abilities {
 			}
 
 			$component['slug'] = $slug;
+			if ( 'url' === (string) ( $component['resource'] ?? 'url' ) && 'browser' !== (string) ( $component['package'] ?? '' ) ) {
+				$package = self::browser_package_remote_plugin( $slug, (string) ( $component['url'] ?? '' ), count( $plugins ), (string) ( $component['sha256'] ?? '' ) );
+				if ( is_wp_error( $package ) ) {
+					return $package;
+				}
+
+				$component['url']                     = $package['url'];
+				$component['local_package']           = true;
+				$component['local_package_fetch_url'] = $package['fetch_url'];
+				$component['sha256']                  = $package['sha256'];
+			}
+
 			$normalized = self::normalize_browser_plugins( array( $component ), 'runtime.components' );
 			if ( is_wp_error( $normalized ) ) {
 				return $normalized;
@@ -1697,10 +1709,8 @@ final class WP_Codebox_Abilities {
 	private static function browser_runtime_component_registry(): array {
 		$registry = array(
 			'agents-api'        => array(
-				'resource'         => 'git:directory',
-				'url'              => 'https://github.com/Automattic/agents-api',
-				'ref'              => 'main',
-				'refType'          => 'branch',
+				'resource'         => 'url',
+				'url'              => 'https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip',
 				'targetFolderName' => 'agents-api',
 				'activate'         => true,
 				'provenance'       => array( 'source' => 'runtime-component-registry' ),
@@ -1821,14 +1831,15 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_hash_failed', 'Could not hash browser runtime plugin package.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$delivery_url = self::browser_plugin_delivery_url( $zip_path, self::browser_safe_local_package_url( $url ), $slug );
+		$safe_url     = self::browser_safe_local_package_url( $url );
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $safe_url, $slug );
 		if ( is_wp_error( $delivery_url ) ) {
 			return $delivery_url;
 		}
 
 		return array(
 			'url'       => $delivery_url,
-			'fetch_url' => $url,
+			'fetch_url' => $safe_url,
 			'path'      => $zip_path,
 			'sha256'    => $sha256,
 		);
@@ -1881,14 +1892,15 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_url_missing', 'Browser runtime plugin package URL is missing.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$delivery_url = self::browser_plugin_delivery_url( $zip_path, self::browser_safe_local_package_url( $url ), $slug );
+		$safe_url     = self::browser_safe_local_package_url( $url );
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $safe_url, $slug );
 		if ( is_wp_error( $delivery_url ) ) {
 			return $delivery_url;
 		}
 
 		return array(
 			'url'       => $delivery_url,
-			'fetch_url' => $url,
+			'fetch_url' => $safe_url,
 			'path'      => $zip_path,
 			'sha256'    => $sha256,
 		);
@@ -1897,7 +1909,7 @@ final class WP_Codebox_Abilities {
 	private static function browser_plugin_delivery_url( string $zip_path, string $public_url, string $slug ): string|WP_Error {
 		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 16 * 1024 * 1024, $zip_path, $slug );
 		$size      = filesize( $zip_path );
-		if ( is_int( $size ) && $size > $max_bytes ) {
+		if ( is_int( $size ) && $size > $max_bytes && ! self::browser_plugin_uses_loopback_url( $public_url ) ) {
 			return $public_url;
 		}
 
@@ -1911,12 +1923,13 @@ final class WP_Codebox_Abilities {
 
 	private static function browser_safe_local_package_url( string $url ): string {
 		$parts = wp_parse_url( $url );
-		if ( ! is_array( $parts ) || 'http' !== strtolower( (string) ( $parts['scheme'] ?? '' ) ) || ! self::is_loopback_host( (string) ( $parts['host'] ?? '' ) ) ) {
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		if ( ! is_array( $parts ) || ! in_array( $scheme, array( 'http', 'https' ), true ) || ! self::is_loopback_host( (string) ( $parts['host'] ?? '' ) ) ) {
 			return $url;
 		}
 
 		$host = strtolower( trim( (string) $parts['host'], '[]' ) );
-		if ( 'localhost' === $host ) {
+		if ( 'localhost' === $host && 'http' === $scheme ) {
 			return $url;
 		}
 
@@ -1930,7 +1943,8 @@ final class WP_Codebox_Abilities {
 
 	private static function browser_plugin_uses_loopback_url( string $url ): bool {
 		$parts = wp_parse_url( $url );
-		return is_array( $parts ) && 'http' === strtolower( (string) ( $parts['scheme'] ?? '' ) ) && self::is_loopback_host( (string) ( $parts['host'] ?? '' ) );
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		return is_array( $parts ) && in_array( $scheme, array( 'http', 'https' ), true ) && self::is_loopback_host( (string) ( $parts['host'] ?? '' ) );
 	}
 
 	private static function browser_download_remote_plugin( string $url, string $zip_path, string $slug ): true|WP_Error {

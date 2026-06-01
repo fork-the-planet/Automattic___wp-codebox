@@ -387,6 +387,18 @@ $GLOBALS['wp_codebox_remote_responses']['https://github.com/example/generic-mu-r
 	'response' => array( 'code' => 200 ),
 	'body'     => "PK\x03\x04generic-mu-runtime",
 );
+$GLOBALS['wp_codebox_remote_responses']['https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip'] = array(
+	'response' => array( 'code' => 200 ),
+	'body'     => "PK\x03\x04agents-api",
+);
+$GLOBALS['wp_codebox_remote_responses']['https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip'] = array(
+	'response' => array( 'code' => 200 ),
+	'body'     => "PK\x03\x04data-machine",
+);
+$GLOBALS['wp_codebox_remote_responses']['https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip'] = array(
+	'response' => array( 'code' => 200 ),
+	'body'     => "PK\x03\x04data-machine-code",
+);
 mkdir( $root . '/plugin-root/data-machine', 0777, true );
 mkdir( $root . '/plugin-root/data-machine-code', 0777, true );
 mkdir( $root . '/plugin-root/generic-caller-plugin', 0777, true );
@@ -623,7 +635,7 @@ $browser_local_url_package_session = call_user_func(
 );
 $GLOBALS['wp_codebox_upload_dir'] = $previous_upload_dir;
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_browser_plugin_data_url_max_bytes'] );
-$assert( 'browser Playground session installs loopback package URLs through PHP instead of URL resources', ! is_wp_error( $browser_local_url_package_session ) && str_starts_with( (string) ( $browser_local_url_package_session['plugins'][0]['url'] ?? '' ), 'http://localhost:63498/uploads/wp-codebox/browser-runtime-plugins/generic-caller-plugin-' ) && 'http://127.0.0.1:63498/uploads/wp-codebox/browser-runtime-plugins/' === substr( (string) ( $browser_local_url_package_session['plugins'][0]['local_package_fetch_url'] ?? '' ), 0, 66 ) && ! str_starts_with( (string) ( $browser_local_url_package_session['plugins'][0]['url'] ?? '' ), 'data:application/zip;base64,' ) && 'runPHP' === ( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['step'] ?? '' ) && str_contains( (string) ( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['code'] ?? '' ), 'http://127.0.0.1:63498/uploads/wp-codebox/browser-runtime-plugins/generic-caller-plugin-' ) && ! str_contains( (string) ( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['code'] ?? '' ), 'http://localhost:63498/uploads/wp-codebox/browser-runtime-plugins/generic-caller-plugin-' ) && ! isset( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['pluginData'] ) );
+$assert( 'browser Playground session inlines loopback package URLs instead of emitting broken URL resources', ! is_wp_error( $browser_local_url_package_session ) && str_starts_with( (string) ( $browser_local_url_package_session['plugins'][0]['url'] ?? '' ), 'data:application/zip;base64,' ) && 'http://localhost:63498/uploads/wp-codebox/browser-runtime-plugins/' === substr( (string) ( $browser_local_url_package_session['plugins'][0]['local_package_fetch_url'] ?? '' ), 0, 66 ) && 'installPlugin' === ( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['step'] ?? '' ) && str_starts_with( (string) ( $browser_local_url_package_session['playground']['blueprint']['steps'][1]['pluginData']['url'] ?? '' ), 'data:application/zip;base64,' ) && ! str_contains( (string) json_encode( $browser_local_url_package_session['playground']['blueprint']['steps'][1] ), 'http://127.0.0.1:63498/uploads/wp-codebox/browser-runtime-plugins/generic-caller-plugin-' ) );
 
 $browser_site_blueprint_session = call_user_func(
 	$browser_session_ability['execute_callback'],
@@ -751,8 +763,9 @@ if ( null !== $component_paths_filter ) {
 	$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = $component_paths_filter;
 }
 $canonical_component_urls = ! is_wp_error( $browser_canonical_component_session ) ? array_values( array_map( static fn( array $plugin ): string => (string) ( $plugin['url'] ?? '' ), $browser_canonical_component_session['plugins'] ?? array() ) ) : array();
-$assert( 'browser Playground session uses canonical registry components without path packaging by default', ! is_wp_error( $browser_canonical_component_session ) && true === ( $browser_canonical_component_session['success'] ?? false ) && in_array( 'https://github.com/Automattic/agents-api', $canonical_component_urls, true ) && in_array( 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip', $canonical_component_urls, true ) && in_array( 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip', $canonical_component_urls, true ) && 3 === count( array_filter( $browser_canonical_component_session['plugins'] ?? array(), static fn( array $plugin ): bool => 'runtime-component-registry' === ( $plugin['provenance']['source'] ?? '' ) && empty( $plugin['local_package'] ) ) ) );
-$assert( 'browser Playground canonical registry components do not emit localhost package URLs', ! is_wp_error( $browser_canonical_component_session ) && ! str_contains( implode( "\n", $canonical_component_urls ), 'localhost' ) && ! str_contains( implode( "\n", $canonical_component_urls ), '127.0.0.1' ) && ! str_contains( implode( "\n", $canonical_component_urls ), 'data:application/zip;base64,' ) );
+$canonical_component_remote_get_urls = array_values( array_map( static fn( array $request ): string => (string) ( $request['url'] ?? '' ), $GLOBALS['wp_codebox_remote_gets'] ?? array() ) );
+$assert( 'browser Playground session uses canonical registry components without path packaging by default', ! is_wp_error( $browser_canonical_component_session ) && true === ( $browser_canonical_component_session['success'] ?? false ) && in_array( 'https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip', $canonical_component_remote_get_urls, true ) && in_array( 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip', $canonical_component_remote_get_urls, true ) && in_array( 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip', $canonical_component_remote_get_urls, true ) && 3 === count( array_filter( $browser_canonical_component_session['plugins'] ?? array(), static fn( array $plugin ): bool => 'runtime-component-registry' === ( $plugin['provenance']['source'] ?? '' ) && ! empty( $plugin['local_package'] ) ) ) );
+$assert( 'browser Playground canonical registry components avoid direct GitHub and localhost browser fetches', ! is_wp_error( $browser_canonical_component_session ) && ! str_contains( implode( "\n", $canonical_component_urls ), 'github.com/' ) && ! str_contains( implode( "\n", $canonical_component_urls ), 'localhost' ) && ! str_contains( implode( "\n", $canonical_component_urls ), '127.0.0.1' ) );
 
 $browser_session_missing_prereqs = call_user_func(
 	$browser_session_ability['execute_callback'],
