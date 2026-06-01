@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { cp, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { basename, join, relative, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
-import { SANDBOX_WORKSPACE_ROOT, type MountSpec, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
+import { SANDBOX_WORKSPACE_ROOT, type MountSpec, type WorkspaceRecipe, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeStagedFile, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -72,6 +72,15 @@ export interface PreparedStagedFile {
   type: MountSpec["type"]
   cleanupPaths: string[]
   provenance: RecipeStagedFileProvenance
+  metadata: Record<string, unknown>
+}
+
+export interface PreparedRuntimeOverlay {
+  source: string
+  target: string
+  type: "directory"
+  mode: "readonly"
+  cleanupPaths: string[]
   metadata: Record<string, unknown>
 }
 
@@ -193,11 +202,12 @@ async function cleanupRecipeWorkspaces(workspaces: PreparedWorkspaceMount[]): Pr
   await Promise.all(workspaces.flatMap((workspace) => workspace.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })))
 }
 
-export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = []): Promise<void> {
+export async function cleanupRecipePreparedSources(workspaces: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[] = [], overlays: PreparedRuntimeOverlay[] = []): Promise<void> {
   await Promise.all([
     cleanupRecipeWorkspaces(workspaces),
     ...extraPlugins.flatMap((plugin) => plugin.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
     ...stagedFiles.flatMap((stagedFile) => stagedFile.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
+    ...overlays.flatMap((overlay) => overlay.cleanupPaths).map((path) => rm(path, { recursive: true, force: true })),
   ])
 }
 
@@ -250,6 +260,245 @@ export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDi
   }
 
   return stagedFiles
+}
+
+export async function prepareRecipeRuntimeOverlays(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
+  const overlays: PreparedRuntimeOverlay[] = []
+  for (const [index, overlay] of (recipe.runtime?.overlays ?? []).entries()) {
+    if (overlay.kind !== "bundled-library" || overlay.library !== "php-ai-client" || overlay.strategy !== "wordpress-scoped-bundle") {
+      throw new Error(`Unsupported runtime overlay: ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
+    }
+
+    const prepared = await preparePhpAiClientOverlay(overlay, recipeDirectory, index)
+    overlays.push(prepared)
+  }
+
+  return overlays
+}
+
+async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay, recipeDirectory: string, index: number): Promise<PreparedRuntimeOverlay> {
+  const source = resolve(recipeDirectory, overlay.source)
+  await validateExistingDirectoryForOverlay(source, overlay.source)
+  const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-overlay-php-ai-client-"))
+  const bundle = join(stagingRoot, "wp-includes", "php-ai-client")
+  const srcTarget = join(bundle, "src")
+  const thirdPartyTarget = join(bundle, "third-party")
+  await mkdir(srcTarget, { recursive: true })
+  await mkdir(thirdPartyTarget, { recursive: true })
+
+  await copyPhpDirectoryWithTransform(join(source, "src"), srcTarget, transformPhpAiClientSource)
+  await copyComposerDependencies(source, thirdPartyTarget)
+  await prunePhpAiClientThirdParty(thirdPartyTarget)
+  await writePhpAiClientAutoload(bundle)
+  const digest = await directoryContentDigest(bundle)
+
+  return {
+    source: bundle,
+    target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+    type: "directory",
+    mode: "readonly",
+    cleanupPaths: [stagingRoot],
+    metadata: {
+      kind: "runtime-overlay",
+      index,
+      overlayKind: overlay.kind,
+      library: overlay.library,
+      strategy: overlay.strategy,
+      source: overlay.source,
+      target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+      preparedPath: bundle,
+      preparedPathKind: "ephemeral",
+      digest: { sha256: digest },
+      ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
+    },
+  }
+}
+
+async function validateExistingDirectoryForOverlay(source: string, sourceRef: string): Promise<void> {
+  try {
+    const result = await stat(source)
+    if (result.isDirectory()) {
+      return
+    }
+  } catch {
+    // Throw a stable message below.
+  }
+
+  throw new Error(`Runtime overlay source must be an existing directory: ${sourceRef}`)
+}
+
+async function copyComposerDependencies(source: string, thirdPartyTarget: string): Promise<void> {
+  const installedPath = join(source, "vendor", "composer", "installed.json")
+  let installed: unknown
+  try {
+    installed = JSON.parse(await readFile(installedPath, "utf8"))
+  } catch (error) {
+    throw new Error(`php-ai-client overlay requires Composer dependencies at vendor/composer/installed.json: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  const packages = composerInstalledPackages(installed)
+  for (const pkg of packages) {
+    if (pkg.name === "wordpress/php-ai-client") {
+      continue
+    }
+    for (const [namespacePrefix, sourceDirs] of Object.entries(pkg.autoload?.["psr-4"] ?? {})) {
+      const namespacePath = namespacePrefix.replace(/\\/g, "/").replace(/\/+$/, "")
+      for (const sourceDir of Array.isArray(sourceDirs) ? sourceDirs : [sourceDirs]) {
+        const packageSource = join(source, "vendor", pkg.name, String(sourceDir).replace(/\/+$/, ""))
+        try {
+          const result = await stat(packageSource)
+          if (!result.isDirectory()) {
+            continue
+          }
+        } catch {
+          continue
+        }
+        await copyPhpDirectoryWithTransform(packageSource, join(thirdPartyTarget, namespacePath), transformPhpAiClientDependency)
+      }
+    }
+  }
+}
+
+interface ComposerInstalledPackage {
+  name: string
+  autoload?: { "psr-4"?: Record<string, string | string[]> }
+}
+
+function composerInstalledPackages(installed: unknown): ComposerInstalledPackage[] {
+  if (!installed || typeof installed !== "object") {
+    throw new Error("Composer installed.json is not an object")
+  }
+  const data = installed as { packages?: unknown; [key: number]: unknown }
+  const packages = Array.isArray(data.packages) ? data.packages : Array.isArray(installed) ? installed : undefined
+  if (!packages) {
+    throw new Error("Composer installed.json format is unsupported")
+  }
+  return packages.filter((pkg): pkg is ComposerInstalledPackage => Boolean(pkg && typeof pkg === "object" && typeof (pkg as ComposerInstalledPackage).name === "string"))
+}
+
+async function copyPhpDirectoryWithTransform(source: string, target: string, transform: (contents: string) => string): Promise<void> {
+  const result = await stat(source)
+  if (!result.isDirectory()) {
+    throw new Error(`Expected directory while preparing runtime overlay: ${source}`)
+  }
+
+  await mkdir(target, { recursive: true })
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourcePath = join(source, entry.name)
+    const targetPath = join(target, entry.name)
+    if (entry.isDirectory()) {
+      await copyPhpDirectoryWithTransform(sourcePath, targetPath, transform)
+      continue
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".php")) {
+      continue
+    }
+    await mkdir(dirname(targetPath), { recursive: true })
+    await writeFile(targetPath, transform(await readFile(sourcePath, "utf8")))
+  }
+}
+
+function transformPhpAiClientSource(contents: string): string {
+  return scopePhpAiClientDependencyReferences(contents)
+}
+
+function transformPhpAiClientDependency(contents: string): string {
+  return scopePhpAiClientDependencyReferences(contents)
+    .replace(/namespace\s+(?!WordPress\\AiClientDependencies\\)(?!WordPress\\AiClient\b)([A-Za-z_][A-Za-z0-9_\\]*);/g, "namespace WordPress\\AiClientDependencies\\$1;")
+}
+
+function scopePhpAiClientDependencyReferences(contents: string): string {
+  const namespaces = ["Psr", "Http"]
+  let transformed = contents
+  for (const namespace of namespaces) {
+    transformed = transformed
+      .replace(new RegExp(`use ${namespace}\\\\`, "g"), `use WordPress\\AiClientDependencies\\${namespace}\\`)
+      .replace(new RegExp(`([^A-Za-z0-9_\\\\])\\\\${namespace}\\\\`, "g"), `$1\\WordPress\\AiClientDependencies\\${namespace}\\`)
+      .replace(new RegExp(`([^A-Za-z0-9_\\\\])${namespace}\\\\`, "g"), `$1WordPress\\AiClientDependencies\\${namespace}\\`)
+  }
+  return transformed
+}
+
+async function prunePhpAiClientThirdParty(thirdPartyTarget: string): Promise<void> {
+  const removePaths = [
+    "Http/Discovery/Composer",
+    "Http/Client",
+    "Http/Promise",
+    "Http/Discovery/HttpClientDiscovery.php",
+    "Http/Discovery/HttpAsyncClientDiscovery.php",
+    "Http/Discovery/MessageFactoryDiscovery.php",
+    "Http/Discovery/UriFactoryDiscovery.php",
+    "Http/Discovery/StreamFactoryDiscovery.php",
+    "Http/Discovery/NotFoundException.php",
+    "Http/Discovery/Psr17Factory.php",
+    "Http/Discovery/Psr18Client.php",
+    "Http/Discovery/Strategy/MockClientStrategy.php",
+    "Psr/EventDispatcher/ListenerProviderInterface.php",
+    "Psr/EventDispatcher/StoppableEventInterface.php",
+    "Psr/SimpleCache/CacheException.php",
+    "Psr/SimpleCache/InvalidArgumentException.php",
+  ]
+  await Promise.all(removePaths.map((path) => rm(join(thirdPartyTarget, path), { recursive: true, force: true })))
+}
+
+async function writePhpAiClientAutoload(bundle: string): Promise<void> {
+  await writeFile(join(bundle, "autoload.php"), `<?php
+/**
+ * Autoloader for the bundled PHP AI Client library.
+ *
+ * Generated by WP Codebox runtime overlay preparation.
+ */
+
+spl_autoload_register(
+	static function ( $class_name ) {
+		$client_prefix     = 'WordPress\\\\AiClient\\\\';
+		$client_prefix_len = 19;
+		$scoped_prefix     = 'WordPress\\\\AiClientDependencies\\\\';
+		$scoped_prefix_len = 31;
+		$base_dir          = __DIR__;
+
+		if ( 0 === strncmp( $class_name, $client_prefix, $client_prefix_len ) ) {
+			$relative_class = substr( $class_name, $client_prefix_len );
+			$file           = $base_dir . '/src/' . str_replace( '\\\\', '/', $relative_class ) . '.php';
+			if ( file_exists( $file ) ) {
+				require $file;
+			}
+			return;
+		}
+
+		if ( 0 === strncmp( $class_name, $scoped_prefix, $scoped_prefix_len ) ) {
+			$relative_class = substr( $class_name, $scoped_prefix_len );
+			$file           = $base_dir . '/third-party/' . str_replace( '\\\\', '/', $relative_class ) . '.php';
+			if ( file_exists( $file ) ) {
+				require $file;
+			}
+		}
+	}
+);
+`)
+}
+
+async function directoryContentDigest(directory: string): Promise<string> {
+  const hash = createHash("sha256")
+  await hashDirectory(directory, directory, hash)
+  return hash.digest("hex")
+}
+
+async function hashDirectory(root: string, directory: string, hash: ReturnType<typeof createHash>): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  entries.sort((a, b) => a.name.localeCompare(b.name))
+  for (const entry of entries) {
+    const path = join(directory, entry.name)
+    const relativePath = relative(root, path).replace(/\\/g, "/")
+    if (entry.isDirectory()) {
+      hash.update(`dir:${relativePath}\n`)
+      await hashDirectory(root, path, hash)
+    } else if (entry.isFile()) {
+      hash.update(`file:${relativePath}\n`)
+      hash.update(await readFile(path))
+      hash.update("\n")
+    }
+  }
 }
 
 export async function stagedFileMountType(source: string): Promise<MountSpec["type"]> {
