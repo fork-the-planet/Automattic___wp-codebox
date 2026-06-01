@@ -1614,10 +1614,12 @@ final class WP_Codebox_Abilities {
 			}
 
 			$plugins[] = array(
-				'url'        => $package['url'],
-				'slug'       => $slug,
-				'activate'   => true,
-				'provenance' => array(
+				'url'           => $package['url'],
+				'slug'          => $slug,
+				'activate'      => true,
+				'local_package' => true,
+				'sha256'        => $package['sha256'],
+				'provenance'    => array(
 					'schema'       => 'wp-codebox/browser-component-plugin-provenance/v1',
 					'source'       => 'host-component-path',
 					'sha256'       => $package['sha256'],
@@ -1855,6 +1857,11 @@ final class WP_Codebox_Abilities {
 		return 'http://localhost' . $port . $path . $query . $fragment;
 	}
 
+	private static function browser_plugin_uses_loopback_url( string $url ): bool {
+		$parts = wp_parse_url( $url );
+		return is_array( $parts ) && 'http' === strtolower( (string) ( $parts['scheme'] ?? '' ) ) && self::is_loopback_host( (string) ( $parts['host'] ?? '' ) );
+	}
+
 	private static function browser_download_remote_plugin( string $url, string $zip_path, string $slug ): true|WP_Error {
 		$request = function_exists( 'wp_safe_remote_get' ) ? 'wp_safe_remote_get' : ( function_exists( 'wp_remote_get' ) ? 'wp_remote_get' : null );
 		if ( null === $request ) {
@@ -2004,6 +2011,8 @@ final class WP_Codebox_Abilities {
 				'slug'             => $slug,
 				'resource'         => $resource,
 				'activate'         => ! array_key_exists( 'activate', $plugin ) || (bool) $plugin['activate'],
+				'local_package'    => ! empty( $plugin['local_package'] ),
+				'sha256'           => $sha256,
 				'ref'              => sanitize_text_field( (string) ( $plugin['ref'] ?? '' ) ),
 				'refType'          => sanitize_key( (string) ( $plugin['refType'] ?? '' ) ),
 				'path'             => 'git:directory' === $resource ? ltrim( str_replace( '\\', '/', (string) ( $plugin['path'] ?? '' ) ), '/' ) : '',
@@ -2203,6 +2212,14 @@ final class WP_Codebox_Abilities {
 		}
 
 		foreach ( $runtime['plugins'] as $plugin ) {
+			if ( ! empty( $plugin['local_package'] ) && self::browser_plugin_uses_loopback_url( (string) ( $plugin['url'] ?? '' ) ) ) {
+				$steps[] = array(
+					'step' => 'runPHP',
+					'code' => self::browser_plugin_install_php( $plugin ),
+				);
+				continue;
+			}
+
 			$plugin_data = array(
 				'resource' => (string) ( $plugin['resource'] ?? 'url' ),
 				'url'      => $plugin['url'],
@@ -2278,6 +2295,68 @@ final class WP_Codebox_Abilities {
 		}
 
 		return $blueprint;
+	}
+
+	/** @param array<string,mixed> $plugin Plugin spec. */
+	private static function browser_plugin_install_php( array $plugin ): string {
+		$target_folder = sanitize_key( (string) ( $plugin['targetFolderName'] ?? $plugin['slug'] ?? '' ) );
+		if ( '' === $target_folder ) {
+			$target_folder = 'wp-codebox-runtime-plugin';
+		}
+
+		return '<?php
+$package_url = ' . var_export( (string) $plugin['url'], true ) . ';
+$expected_sha256 = ' . var_export( (string) ( $plugin['sha256'] ?? '' ), true ) . ';
+$target_folder = ' . var_export( $target_folder, true ) . ';
+$activate = ' . ( ! empty( $plugin['activate'] ) ? 'true' : 'false' ) . ';
+
+$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+	? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
+	: file_get_contents( $package_url );
+if ( ! is_string( $archive ) || "" === $archive ) {
+	throw new RuntimeException( "Could not read browser plugin package." );
+}
+if ( "" !== $expected_sha256 && ! hash_equals( $expected_sha256, hash( "sha256", $archive ) ) ) {
+	throw new RuntimeException( "Browser plugin package hash mismatch." );
+}
+
+$tmp_zip = tempnam( sys_get_temp_dir(), "wp-codebox-plugin-" );
+if ( false === $tmp_zip || false === file_put_contents( $tmp_zip, $archive ) ) {
+	throw new RuntimeException( "Could not stage browser plugin package." );
+}
+
+$zip = new ZipArchive();
+if ( true !== $zip->open( $tmp_zip ) ) {
+	@unlink( $tmp_zip );
+	throw new RuntimeException( "Could not open browser plugin package." );
+}
+
+$plugins_directory = "/wordpress/wp-content/plugins";
+if ( ! is_dir( $plugins_directory ) ) {
+	mkdir( $plugins_directory, 0777, true );
+}
+$zip->extractTo( $plugins_directory );
+$zip->close();
+@unlink( $tmp_zip );
+
+if ( $activate ) {
+	require_once "/wordpress/wp-load.php";
+	require_once ABSPATH . "wp-admin/includes/plugin.php";
+	$plugins = get_plugins( "/" . $target_folder );
+	$plugin_file = "";
+	foreach ( array_keys( $plugins ) as $file ) {
+		$plugin_file = $target_folder . "/" . $file;
+		break;
+	}
+	if ( "" === $plugin_file ) {
+		throw new RuntimeException( "Browser plugin package entry file is missing." );
+	}
+	$result = activate_plugin( $plugin_file );
+	if ( is_wp_error( $result ) ) {
+		throw new RuntimeException( $result->get_error_message() );
+	}
+}
+';
 	}
 
 	/** @param array<string,mixed> $mu_plugin Mu-plugin spec. */
