@@ -349,10 +349,13 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async destroy(): Promise<void> {
-    const cliServer = await this.cliServerPromise
-    await cliServer?.[Symbol.asyncDispose]()
-    this.status = "destroyed"
-    this.recordEvent("runtime.destroyed", { runtimeId: this.runtimeId })
+    try {
+      const cliServer = await this.cliServerPromise
+      await cliServer?.[Symbol.asyncDispose]()
+    } finally {
+      this.status = "destroyed"
+      this.recordEvent("runtime.destroyed", { runtimeId: this.runtimeId })
+    }
   }
 
   private async currentPreviewUrl(): Promise<string | undefined> {
@@ -364,8 +367,12 @@ class PlaygroundRuntime implements Runtime {
       return undefined
     }
 
-    const server = await this.cliServerPromise
-    return this.spec.preview?.publicUrl ?? server.serverUrl
+    try {
+      const server = await this.cliServerPromise
+      return this.spec.preview?.publicUrl ?? server.serverUrl
+    } catch {
+      return undefined
+    }
   }
 
   private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview> {

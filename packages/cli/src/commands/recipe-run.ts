@@ -128,6 +128,7 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
       const output = interruptedRecipeOutput(await execute(), interruption)
       printRecipeHumanOutput(output)
       interruption?.propagateIfInterrupted()
+      exitAfterPlaygroundCliBootFailure(output)
       return output.success ? 0 : 1
     }
 
@@ -137,9 +138,16 @@ export async function runRecipeRunCommand(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
     printJsonFailureDiagnostic(output)
     interruption?.propagateIfInterrupted()
+    exitAfterPlaygroundCliBootFailure(output)
     return output.success ? 0 : 1
   } finally {
     interruption?.dispose()
+  }
+}
+
+function exitAfterPlaygroundCliBootFailure(output: RecipeRunCommandOutput): void {
+  if (output.schema === "wp-codebox/recipe-run/v1" && output.error?.code === "wp-codebox-playground-cli-exited") {
+    process.exit(output.success ? 0 : 1)
   }
 }
 
