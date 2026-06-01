@@ -726,6 +726,24 @@ $browser_untrusted_playground_origin = call_user_func(
 );
 $assert( 'browser Playground session rejects untrusted Playground origins', is_wp_error( $browser_untrusted_playground_origin ) && 'wp_codebox_browser_origin_not_allowed' === $browser_untrusted_playground_origin->get_error_code() );
 
+$component_paths_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] ?? null;
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] );
+$browser_canonical_component_session = call_user_func(
+	$browser_session_ability['execute_callback'],
+	array(
+		'goal'                  => 'Prepare a browser preview with canonical runtime components.',
+		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
+		'inherit'               => array( 'connectors' => array( 'openai' ) ),
+		'browser_runner'        => array( 'invocation' => array( 'type' => 'task', 'hook' => 'canonical_runtime_task' ) ),
+	)
+);
+if ( null !== $component_paths_filter ) {
+	$GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = $component_paths_filter;
+}
+$canonical_component_urls = ! is_wp_error( $browser_canonical_component_session ) ? array_values( array_map( static fn( array $plugin ): string => (string) ( $plugin['url'] ?? '' ), $browser_canonical_component_session['plugins'] ?? array() ) ) : array();
+$assert( 'browser Playground session uses canonical registry components without path packaging by default', ! is_wp_error( $browser_canonical_component_session ) && true === ( $browser_canonical_component_session['success'] ?? false ) && in_array( 'https://github.com/Automattic/agents-api', $canonical_component_urls, true ) && in_array( 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip', $canonical_component_urls, true ) && in_array( 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip', $canonical_component_urls, true ) && 3 === count( array_filter( $browser_canonical_component_session['plugins'] ?? array(), static fn( array $plugin ): bool => 'runtime-component-registry' === ( $plugin['provenance']['source'] ?? '' ) && empty( $plugin['local_package'] ) ) ) );
+$assert( 'browser Playground canonical registry components do not emit localhost package URLs', ! is_wp_error( $browser_canonical_component_session ) && ! str_contains( implode( "\n", $canonical_component_urls ), 'localhost' ) && ! str_contains( implode( "\n", $canonical_component_urls ), '127.0.0.1' ) && ! str_contains( implode( "\n", $canonical_component_urls ), 'data:application/zip;base64,' ) );
+
 $browser_session_missing_prereqs = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(
@@ -751,6 +769,11 @@ $GLOBALS['wp_codebox_mock_abilities']['agents/chat'] = new WP_Ability();
 
 $component_paths = $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'];
 $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = array_merge( $component_paths, array( 'data_machine' => '' ) );
+$registry_filter = $GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] ?? null;
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] = static function ( array $registry ): array {
+	unset( $registry['data-machine'] );
+	return $registry;
+};
 $browser_session_missing_data_machine = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(
@@ -761,6 +784,11 @@ $browser_session_missing_data_machine = call_user_func(
 );
 $assert( 'browser Playground session blocks when Data Machine prerequisite is missing', ! is_wp_error( $browser_session_missing_data_machine ) && false === ( $browser_session_missing_data_machine['success'] ?? true ) && in_array( 'data_machine', $browser_session_missing_data_machine['signals']['ready_to_code']['missing'] ?? array(), true ) && ! array_key_exists( 'recipe', $browser_session_missing_data_machine ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_component_paths'] = $component_paths;
+if ( null !== $registry_filter ) {
+	$GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] = $registry_filter;
+} else {
+	unset( $GLOBALS['wp_codebox_filters']['wp_codebox_browser_runtime_component_registry'] );
+}
 
 $browser_session_missing_secret = call_user_func(
 	$browser_session_ability['execute_callback'],
