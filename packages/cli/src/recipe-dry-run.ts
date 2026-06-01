@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined, validateRuntimePolicy, type MountSpec, type RuntimePolicy, type SandboxWorkspaceMode, type WorkspaceRecipe, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed, type WorkspaceRecipeWorkspace } from "@chubes4/wp-codebox-core"
 import { serializeError } from "./output.js"
-import { activateExtraPluginsCode, defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
+import { defaultWorkspaceTarget, installMuPluginsCode, pluginTarget, recipeBlueprintWithBootActivePlugins, recipeExtraPluginFile, recipeExtraPluginSlug, recipeExtraPlugins, recipeMountType, recipeSource, recipeSourceProvenance, resolveRecipeExtraPluginFile, stagedFileMountType, stagedFileProvenance, type RecipeSourceProvenance, type RecipeSourceType, type RecipeStagedFileProvenance } from "./recipe-sources.js"
 import { hasExplicitSiteSeedSelectors, parseWorkspaceRecipe, pluginRuntimeHealthProbeStep, recipePolicy, recipeWorkflowSteps, validateWorkspaceRecipe, type RecipeValidationIssue, type RecipeWorkflowPhase } from "./recipe-validation.js"
 
 export interface RecipeDryRunOptions {
@@ -288,7 +288,7 @@ async function recipeDryRunPlan(recipe: WorkspaceRecipe, recipeDirectory: string
       backend: recipe.runtime?.backend ?? "wordpress-playground",
       name: recipe.runtime?.name ?? "wp-codebox-recipe",
       wp: recipe.runtime?.wp ?? context.defaultWordPressVersion,
-      blueprint: recipe.runtime?.blueprint ?? { steps: [] },
+      blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
     },
     artifacts: stripUndefined({
       directory: options.artifactsDirectory ?? recipe.artifacts?.directory,
@@ -335,11 +335,6 @@ async function recipeDryRunSteps(recipe: WorkspaceRecipe, recipeDirectory: strin
   if (muPluginInstallCode) {
     steps.push(recipeDryRunStep({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }, recipeDirectory, policy, "setup", -2, context, "install-mu-plugins"))
   }
-  const pluginActivationCode = activateExtraPluginsCode(dryRunExtraPlugins)
-  if (pluginActivationCode) {
-    steps.push(recipeDryRunStep({ command: "wordpress.run-php", args: [`code=${pluginActivationCode}`] }, recipeDirectory, policy, "setup", -1, context, "activate-extra-plugins"))
-  }
-
   for (const workflowStep of recipeWorkflowSteps(recipe)) {
     steps.push(recipeDryRunStep(workflowStep.step, recipeDirectory, policy, workflowStep.phase, workflowStep.index, context))
   }

@@ -58,6 +58,8 @@ export interface PreparedExtraPlugin {
   provenance: RecipeSourceProvenance
 }
 
+type BootActivePluginCandidate = Pick<PreparedExtraPlugin, "pluginFile" | "activate" | "loadAs">
+
 export interface RecipeStagedFileProvenance {
   kind: "local"
   original: string
@@ -989,32 +991,33 @@ export async function resolveRecipeExtraPluginFile(plugin: WorkspaceRecipeExtraP
   return `${slug}/${slug}.php`
 }
 
-export function activateExtraPluginsCode(extraPlugins: PreparedExtraPlugin[]): string | null {
-  const pluginFiles = extraPlugins
+export function activeExtraPluginFiles(extraPlugins: BootActivePluginCandidate[]): string[] {
+  return extraPlugins
     .filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
     .map((plugin) => plugin.pluginFile)
+}
 
-  if (pluginFiles.length === 0) {
-    return null
+export function recipeBlueprintWithBootActivePlugins(blueprint: unknown, extraPlugins: BootActivePluginCandidate[]): unknown {
+  const activePlugins = activeExtraPluginFiles(extraPlugins)
+  if (activePlugins.length === 0) {
+    return blueprint ?? { steps: [] }
   }
 
-  return `require_once ABSPATH . 'wp-admin/includes/plugin.php';
-$plugins = ${JSON.stringify(pluginFiles)};
-$activated = array();
-foreach ($plugins as $plugin) {
-    $plugin_file = WP_PLUGIN_DIR . '/' . $plugin;
-    if (! file_exists($plugin_file)) {
-        throw new RuntimeException(sprintf('Recipe extra plugin is not mounted: %s', $plugin));
-    }
-    if (! is_plugin_active($plugin)) {
-        $result = activate_plugin($plugin);
-        if (is_wp_error($result)) {
-            throw new RuntimeException($result->get_error_message());
-        }
-    }
-    $activated[] = $plugin;
-}
-echo wp_json_encode(array('command' => 'activate-extra-plugins', 'plugins' => $activated), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+  const base = !blueprint || typeof blueprint !== "object" || Array.isArray(blueprint) ? { steps: [] } : blueprint as Record<string, unknown>
+  const steps = Array.isArray(base.steps) ? base.steps : []
+
+  return {
+    ...base,
+    steps: [
+      {
+        step: "setSiteOptions",
+        options: {
+          active_plugins: activePlugins,
+        },
+      },
+      ...steps,
+    ],
+  }
 }
 
 export function installMuPluginsCode(extraPlugins: PreparedExtraPlugin[]): string | null {

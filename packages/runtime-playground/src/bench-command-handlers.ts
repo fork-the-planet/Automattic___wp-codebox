@@ -137,6 +137,7 @@ function wp_codebox_bench_run_wp_cli_step(array $step) {
 }
 
 $plugins_to_activate = array();
+$activated_plugins = array();
 foreach (is_array($dependency_slugs) ? $dependency_slugs : array() as $dependency_slug) {
     $dependency_slug = sanitize_key((string) $dependency_slug);
     $dependency_file = WP_PLUGIN_DIR . '/' . $dependency_slug . '/' . $dependency_slug . '.php';
@@ -156,6 +157,7 @@ foreach ($plugins_to_activate as $plugin_to_activate) {
     if (is_wp_error($activation)) {
         throw new RuntimeException($activation->get_error_message());
     }
+    $activated_plugins[] = $plugin_to_activate;
 }
 $loaded_bootstrap_file = '';
 foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_file) {
@@ -172,7 +174,7 @@ foreach (is_array($bootstrap_files) ? $bootstrap_files : array() as $bootstrap_f
 if (is_array($bootstrap_files) && count($bootstrap_files) > 0 && $loaded_bootstrap_file === '') {
     throw new RuntimeException('No configured wordpress.bench bootstrap files were found.');
 }
-if (!empty($plugins_to_activate)) {
+if (!empty($activated_plugins)) {
     do_action('plugins_loaded');
     do_action('init');
 }
