@@ -2,6 +2,7 @@ import { assertRuntimePolicy } from "./runtime-policy.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
 import type { ArtifactSpec } from "./artifact-manifest.js"
+import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
   RUNTIME_EPISODE_OBSERVATION_SCHEMA,
@@ -24,6 +25,7 @@ export interface RuntimeCreateSpec {
   backend: RuntimeBackendKind
   environment: EnvironmentSpec
   policy: RuntimePolicy
+  hostTools?: HostToolRegistry | HostToolDefinition[]
   artifactsDirectory?: string
   secretEnv?: Record<string, string>
   metadata?: Record<string, unknown>

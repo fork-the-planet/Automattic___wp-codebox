@@ -14,6 +14,7 @@ export * from "./runtime-reference.js"
 export * from "./object-utils.js"
 export * from "./runtime-action-adapter.js"
 export * from "./artifact-bundle-verifier.js"
+export * from "./host-tool-registry.js"
 
 export type ArtifactReviewProgressEventType =
   | "boot"
