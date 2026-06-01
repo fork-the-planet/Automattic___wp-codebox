@@ -2370,7 +2370,16 @@ $payload = ' . var_export( $default_payload, true ) . ';
 $invocation = ' . var_export( $default_invocation, true ) . ';
 
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
-$wp_codebox_is_playground = \'Emscripten\' === PHP_OS_FAMILY && \'/wordpress/\' === $wp_codebox_playground_root;
+$wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
+
+if ( function_exists( \'wp_register_ability\' ) ) {
+	if ( ! did_action( \'wp_abilities_api_categories_init\' ) ) {
+		do_action( \'wp_abilities_api_categories_init\' );
+	}
+	if ( ! did_action( \'wp_abilities_api_init\' ) ) {
+		do_action( \'wp_abilities_api_init\' );
+	}
+}
 
 if ( is_readable( $task_path ) ) {
 	$raw_payload = json_decode( (string) file_get_contents( $task_path ), true );
