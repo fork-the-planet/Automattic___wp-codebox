@@ -4,12 +4,12 @@ WP Codebox is preparing to move from a personal prototype substrate toward
 Automattic-owned infrastructure. This checklist defines the architecture review
 surface that should be clean before transfer: package boundaries, artifact
 lifecycle, extension seams, browser runtime dependencies, ability contracts,
-security gates, and the Studio Web integration seam.
+security gates, and generic parent-control-plane integration seams.
 
 Use this document as a transfer review checklist, not a roadmap for moving
 product behavior into WP Codebox. WP Codebox should own the generic sandbox and
-artifact substrate. Product orchestrators, including Studio Web, should own
-durable jobs, UX, product semantics, and apply policy.
+artifact substrate. Product orchestrators should own durable jobs, UX, product
+semantics, and apply policy.
 
 ```text
 Product control plane
@@ -25,13 +25,13 @@ Product control plane
 ## Transfer Acceptance Bar
 
 - A new maintainer can identify which package owns each runtime concern without
-  reading product-specific Studio Web code.
+  reading product-specific consumer code.
 - Runtime inputs and outputs are versioned through documented contracts rather
   than implicit CLI output parsing.
 - Artifact bundles are durable enough for review, replay, and apply decisions
   after the disposable Playground runtime is gone.
 - Caller-provided extensions are loaded through generic recipe/runtime fields,
-  not hard-coded Studio Web, SSI, BAC, or personal project assumptions.
+  not hard-coded consumer, importer, compiler, or personal project assumptions.
 - Security-sensitive behavior fails closed: tool allow-lists, file path bounds,
   host/resource controls, secret handling, artifact digest checks, and reviewed
   apply-back all have explicit gates.
@@ -66,8 +66,8 @@ Current workspace packages:
 Transfer checklist:
 
 - Keep generic runtime contracts in `runtime-core`; avoid importing Playground,
-  CLI, WordPress plugin, Studio Web, SSI, BAC, wp-gym, or Homeboy semantics into
-  that package.
+  CLI, WordPress plugin, product-specific, importer, compiler, benchmark, or
+  orchestration semantics into that package.
 - Keep backend-specific behavior in `runtime-playground`; expose it through the
   `RuntimeBackend` contract and command registry instead of direct caller hooks.
 - Keep product orchestration out of `cli`; the CLI should execute recipes and
@@ -75,7 +75,7 @@ Transfer checklist:
   review UX, or model-evaluation scoring.
 - Keep the WordPress plugin as a parent-site adapter; it should expose abilities
   and host configuration without depending on a specific product database, queue,
-  Studio Web UI, or Data Machine install beyond optional integration filters.
+  UI, or Data Machine install beyond optional integration filters.
 - Track helper deduplication through issue #344 so shared object/hash/artifact
   helpers move to stable package homes without creating dependency cycles.
 
@@ -131,7 +131,7 @@ Transfer checklist:
 - Support caller-provided themes and workspaces as mounts with opaque metadata
   that WP Codebox preserves but does not interpret as product topology.
 - Support sandbox-local abilities/tasks as runtime behavior loaded by caller
-  plugins, not as hard-coded Studio Web repair commands in WP Codebox core.
+  plugins, not as hard-coded product repair commands in WP Codebox core.
 - Preserve mount metadata such as repo, branch, component, workspace ref,
   source mode, and WordPress content path as opaque provenance for parent
   adapters.
@@ -139,12 +139,12 @@ Transfer checklist:
   plugins, but provider-specific credentials and behavior remain owned by the
   provider and parent control plane.
 - Avoid introducing direct imports, command names, options, or schemas that name
-  Studio Web, Static Site Importer, Block Artifact Compiler, wp-gym benchmarks,
-  rewards, graders, or personal projects inside generic runtime packages.
+  product consumers, importers, compilers, benchmarks, rewards, graders, or
+  personal projects inside generic runtime packages.
 
 ## Browser Runtime Dependencies
 
-Browser sessions are a runtime mode, not a Studio Web feature. They should expose
+Browser sessions are a runtime mode, not a product feature. They should expose
 generic browser capabilities and accept caller-owned runtime dependencies.
 
 Transfer checklist:
@@ -153,7 +153,7 @@ Transfer checklist:
   generic: goal, mounts, runtime dependencies, preview configuration, browser
   probes/actions, artifacts, and session metadata.
 - Load caller-provided browser/runtime plugins through documented recipe or
-  ability input fields; avoid product-specific defaults that assume Studio Web.
+  ability input fields; avoid product-specific defaults that assume any caller.
 - Treat browser action results, screenshots, console logs, HTTP observations,
   and generated files as artifacts with redaction and manifest entries.
 - Keep the Playground permission bypass bounded to disposable browser runtimes;
@@ -215,28 +215,29 @@ Transfer checklist:
   are executing inside a disposable Playground runtime before registering the
   bypass.
 
-## Studio Web Integration Without Coupling
+## Parent Integration Without Coupling
 
-Studio Web should integrate as a product control plane that calls WP Codebox,
-passes runtime ingredients, and consumes artifacts. WP Codebox should not learn
-Studio Web's product model.
+Product control planes should integrate by calling WP Codebox, passing runtime
+ingredients, and consuming artifacts. WP Codebox should not learn any caller's
+product model.
 
 Transfer checklist:
 
-- Studio Web owns projects, prompts, artifact state, UI, repair loop decisions,
-  diagnostics presentation, review UX, and product-specific job/session state.
-- Studio Web can pass generated source trees as mounts, pass runtime plugins or
-  MU plugins, request browser sessions, run generic browser actions, and read
-  artifact bundles.
-- Static Site Importer and Block Artifact Compiler semantics stay outside WP
-  Codebox. WP Codebox may produce generic files, patches, browser observations,
-  reference indexes, and provenance that those products consume.
-- Studio Web repair agents should be injected as caller-provided sandbox code or
+- Parent control planes own projects, prompts, artifact state, UI, repair loop
+  decisions, diagnostics presentation, review UX, and product-specific
+  job/session state.
+- Parent control planes can pass generated source trees as mounts, pass runtime
+  plugins or MU plugins, request browser sessions, run generic browser actions,
+  and read artifact bundles.
+- Importer and compiler semantics stay outside WP Codebox. WP Codebox may
+  produce generic files, patches, browser observations, reference indexes, and
+  provenance that those products consume.
+- Repair agents should be injected as caller-provided sandbox code or
   sandbox-local tasks, then return changed files and summaries as normal WP
   Codebox artifacts.
-- Studio Web apply/materialization paths should use parent-owned adapters and
-  artifact review; WP Codebox should not push branches, open PRs, import static
-  sites, or mutate production product state directly.
+- Apply/materialization paths should use parent-owned adapters and artifact
+  review; WP Codebox should not push branches, open PRs, import static sites, or
+  mutate production product state directly.
 
 ## Transfer Follow-Up Issues
 
@@ -245,7 +246,7 @@ Transfer checklist:
 - #346: Expand architecture docs for package responsibilities, runtime lifecycle,
   recipe lifecycle, artifact lifecycle, and command policy relationships.
 - #317: Support caller-provided sandbox MU plugins and sandbox-local task
-  invocation for repair runtimes without Studio Web or SSI coupling.
+  invocation for repair runtimes without product or importer coupling.
 - #316: Generate a generic runtime reference index for browser artifacts so
   downstream asset mapping can consume references without AI-authored manifests.
 - #357: Replace personal package namespace and repository URLs once the target
