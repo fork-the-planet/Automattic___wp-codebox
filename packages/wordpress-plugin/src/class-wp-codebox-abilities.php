@@ -323,6 +323,11 @@ final class WP_Codebox_Abilities {
 							'playground'         => array(
 								'type'        => 'object',
 								'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
+								'properties'  => array(
+									'client_module_url' => array( 'type' => 'string' ),
+									'remote_url'        => array( 'type' => 'string' ),
+									'cors_proxy_url'    => array( 'type' => 'string' ),
+								),
 							),
 							'browser_runner'     => array(
 								'type'        => 'object',
@@ -877,6 +882,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'     => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -938,6 +944,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'     => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -1529,6 +1536,7 @@ final class WP_Codebox_Abilities {
 					array(
 						'slug'          => $slug,
 						'url'           => $package['url'],
+						'local_package_fetch_url' => $package['fetch_url'],
 						'sha256'        => $package['sha256'],
 						'local_package' => true,
 						'provenance'    => array(
@@ -1563,11 +1571,12 @@ final class WP_Codebox_Abilities {
 			$resolved[] = array_merge(
 				$plugin,
 				array(
-					'slug'          => $slug,
-					'url'           => $package['url'],
-					'sha256'        => $package['sha256'],
-					'local_package' => true,
-					'provenance'    => array(
+					'slug'                    => $slug,
+					'url'                     => $package['url'],
+					'local_package_fetch_url' => $package['fetch_url'],
+					'sha256'                  => $package['sha256'],
+					'local_package'           => true,
+					'provenance'              => array(
 						'schema' => 'wp-codebox/browser-plugin-provenance/v1',
 						'source' => 'runtime-plugin-path',
 						'path'   => $path,
@@ -1614,12 +1623,13 @@ final class WP_Codebox_Abilities {
 				}
 
 				$plugins[] = array(
-					'url'           => $package['url'],
-					'slug'          => $slug,
-					'activate'      => true,
-					'local_package' => true,
-					'sha256'        => $package['sha256'],
-					'provenance'    => array(
+					'url'                     => $package['url'],
+					'slug'                    => $slug,
+					'activate'                => true,
+					'local_package'           => true,
+					'local_package_fetch_url' => $package['fetch_url'],
+					'sha256'                  => $package['sha256'],
+					'provenance'              => array(
 						'schema' => 'wp-codebox/browser-component-plugin-provenance/v1',
 						'source' => 'host-component-path',
 						'sha256' => $package['sha256'],
@@ -1758,7 +1768,7 @@ final class WP_Codebox_Abilities {
 		return false !== $real ? $real : rtrim( $path, '/\\' );
 	}
 
-	/** @return array{url:string,path:string,sha256:string}|WP_Error */
+	/** @return array{url:string,fetch_url:string,path:string,sha256:string}|WP_Error */
 	private static function browser_package_component_plugin( string $slug, string $source_path ): array|WP_Error {
 		if ( ! class_exists( 'ZipArchive' ) ) {
 			return new WP_Error( 'wp_codebox_browser_plugin_packager_missing', 'Browser runtime plugin packaging requires ZipArchive.', array( 'status' => 500, 'slug' => $slug ) );
@@ -1800,13 +1810,14 @@ final class WP_Codebox_Abilities {
 		}
 
 		return array(
-			'url'    => $delivery_url,
-			'path'   => $zip_path,
-			'sha256' => $sha256,
+			'url'       => $delivery_url,
+			'fetch_url' => $url,
+			'path'      => $zip_path,
+			'sha256'    => $sha256,
 		);
 	}
 
-	/** @return array{url:string,path:string,sha256:string}|WP_Error */
+	/** @return array{url:string,fetch_url:string,path:string,sha256:string}|WP_Error */
 	private static function browser_package_remote_plugin( string $slug, string $url, int $index, string $expected_sha256 = '' ): array|WP_Error {
 		$source = self::browser_remote_plugin_package_url( $url, $index );
 		if ( is_wp_error( $source ) ) {
@@ -1859,9 +1870,10 @@ final class WP_Codebox_Abilities {
 		}
 
 		return array(
-			'url'    => $delivery_url,
-			'path'   => $zip_path,
-			'sha256' => $sha256,
+			'url'       => $delivery_url,
+			'fetch_url' => $url,
+			'path'      => $zip_path,
+			'sha256'    => $sha256,
 		);
 	}
 
@@ -2054,6 +2066,7 @@ final class WP_Codebox_Abilities {
 				'resource'         => $resource,
 				'activate'         => ! array_key_exists( 'activate', $plugin ) || (bool) $plugin['activate'],
 				'local_package'    => ! empty( $plugin['local_package'] ),
+				'local_package_fetch_url' => ! empty( $plugin['local_package'] ) ? trim( (string) ( $plugin['local_package_fetch_url'] ?? $plugin['url'] ?? '' ) ) : '',
 				'sha256'           => $sha256,
 				'ref'              => sanitize_text_field( (string) ( $plugin['ref'] ?? '' ) ),
 				'refType'          => sanitize_key( (string) ( $plugin['refType'] ?? '' ) ),
@@ -2346,8 +2359,10 @@ final class WP_Codebox_Abilities {
 			$target_folder = 'wp-codebox-runtime-plugin';
 		}
 
+		$package_fetch_url = (string) ( $plugin['local_package_fetch_url'] ?? $plugin['url'] ?? '' );
+
 		return '<?php
-$package_url = ' . var_export( (string) $plugin['url'], true ) . ';
+$package_url = ' . var_export( $package_fetch_url, true ) . ';
 $expected_sha256 = ' . var_export( (string) ( $plugin['sha256'] ?? '' ), true ) . ';
 $target_folder = ' . var_export( $target_folder, true ) . ';
 $activate = ' . ( ! empty( $plugin['activate'] ) ? 'true' : 'false' ) . ';
