@@ -1,0 +1,25 @@
+{
+  "schema": "wp-codebox/package-provenance/v1",
+  "wpCodebox": {
+    "name": "wp-codebox-workspace",
+    "version": "0.2.1"
+  },
+  "runtimeCore": {
+    "name": "@chubes4/wp-codebox-core",
+    "version": "0.2.1"
+  },
+  "runtimePlayground": {
+    "name": "@chubes4/wp-codebox-playground",
+    "version": "0.2.1"
+  },
+  "playground": {
+    "cli": {
+      "name": "@wp-playground/cli",
+      "version": "^3.1.35"
+    },
+    "wordpressBuilds": {
+      "name": "@wp-playground/wordpress-builds",
+      "version": "^0.9.4"
+    }
+  }
+}

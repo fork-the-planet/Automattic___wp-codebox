@@ -456,6 +456,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2))
     }
 
+    const extraPluginActivationCode = activateExtraPluginsCode(extraPlugins)
+    if (extraPluginActivationCode) {
+      executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${extraPluginActivationCode}`] }), "setup", -1, "extra-plugin.activate"))
+    }
+
     for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
       executions.push(await awaitRecipe(executeRecipePluginRuntimeStep(runtime, setupStep, recipeDirectory, "setup", index)))
       interruption?.throwIfInterrupted()
@@ -785,6 +790,31 @@ async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: Wo
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Recipe plugin runtime health probe "${probe.name}" failed: ${message}`, { cause: error })
   }
+}
+
+function activateExtraPluginsCode(extraPlugins: PreparedExtraPlugin[]): string | null {
+  const pluginFiles = extraPlugins
+    .filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
+    .map((plugin) => plugin.pluginFile)
+
+  if (pluginFiles.length === 0) {
+    return null
+  }
+
+  return `$plugins = ${JSON.stringify(pluginFiles)};
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+$activated = array();
+foreach ($plugins as $plugin_file) {
+    if (is_plugin_active($plugin_file)) {
+        deactivate_plugins($plugin_file, true, false);
+    }
+    $result = activate_plugin($plugin_file, '', false, false);
+    if (is_wp_error($result)) {
+        throw new RuntimeException('Failed to activate extra plugin ' . $plugin_file . ': ' . $result->get_error_message());
+    }
+    $activated[] = $plugin_file;
+}
+echo wp_json_encode(array('activated' => $activated));`
 }
 
 function recipeRuntimeDiagnostics(recipe: WorkspaceRecipe, executions: RecipeExecutionResult[], error: unknown): RecipeRuntimeDiagnostic[] | undefined {

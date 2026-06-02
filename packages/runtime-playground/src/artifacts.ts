@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto"
+import { createRequire } from "node:module"
+import { readFileSync } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { normalizeBlueprint, preferredVersionsForEnvironment } from "./blueprint.js"
@@ -6,6 +8,8 @@ import { artifactFileDigest, stripUndefined } from "@chubes4/wp-codebox-core"
 import type {
   ArtifactDiagnostic,
   ArtifactDiagnostics,
+  ArtifactPackageIdentity,
+  ArtifactPackageProvenance,
   ArtifactPreview,
   ArtifactProvenance,
   ArtifactRedactionSummary,
@@ -97,6 +101,8 @@ interface RedactionResult {
 export const MAX_CAPTURED_MOUNT_FILES = 200
 export const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
 export const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules"])
+
+const packageRequire = createRequire(import.meta.url)
 
 const COMMON_SECRET_PATTERNS: Array<{ kind: string; pattern: RegExp }> = [
   { kind: "openai-api-key", pattern: /sk-[A-Za-z0-9_-]{20,}/g },
@@ -473,6 +479,7 @@ export function buildArtifactProvenance({
   return stripUndefined({
     task: provenanceContext(context, "task"),
     workspace: provenanceWorkspace(context),
+    packages: buildArtifactPackageProvenance(runtime),
     runtime: stripUndefined({
       backend: runtime.backend,
       version: provenanceString(provenanceContext(context, "runtime"), "version"),
@@ -487,6 +494,66 @@ export function buildArtifactProvenance({
       metadata: mount.metadata,
     })),
   })
+}
+
+function buildArtifactPackageProvenance(runtime: RuntimeInfo): ArtifactPackageProvenance {
+  const rootPackage = readPackageIdentity("../../../package.json", "wp-codebox")
+  const corePackage = readPackageIdentity("../../runtime-core/package.json", "@chubes4/wp-codebox-core")
+  const playgroundPackage = readPackageIdentity("../package.json", "@chubes4/wp-codebox-playground")
+  const playgroundCliVersion = packageDependencyVersion(playgroundPackage.manifest, "@wp-playground/cli")
+  const wordpressBuildsVersion = packageDependencyVersion(playgroundPackage.manifest, "@wp-playground/wordpress-builds")
+
+  const provenance: ArtifactPackageProvenance = stripUndefined({
+    schema: "wp-codebox/package-provenance/v1",
+    wpCodebox: rootPackage.identity,
+    runtimeCore: corePackage.identity,
+    runtimePlayground: playgroundPackage.identity,
+    playground: stripUndefined({
+      cli: playgroundCliVersion ? { name: "@wp-playground/cli", version: playgroundCliVersion } : undefined,
+      wordpressBuilds: wordpressBuildsVersion ? { name: "@wp-playground/wordpress-builds", version: wordpressBuildsVersion } : undefined,
+    }),
+    environment: stripUndefined({
+      wordpressVersion: runtime.environment.version,
+      phpVersion: provenanceString(runtime.environment as unknown as Record<string, unknown>, "phpVersion"),
+      nodeVersion: process.versions.node,
+    }),
+  }) as ArtifactPackageProvenance
+
+  return provenance
+}
+
+function readPackageIdentity(packagePath: string, fallbackName: string): { identity: ArtifactPackageIdentity, manifest: Record<string, unknown> } {
+  try {
+    const resolvedPath = packageRequire.resolve(packagePath)
+    const contents = readFileSync(resolvedPath, "utf8")
+    const manifest = JSON.parse(contents) as Record<string, unknown>
+    const source = stripUndefined({
+      ref: provenanceString(manifest, "gitHeadRef") ?? process.env.WP_CODEBOX_SOURCE_REF ?? process.env.GITHUB_REF_NAME ?? process.env.GITHUB_REF,
+      sha: provenanceString(manifest, "gitHead") ?? process.env.WP_CODEBOX_SOURCE_SHA ?? process.env.GITHUB_SHA,
+      digest: artifactFileDigest(contents),
+    })
+
+    return {
+      identity: stripUndefined({
+        name: provenanceString(manifest, "name") ?? fallbackName,
+        version: provenanceString(manifest, "version"),
+        source,
+      }),
+      manifest,
+    }
+  } catch {
+    return { identity: { name: fallbackName }, manifest: {} }
+  }
+}
+
+function packageDependencyVersion(manifest: Record<string, unknown>, name: string): string | undefined {
+  return provenanceString(asRecord(manifest.dependencies), name)
+    ?? provenanceString(asRecord(manifest.devDependencies), name)
+    ?? provenanceString(asRecord(manifest.peerDependencies), name)
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined
 }
 
 export function buildBlueprintAfter({
