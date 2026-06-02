@@ -7,6 +7,7 @@ export interface BrowserProbeArtifact {
   url: string
   files: {
     actions?: string
+    editorState?: string
     steps?: string
     checkpoints?: string
     console?: string
@@ -20,6 +21,14 @@ export interface BrowserProbeArtifact {
   }
   summary: {
     actions?: number
+    editor?: {
+      kind: string
+      postId?: number
+      postType?: string
+      title?: string
+      blockCount?: number
+      storesAvailable: boolean
+    }
     steps?: number
     assertions?: BrowserAssertionsSummary
     consoleMessages: number
@@ -235,6 +244,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       console: probe.files.console,
       checkpoints: probe.files.checkpoints,
       errorsFile: probe.files.errors,
+      editorState: probe.files.editorState,
       memory: probe.files.memory,
       actions: probe.files.steps ?? probe.files.actions,
       actionCount: probe.summary.steps ?? probe.summary.actions,
@@ -259,6 +269,9 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     }
     if (probe.files.actions) {
       files.set(probe.files.actions, { kind: "browser-actions", contentType: "application/x-ndjson" })
+    }
+    if (probe.files.editorState) {
+      files.set(probe.files.editorState, { kind: "browser-editor-state", contentType: "application/json" })
     }
     if (probe.files.console) {
       files.set(probe.files.console, { kind: "browser-console", contentType: "application/x-ndjson" })
@@ -291,6 +304,6 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.memory, probe.files.network, probe.files.performance, probe.files.summary]
+  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.memory, probe.files.network, probe.files.performance, probe.files.summary]
     .filter((path): path is string => typeof path === "string" && path.length > 0)
 }

@@ -3,7 +3,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { HostToolRegistry, RUNTIME_EPISODE_OBSERVATION_SCHEMA, RUNTIME_EPISODE_SNAPSHOT_SCHEMA, assertRuntimeCommandAllowed, createHostToolRegistry, runtimeEpisodeDigest } from "@chubes4/wp-codebox-core"
 import { browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
-import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
+import { isBrowserCommandArtifactError, runBrowserActionsCommand, runBrowserProbeCommand, runEditorOpenCommand, runHtmlCaptureCommand } from "./browser-command-runners.js"
 import type { PluginCheckArtifact, ThemeCheckArtifact } from "./check-artifacts.js"
 import { executePlaygroundCommand } from "./command-router.js"
 import { cleanWpCliOutput, shellArgv, wpCliCommandFromArgs, wpCliPhpScript } from "./commands.js"
@@ -431,6 +431,19 @@ class PlaygroundRuntime implements Runtime {
       }
       throw error
     }
+    this.browserProbes.push(result.artifact)
+    return result.output
+  }
+
+  async runEditorOpen(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    const result = await runEditorOpenCommand({
+      artifactRoot: this.artifactRoot,
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
     this.browserProbes.push(result.artifact)
     return result.output
   }

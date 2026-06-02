@@ -113,6 +113,7 @@ export interface ArtifactReviewBrowserSummary {
     console?: string
     errorsFile?: string
     actions?: string
+    editorState?: string
     actionCount?: number
     steps?: string
     stepCount?: number

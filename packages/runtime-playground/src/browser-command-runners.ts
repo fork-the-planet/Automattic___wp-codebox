@@ -7,7 +7,10 @@ import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeEr
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, navigateBrowserProbe } from "./browser-probe.js"
-import { argValue, commaListArg } from "./commands.js"
+import { argValue, cleanWpCliOutput, commaListArg } from "./commands.js"
+import { editorOpenTargetFromArgs } from "./editor-actions.js"
+import { bootstrapPhpCode } from "./php-bootstrap.js"
+import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 
 const BROWSER_STEP_DEFAULT_TIMEOUT_MS = 15_000
@@ -512,6 +515,340 @@ export async function runBrowserActionsCommand({
       steps: stepRecords,
     }, null, 2)}\n`,
   }
+}
+
+export async function runEditorOpenCommand({
+  artifactRoot,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  artifactRoot: string
+  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+  const args = spec.args ?? []
+  const target = editorOpenTargetFromArgs(args)
+  const capture = new Set(commaListArg(args, "capture"))
+  if (capture.size === 0) {
+    capture.add("steps")
+    capture.add("console")
+    capture.add("errors")
+    capture.add("html")
+    capture.add("screenshot")
+    capture.add("editor-state")
+  }
+  for (const item of capture) {
+    if (!["steps", "console", "errors", "html", "screenshot", "editor-state"].includes(item)) {
+      throw new Error(`wordpress.editor-open capture supports steps, console, errors, html, screenshot, editor-state: ${item}`)
+    }
+  }
+
+  const waitTimeoutMs = durationArg(args, "wait-timeout", BROWSER_STEP_DEFAULT_TIMEOUT_MS)
+  const targetUrl = resolveBrowserProbeUrl(target.url, server.serverUrl)
+  const browserDirectory = join(artifactRoot, "files", "browser")
+  await mkdir(browserDirectory, { recursive: true })
+
+  const stepRecords: BrowserStepRecord[] = []
+  const consoleMessages: Record<string, unknown>[] = []
+  const errors: BrowserProbeErrorRecord[] = []
+  const stepsPath = join(browserDirectory, "editor-steps.jsonl")
+  const consolePath = join(browserDirectory, "editor-console.jsonl")
+  const errorsPath = join(browserDirectory, "editor-errors.jsonl")
+  const htmlPath = join(browserDirectory, "editor-snapshot.html")
+  const screenshotPath = join(browserDirectory, "editor-screenshot.png")
+  const editorStatePath = join(browserDirectory, "editor-state.json")
+  const summaryPath = join(browserDirectory, "editor-summary.json")
+  const startedAt = now()
+  const { chromium } = await import("playwright")
+  const browser = await chromium.launch()
+  let finalUrl = targetUrl
+  let htmlSha256: string | undefined
+  let screenshotSha256: string | undefined
+  let viewport: BrowserProbeViewport | null = null
+  let editorState: EditorStateSnapshot | undefined
+  let pendingError: Error | undefined
+  let artifact: BrowserProbeArtifact | undefined
+
+  try {
+    const page = await browser.newPage()
+    await installEditorAuthCookies({ page, runPlaygroundCommand, runtimeSpec, server })
+    viewport = await browserProbeViewport(page)
+    if (capture.has("console")) {
+      page.on("console", (message) => consoleMessages.push(serializeBrowserConsoleMessage(message)))
+    }
+    if (capture.has("errors")) {
+      page.on("pageerror", (error) => errors.push(serializeBrowserError("pageerror", error)))
+    }
+
+    const navigateStartedAt = now()
+    const navigateStartedAtMs = Date.now()
+    try {
+      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: waitTimeoutMs })
+      finalUrl = page.url()
+      stepRecords.push(browserStepRecord(0, { kind: "navigate", url: target.url }, "ok", navigateStartedAt, navigateStartedAtMs, finalUrl, {}))
+    } catch (error) {
+      const serialized = serializeBrowserError("probe-error", error)
+      errors.push(serialized)
+      stepRecords.push(browserStepRecord(0, { kind: "navigate", url: target.url }, "failed", navigateStartedAt, navigateStartedAtMs, page.url(), { error: serialized }))
+      pendingError = error instanceof Error ? error : new Error(String(error))
+    }
+
+    if (!pendingError) {
+      const waitStartedAt = now()
+      const waitStartedAtMs = Date.now()
+      try {
+        await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
+        finalUrl = page.url()
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {}))
+      } catch (error) {
+        const serialized = serializeBrowserError("probe-error", error)
+        errors.push(serialized)
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "failed", waitStartedAt, waitStartedAtMs, page.url(), { error: serialized }))
+        pendingError = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+
+    if (capture.has("editor-state")) {
+      editorState = await captureEditorState(page, target)
+      await writeFile(editorStatePath, `${JSON.stringify(editorState, null, 2)}\n`)
+    }
+    if (capture.has("html")) {
+      const html = await page.content()
+      await writeFile(htmlPath, html)
+      htmlSha256 = sha256(Buffer.from(html, "utf8"))
+    }
+    if (capture.has("screenshot")) {
+      await page.screenshot({ path: screenshotPath, fullPage: true })
+      screenshotSha256 = await fileSha256(screenshotPath)
+    }
+  } finally {
+    await browser.close()
+    if (capture.has("steps")) {
+      await writeFile(stepsPath, jsonLines(stepRecords))
+    }
+    if (capture.has("console")) {
+      await writeFile(consolePath, jsonLines(consoleMessages))
+    }
+    if (capture.has("errors")) {
+      await writeFile(errorsPath, jsonLines(errors))
+    }
+
+    const editorSummary = editorState ? summarizeEditorState(target, editorState) : undefined
+    artifact = {
+      requestedUrl: targetUrl,
+      url: targetUrl,
+      files: {
+        ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
+        ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
+        ...(capture.has("editor-state") ? { editorState: "files/browser/editor-state.json" } : {}),
+        ...(capture.has("errors") ? { errors: "files/browser/editor-errors.jsonl" } : {}),
+        ...(capture.has("html") ? { html: "files/browser/editor-snapshot.html" } : {}),
+        ...(capture.has("screenshot") ? { screenshot: "files/browser/editor-screenshot.png" } : {}),
+        summary: "files/browser/editor-summary.json",
+      },
+      summary: {
+        steps: stepRecords.length,
+        consoleMessages: consoleMessages.length,
+        errors: errors.length,
+        finalUrl,
+        htmlSnapshot: capture.has("html"),
+        networkEvents: 0,
+        replayability: browserProbeReplayability(capture),
+        screenshot: capture.has("screenshot"),
+        ...(editorSummary ? { editor: editorSummary } : {}),
+        viewport,
+      },
+    }
+    await writeFile(summaryPath, `${JSON.stringify({
+      schema: "wp-codebox/editor-open/v1",
+      target,
+      requestedUrl: targetUrl,
+      finalUrl,
+      capture: [...capture].sort(),
+      waitTimeoutMs,
+      steps: stepRecords,
+      startedAt,
+      finishedAt: now(),
+      files: artifact.files,
+      hashes: {
+        ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
+        ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
+      },
+      viewport,
+      summary: artifact.summary,
+    }, null, 2)}\n`)
+  }
+
+  if (pendingError) {
+    throw new Error(`wordpress.editor-open failed after ${stepRecords.length} step(s): ${pendingError.message}`)
+  }
+
+  return {
+    artifact,
+    output: `${JSON.stringify({
+      command: "wordpress.editor-open",
+      target,
+      requestedUrl: targetUrl,
+      finalUrl: artifact.summary.finalUrl ?? finalUrl,
+      files: artifact.files,
+      summary: artifact.summary,
+      steps: stepRecords,
+    }, null, 2)}\n`,
+  }
+}
+
+async function waitForAnyVisibleSelector(page: import("playwright").Page, selector: string, timeoutMs: number): Promise<void> {
+  await page.waitForFunction((targetSelector) => {
+    return Array.from(document.querySelectorAll(targetSelector)).some((element) => {
+      const rect = element.getBoundingClientRect()
+      const style = window.getComputedStyle(element)
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
+    })
+  }, selector, { timeout: timeoutMs })
+}
+
+interface EditorStateSnapshot {
+  schema: "wp-codebox/editor-state/v1"
+  capturedAt: string
+  target: ReturnType<typeof editorOpenTargetFromArgs>
+  storesAvailable: boolean
+  post?: {
+    id?: number
+    type?: string
+    status?: string
+    title?: string
+  }
+  blocks?: Array<{
+    name: string
+    clientId?: string
+    attributes?: Record<string, unknown>
+  }>
+}
+
+async function captureEditorState(page: import("playwright").Page, target: ReturnType<typeof editorOpenTargetFromArgs>): Promise<EditorStateSnapshot> {
+  const state = await page.evaluate(() => {
+    const wpData = (window as unknown as { wp?: { data?: { select?: (store: string) => Record<string, unknown> } } }).wp?.data
+    const select = wpData?.select
+    if (!select) {
+      return { storesAvailable: false }
+    }
+    const editor = select("core/editor")
+    const blockEditor = select("core/block-editor")
+    const currentPost = typeof editor.getCurrentPost === "function" ? editor.getCurrentPost() as Record<string, unknown> | null : null
+    const blocks = typeof blockEditor.getBlocks === "function" ? blockEditor.getBlocks() as Array<Record<string, unknown>> : []
+    return {
+      storesAvailable: true,
+      post: {
+        id: typeof editor.getCurrentPostId === "function" ? editor.getCurrentPostId() : currentPost?.id,
+        type: typeof editor.getCurrentPostType === "function" ? editor.getCurrentPostType() : currentPost?.type,
+        status: currentPost?.status,
+        title: typeof currentPost?.title === "object" && currentPost.title ? (currentPost.title as Record<string, unknown>).raw ?? (currentPost.title as Record<string, unknown>).rendered : undefined,
+      },
+      blocks: blocks.map((block) => ({
+        name: typeof block.name === "string" ? block.name : "",
+        clientId: typeof block.clientId === "string" ? block.clientId : undefined,
+        attributes: typeof block.attributes === "object" && block.attributes ? block.attributes as Record<string, unknown> : undefined,
+      })),
+    }
+  }) as Omit<EditorStateSnapshot, "schema" | "capturedAt" | "target">
+
+  return {
+    schema: "wp-codebox/editor-state/v1",
+    capturedAt: now(),
+    target,
+    ...state,
+  }
+}
+
+function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs>, state: EditorStateSnapshot): NonNullable<BrowserProbeArtifact["summary"]["editor"]> {
+  return {
+    kind: target.kind,
+    ...(typeof state.post?.id === "number" ? { postId: state.post.id } : {}),
+    ...(typeof state.post?.type === "string" ? { postType: state.post.type } : target.postType ? { postType: target.postType } : {}),
+    ...(typeof state.post?.title === "string" ? { title: state.post.title } : {}),
+    ...(Array.isArray(state.blocks) ? { blockCount: state.blocks.length } : {}),
+    storesAvailable: state.storesAvailable,
+  }
+}
+
+async function installEditorAuthCookies({
+  page,
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+}: {
+  page: import("playwright").Page
+  runPlaygroundCommand: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+}): Promise<void> {
+  const response = await runPlaygroundCommand("wordpress.editor-open.auth", server, { code: bootstrapPhpCode(runtimeSpec, editorAuthCookiePhpCode(server.serverUrl), []) })
+  assertPlaygroundResponseOk("wordpress.editor-open.auth", response)
+  const cookies = JSON.parse(cleanWpCliOutput(response.text)) as Array<{ name?: string; value?: string; path?: string; expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: "Lax" }>
+  const cookieDomain = new URL(server.serverUrl).hostname
+  await page.context().addCookies(cookies.map((cookie) => ({
+    name: String(cookie.name ?? ""),
+    value: String(cookie.value ?? ""),
+    domain: cookieDomain,
+    path: typeof cookie.path === "string" && cookie.path.length > 0 ? cookie.path : "/",
+    expires: typeof cookie.expires === "number" ? cookie.expires : Math.floor(Date.now() / 1000) + 3600,
+    httpOnly: cookie.httpOnly !== false,
+    secure: cookie.secure === true,
+    sameSite: cookie.sameSite ?? "Lax",
+  })))
+}
+
+function editorAuthCookiePhpCode(browserUrl: string): string {
+  return `
+$user_id = 1;
+$user = get_user_by( 'id', $user_id );
+if ( ! $user ) {
+    throw new RuntimeException( 'wordpress.editor-open requires admin user ID 1 to exist.' );
+}
+wp_set_current_user( $user_id );
+$expiration = time() + HOUR_IN_SECONDS;
+$browser_url = ${JSON.stringify(browserUrl)};
+$auth_scheme = is_ssl() ? 'secure_auth' : 'auth';
+$cookies = array(
+    array(
+        'name'     => AUTH_COOKIE,
+        'value'    => wp_generate_auth_cookie( $user_id, $expiration, $auth_scheme ),
+        'url'      => $browser_url,
+        'path'     => defined( 'ADMIN_COOKIE_PATH' ) && ADMIN_COOKIE_PATH ? ADMIN_COOKIE_PATH : '/wp-admin',
+        'expires'  => $expiration,
+        'httpOnly' => true,
+        'secure'   => is_ssl(),
+        'sameSite' => 'Lax',
+    ),
+    array(
+        'name'     => LOGGED_IN_COOKIE,
+        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
+        'url'      => $browser_url,
+        'path'     => defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/',
+        'expires'  => $expiration,
+        'httpOnly' => true,
+        'secure'   => is_ssl(),
+        'sameSite' => 'Lax',
+    ),
+);
+if ( defined( 'SITECOOKIEPATH' ) && SITECOOKIEPATH && SITECOOKIEPATH !== COOKIEPATH ) {
+    $cookies[] = array(
+        'name'     => LOGGED_IN_COOKIE,
+        'value'    => wp_generate_auth_cookie( $user_id, $expiration, 'logged_in' ),
+        'url'      => $browser_url,
+        'path'     => SITECOOKIEPATH,
+        'expires'  => $expiration,
+        'httpOnly' => true,
+        'secure'   => is_ssl(),
+        'sameSite' => 'Lax',
+    );
+}
+echo wp_json_encode( $cookies );
+`
 }
 
 function now(): string {
