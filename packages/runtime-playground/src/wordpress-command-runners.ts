@@ -19,6 +19,8 @@ import {
   normalizeThemeCheckOutput,
   phpunitRunCode,
   positiveIntegerArg,
+  restRequestInputFromArgs,
+  restRequestPhpCode,
   themeCheckRunCode,
 } from "./commands.js"
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
@@ -173,6 +175,23 @@ export async function runAbilityCommand({
   return response.text
 }
 
+export async function runRestRequestCommand({
+  runPlaygroundCommand,
+  runtimeSpec,
+  server,
+  spec,
+}: {
+  runPlaygroundCommand: RunPlaygroundCommand
+  runtimeSpec: RuntimeCreateSpec
+  server: PlaygroundCliServer
+  spec: ExecutionSpec
+}): Promise<string> {
+  const input = restRequestInputFromArgs(spec.args ?? [])
+  const response = await runPlaygroundCommand("wordpress.rest-request", server, { code: bootstrapPhpCode(runtimeSpec, restRequestPhpCode(input), []) })
+  assertPlaygroundResponseOk("wordpress.rest-request", response)
+  return response.text
+}
+
 export async function runBenchCommand({
   browserProbes,
   createRuntimeWpCliBridge,
@@ -199,12 +218,13 @@ export async function runBenchCommand({
   const warmupIterations = nonNegativeIntegerArg(args, "warmup", 1)
   const dependencySlugs = commaListArg(args, "dependency-slugs")
   const env = jsonObjectArg(args, "env-json")
+  const bootstrapFiles = jsonArrayArg(args, "bootstrap-files-json").filter((file): file is string => typeof file === "string")
   const workloads = jsonArrayArg(args, "workloads-json")
   const bridge = benchWorkloadsUseWpCli(workloads) ? await createRuntimeWpCliBridge(server) : undefined
   let response: PlaygroundRunResponse
   try {
     response = await runPlaygroundCommand("wordpress.bench", server, {
-      code: bootstrapPhpCode(runtimeSpec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, workloads, wpCliBridge: bridge }), []),
+      code: bootstrapPhpCode(runtimeSpec, benchRunCode({ componentId, pluginSlug, iterations, warmupIterations, dependencySlugs, env, bootstrapFiles, workloads, wpCliBridge: bridge }), []),
     })
     assertPlaygroundResponseOk("wordpress.bench", response)
   } finally {

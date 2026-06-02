@@ -13,7 +13,7 @@ import { PlaygroundCommandCrashError, assertPlaygroundResponseOk, errorMessage, 
 import { startPlaygroundCliServer } from "./playground-cli-runner.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
-import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
+import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import type {
@@ -349,10 +349,13 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async destroy(): Promise<void> {
-    const cliServer = await this.cliServerPromise
-    await cliServer?.[Symbol.asyncDispose]()
-    this.status = "destroyed"
-    this.recordEvent("runtime.destroyed", { runtimeId: this.runtimeId })
+    try {
+      const cliServer = await this.cliServerPromise
+      await cliServer?.[Symbol.asyncDispose]()
+    } finally {
+      this.status = "destroyed"
+      this.recordEvent("runtime.destroyed", { runtimeId: this.runtimeId })
+    }
   }
 
   private async currentPreviewUrl(): Promise<string | undefined> {
@@ -364,8 +367,12 @@ class PlaygroundRuntime implements Runtime {
       return undefined
     }
 
-    const server = await this.cliServerPromise
-    return this.spec.preview?.publicUrl ?? server.serverUrl
+    try {
+      const server = await this.cliServerPromise
+      return this.spec.preview?.publicUrl ?? server.serverUrl
+    } catch {
+      return undefined
+    }
   }
 
   private async previewInfo(createdAt: string, holdSeconds = 0): Promise<ArtifactPreview> {
@@ -491,6 +498,16 @@ class PlaygroundRuntime implements Runtime {
   async runAbility(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     return runAbilityCommand({
+      runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
+      runtimeSpec: this.spec,
+      server,
+      spec,
+    })
+  }
+
+  async runRestRequest(spec: ExecutionSpec): Promise<string> {
+    const server = await this.bootPlayground()
+    return runRestRequestCommand({
       runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options),
       runtimeSpec: this.spec,
       server,

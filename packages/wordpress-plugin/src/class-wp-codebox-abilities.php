@@ -69,6 +69,7 @@ final class WP_Codebox_Abilities {
 			$session_input     = self::sandbox_session_input_schema();
 			$preview_schema    = self::preview_input_schema();
 			$outcome_schema    = self::remediation_outcome_schema();
+			$completion_outcome_schema = self::completion_outcome_schema();
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -180,6 +181,7 @@ final class WP_Codebox_Abilities {
 							'artifacts' => array( 'type' => 'string' ),
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,
+							'completion_outcome' => $completion_outcome_schema,
 							'run'       => array( 'type' => 'object' ),
 						),
 					),
@@ -271,6 +273,7 @@ final class WP_Codebox_Abilities {
 										'preview_url' => array( 'type' => 'string' ),
 										'artifacts'   => array( 'type' => 'object' ),
 										'outcome'     => $outcome_schema,
+										'completion_outcome' => $completion_outcome_schema,
 										'run'         => array( 'type' => 'object' ),
 										'error'       => array( 'type' => 'object' ),
 									),
@@ -323,6 +326,11 @@ final class WP_Codebox_Abilities {
 							'playground'         => array(
 								'type'        => 'object',
 								'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
+								'properties'  => array(
+									'client_module_url' => array( 'type' => 'string' ),
+									'remote_url'        => array( 'type' => 'string' ),
+									'cors_proxy_url'    => array( 'type' => 'string' ),
+								),
 							),
 							'browser_runner'     => array(
 								'type'        => 'object',
@@ -360,6 +368,7 @@ final class WP_Codebox_Abilities {
 								'type'        => 'object',
 								'description' => 'Structured browser Playground runtime dependencies compiled by WP Codebox into the session blueprint.',
 								'properties'  => array(
+									'components' => array( 'type' => 'array' ),
 									'plugins'    => array( 'type' => 'array' ),
 									'mu_plugins' => array( 'type' => 'array' ),
 									'themes'     => array( 'type' => 'array' ),
@@ -733,6 +742,31 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @return array<string,mixed> */
+	private static function completion_outcome_schema(): array {
+		return array(
+			'type'        => 'object',
+			'description' => 'Generic sandbox completion outcome emitted as files/completion-outcome.json and returned for orchestration without parsing prose.',
+			'properties'  => array(
+				'schema'       => array( 'type' => 'string' ),
+				'status'       => array(
+					'type' => 'string',
+					'enum' => array( 'succeeded', 'blocked', 'failed', 'partial' ),
+				),
+				'summary'      => array( 'type' => 'string' ),
+				'changedFiles' => array( 'type' => 'object' ),
+				'patch'        => array( 'type' => 'object' ),
+				'artifacts'    => array( 'type' => 'object' ),
+				'verification' => array( 'type' => 'object' ),
+				'blockers'     => array( 'type' => 'array' ),
+				'riskNotes'    => array( 'type' => 'array' ),
+				'confidence'   => array( 'type' => 'string' ),
+				'nextAction'   => array( 'type' => 'string' ),
+				'provenance'   => array( 'type' => 'object' ),
+			),
+		);
+	}
+
+	/** @return array<string,mixed> */
 	private static function sandbox_session_schema(): array {
 		return array(
 			'type'       => 'object',
@@ -876,6 +910,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'     => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -937,6 +972,7 @@ final class WP_Codebox_Abilities {
 			'playground' => array(
 				'client_module_url'  => $playground['client_module_url'],
 				'remote_url'         => $playground['remote_url'],
+				'cors_proxy_url'     => $playground['cors_proxy_url'],
 				'scope'              => (string) ( $playground['scope'] ?? $session_id ),
 				'artifact_base_path' => self::browser_artifact_base_path( $playground ),
 				'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
@@ -1208,21 +1244,86 @@ final class WP_Codebox_Abilities {
 				return new WP_Error( 'wp_codebox_browser_mu_plugin_file_invalid', 'Browser mu-plugin files must be safe PHP filenames.', array( 'status' => 400, 'index' => $index ) );
 			}
 
+			$source_path = self::browser_clean_path( (string) ( $mu_plugin['path'] ?? '' ) );
+			$source_url  = trim( (string) ( $mu_plugin['url'] ?? '' ) );
+			$package     = null;
+			$provenance  = array();
+			if ( '' !== $source_path || '' !== $source_url ) {
+				if ( '' === $slug ) {
+					return new WP_Error( 'wp_codebox_browser_mu_plugin_slug_missing', 'Packaged browser mu-plugin specs require a slug.', array( 'status' => 400, 'index' => $index ) );
+				}
+
+				if ( '' !== $source_path ) {
+					if ( ! is_dir( $source_path ) ) {
+						return new WP_Error( 'wp_codebox_browser_mu_plugin_path_missing', 'Browser mu-plugin path does not exist.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+					}
+
+					$package    = self::browser_package_component_plugin( $slug, $source_path );
+					$provenance = array(
+						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+						'source' => 'runtime-mu-plugin-path',
+						'path'   => $source_path,
+					);
+				} else {
+					$package    = self::browser_remote_mu_plugin_package( $slug, $source_url, $index, (string) ( $mu_plugin['sha256'] ?? '' ) );
+					$provenance = array(
+						'schema' => 'wp-codebox/browser-mu-plugin-provenance/v1',
+						'source' => 'runtime-mu-plugin-remote-package',
+						'url'    => $source_url,
+					);
+				}
+
+				if ( is_wp_error( $package ) ) {
+					return $package;
+				}
+			}
+
 			$content = (string) ( $mu_plugin['content'] ?? '' );
-			if ( '' === trim( $content ) ) {
+			if ( null === $package && '' === trim( $content ) ) {
 				return new WP_Error( 'wp_codebox_browser_mu_plugin_content_missing', 'Browser mu-plugin content is required.', array( 'status' => 400, 'index' => $index ) );
 			}
 
-			$normalized[] = array(
+			$target_folder = sanitize_key( (string) ( $mu_plugin['targetFolderName'] ?? $slug ) );
+			$entry         = ltrim( str_replace( '\\', '/', (string) ( $mu_plugin['entry'] ?? ( '' !== $target_folder ? $target_folder . '.php' : '' ) ) ), '/' );
+			if ( null !== $package && ( '' === $target_folder || '' === $entry || str_contains( $entry, '..' ) || str_starts_with( $entry, '/' ) || ! str_ends_with( $entry, '.php' ) ) ) {
+				return new WP_Error( 'wp_codebox_browser_mu_plugin_entry_invalid', 'Packaged browser mu-plugins require a safe PHP entry file.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+			}
+
+			$normalized[] = array_filter( array(
 				'slug'            => '' !== $slug ? $slug : self::safe_key( basename( $file, '.php' ) ),
 				'file'            => $file,
 				'path'            => '/wordpress/wp-content/mu-plugins/' . $file,
 				'content'         => $content,
+				'url'             => is_array( $package ) ? $package['url'] : '',
+				'sha256'          => is_array( $package ) ? $package['sha256'] : '',
+				'targetFolderName' => $target_folder,
+				'entry'           => $entry,
+				'local_package'   => null !== $package,
+				'provenance'      => array_filter( array_merge( $provenance, array( 'sha256' => is_array( $package ) ? $package['sha256'] : '' ) ) ),
 				'readiness'       => 'compiled',
-			);
+			), static fn( mixed $value ): bool => null !== $value && '' !== $value && array() !== $value );
 		}
 
 		return $normalized;
+	}
+
+	/** @return array{url:string,path:string,sha256:string} | WP_Error */
+	private static function browser_remote_mu_plugin_package( string $slug, string $url, int $index, string $expected_sha256 = '' ): array|WP_Error {
+		$source = self::browser_remote_plugin_package_url( $url, $index );
+		if ( is_wp_error( $source ) ) {
+			return $source;
+		}
+
+		$sha256 = strtolower( trim( $expected_sha256 ) );
+		if ( '' !== $sha256 && ! preg_match( '/^[a-f0-9]{64}$/', $sha256 ) ) {
+			return new WP_Error( 'wp_codebox_browser_mu_plugin_sha256_invalid', 'Browser mu-plugin sha256 must be a 64-character hex digest.', array( 'status' => 400, 'index' => $index, 'slug' => $slug ) );
+		}
+
+		return array(
+			'url'    => $source['url'],
+			'path'   => '',
+			'sha256' => $sha256,
+		);
 	}
 
 	/** @param array<int,mixed> $themes Theme dependency specs. @return array<int,array<string,mixed>>|WP_Error */
@@ -1341,12 +1442,29 @@ final class WP_Codebox_Abilities {
 			return $remote;
 		}
 
+		$default_cors_proxy_url = (string) apply_filters( 'wp_codebox_browser_playground_default_cors_proxy_url', 'https://wordpress-playground-cors-proxy.net/?', $playground );
+		$cors_proxy_url         = (string) ( $playground['cors_proxy_url'] ?? $playground['corsProxy'] ?? $default_cors_proxy_url );
+		$cors_proxy             = array( 'url' => '', 'origin' => '', 'host' => '' );
+		if ( '' !== trim( $cors_proxy_url ) ) {
+			$cors_proxy = self::browser_trusted_url(
+				$cors_proxy_url,
+				'cors_proxy_url',
+				'wp_codebox_browser_playground_cors_proxy_allowed_origins',
+				array( 'https://wordpress-playground-cors-proxy.net', 'https://playground.wordpress.net', 'https://playground.automattic.ai' )
+			);
+			if ( is_wp_error( $cors_proxy ) ) {
+				return $cors_proxy;
+			}
+		}
+
 		$playground['client_module_url'] = $client['url'];
 		$playground['remote_url']        = $remote['url'];
+		$playground['cors_proxy_url']    = $cors_proxy['url'];
 		$playground['provenance']        = array(
 			'schema'            => 'wp-codebox/browser-playground-provenance/v1',
 			'client_module_url' => $client,
 			'remote_url'        => $remote,
+			'cors_proxy_url'    => $cors_proxy,
 		);
 
 		return $playground;
@@ -1411,7 +1529,7 @@ final class WP_Codebox_Abilities {
 			return $bootstrap;
 		}
 
-		$component_plugins = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ) );
+		$component_plugins = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ), is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array() );
 		if ( is_wp_error( $component_plugins ) ) {
 			return $component_plugins;
 		}
@@ -1446,10 +1564,11 @@ final class WP_Codebox_Abilities {
 
 			$resource = (string) ( $plugin['resource'] ?? 'url' );
 			$path     = 'git:directory' === $resource ? '' : self::browser_clean_path( (string) ( $plugin['path'] ?? '' ) );
-			if ( 'server' === (string) ( $plugin['package'] ?? '' ) && '' === $path ) {
+			$package  = (string) ( $plugin['package'] ?? '' );
+			if ( 'url' === $resource && '' === $path && 'browser' !== $package ) {
 				$slug = self::safe_key( (string) ( $plugin['slug'] ?? '' ) );
 				if ( '' === $slug ) {
-					return new WP_Error( 'wp_codebox_browser_plugin_slug_missing', 'Server-packaged browser plugin specs require a slug.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
+					return new WP_Error( 'wp_codebox_browser_plugin_slug_missing', 'Packaged browser runtime plugin specs require a slug.', array( 'status' => 400, 'field' => 'runtime.plugins', 'index' => $index ) );
 				}
 
 				$package = self::browser_package_remote_plugin( $slug, (string) ( $plugin['url'] ?? '' ), $index, (string) ( $plugin['sha256'] ?? '' ) );
@@ -1462,6 +1581,7 @@ final class WP_Codebox_Abilities {
 					array(
 						'slug'          => $slug,
 						'url'           => $package['url'],
+						'local_package_fetch_url' => $package['fetch_url'],
 						'sha256'        => $package['sha256'],
 						'local_package' => true,
 						'provenance'    => array(
@@ -1496,11 +1616,12 @@ final class WP_Codebox_Abilities {
 			$resolved[] = array_merge(
 				$plugin,
 				array(
-					'slug'          => $slug,
-					'url'           => $package['url'],
-					'sha256'        => $package['sha256'],
-					'local_package' => true,
-					'provenance'    => array(
+					'slug'                    => $slug,
+					'url'                     => $package['url'],
+					'local_package_fetch_url' => $package['fetch_url'],
+					'sha256'                  => $package['sha256'],
+					'local_package'           => true,
+					'provenance'              => array(
 						'schema' => 'wp-codebox/browser-plugin-provenance/v1',
 						'source' => 'runtime-plugin-path',
 						'path'   => $path,
@@ -1512,54 +1633,137 @@ final class WP_Codebox_Abilities {
 		return $resolved;
 	}
 
-	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $declared_plugins Caller/runtime plugin specs. @return array<int,array<string,mixed>>|WP_Error */
-	private static function browser_component_plugins( array $input, array $declared_plugins ): array|WP_Error {
-		if ( ! self::browser_component_plugins_required( $input ) ) {
+	/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $declared_plugins Caller/runtime plugin specs. @param array<int,mixed> $declared_components Caller/runtime component refs. @return array<int,array<string,mixed>>|WP_Error */
+	private static function browser_component_plugins( array $input, array $declared_plugins, array $declared_components ): array|WP_Error {
+		$components_required = self::browser_component_plugins_required( $input );
+		if ( ! $components_required && empty( $declared_components ) ) {
 			return array();
 		}
 
 		$paths = self::browser_component_paths( $input );
+		$registry = self::browser_runtime_component_registry();
 		$declared_slugs = array_values(
 			array_filter(
 				array_map( static fn( array $plugin ): string => self::safe_key( (string) ( $plugin['slug'] ?? '' ) ), $declared_plugins )
 			)
 		);
+		$component_slugs = self::browser_runtime_component_slugs( $declared_components, $components_required );
 
 		$plugins = array();
-		foreach (
-			array(
-				'agents_api'        => 'agents-api',
-				'data_machine'      => 'data-machine',
-				'data_machine_code' => 'data-machine-code',
-			) as $key => $slug
-		) {
+		foreach ( $component_slugs as $slug ) {
 			if ( in_array( $slug, $declared_slugs, true ) ) {
 				continue;
 			}
 
+			$key  = self::browser_runtime_component_key( $slug );
 			$path = (string) ( $paths[ $key ] ?? '' );
-			if ( '' === $path || ! is_dir( $path ) ) {
+			if ( '' !== $path ) {
+				if ( ! is_dir( $path ) ) {
+					return new WP_Error( 'wp_codebox_browser_component_path_missing', 'Browser runtime component path does not exist.', array( 'status' => 400, 'slug' => $slug, 'path' => $path ) );
+				}
+
+				$package = self::browser_package_component_plugin( $slug, $path );
+				if ( is_wp_error( $package ) ) {
+					return $package;
+				}
+
+				$plugins[] = array(
+					'url'                     => $package['url'],
+					'slug'                    => $slug,
+					'activate'                => true,
+					'local_package'           => true,
+					'local_package_fetch_url' => $package['fetch_url'],
+					'sha256'                  => $package['sha256'],
+					'provenance'              => array(
+						'schema' => 'wp-codebox/browser-component-plugin-provenance/v1',
+						'source' => 'host-component-path',
+						'sha256' => $package['sha256'],
+					),
+				);
 				continue;
 			}
 
-			$package = self::browser_package_component_plugin( $slug, $path );
-			if ( is_wp_error( $package ) ) {
-				return $package;
+			$component = is_array( $registry[ $slug ] ?? null ) ? $registry[ $slug ] : array();
+			if ( empty( $component ) ) {
+				continue;
 			}
 
-			$plugins[] = array(
-				'url'        => $package['url'],
-				'slug'       => $slug,
-				'activate'   => true,
-				'provenance' => array(
-					'schema'       => 'wp-codebox/browser-component-plugin-provenance/v1',
-					'source'       => 'host-component-path',
-					'sha256'       => $package['sha256'],
-				),
-			);
+			$component['slug'] = $slug;
+			if ( 'url' === (string) ( $component['resource'] ?? 'url' ) && 'browser' !== (string) ( $component['package'] ?? '' ) ) {
+				$package = self::browser_package_remote_plugin( $slug, (string) ( $component['url'] ?? '' ), count( $plugins ), (string) ( $component['sha256'] ?? '' ) );
+				if ( is_wp_error( $package ) ) {
+					return $package;
+				}
+
+				$component['url']                     = $package['url'];
+				$component['local_package']           = true;
+				$component['local_package_fetch_url'] = $package['fetch_url'];
+				$component['sha256']                  = $package['sha256'];
+			}
+
+			$normalized = self::normalize_browser_plugins( array( $component ), 'runtime.components' );
+			if ( is_wp_error( $normalized ) ) {
+				return $normalized;
+			}
+
+			$plugins[] = $normalized[0];
 		}
 
 		return $plugins;
+	}
+
+	/** @return array<int,string> */
+	private static function browser_runtime_component_slugs( array $declared_components, bool $include_required ): array {
+		$slugs = array();
+		if ( $include_required ) {
+			$slugs = array( 'agents-api', 'data-machine', 'data-machine-code' );
+		}
+
+		foreach ( $declared_components as $component ) {
+			$slug = is_array( $component ) ? self::safe_key( (string) ( $component['slug'] ?? $component['component'] ?? $component['name'] ?? '' ) ) : self::safe_key( (string) $component );
+			if ( '' !== $slug ) {
+				$slugs[] = $slug;
+			}
+		}
+
+		return array_values( array_unique( $slugs ) );
+	}
+
+	private static function browser_runtime_component_key( string $slug ): string {
+		return str_replace( '-', '_', self::safe_key( $slug ) );
+	}
+
+	/** @return array<string,array<string,mixed>> */
+	private static function browser_runtime_component_registry(): array {
+		$registry = array(
+			'agents-api'        => array(
+				'resource'         => 'url',
+				'url'              => 'https://github.com/Automattic/agents-api/releases/latest/download/agents-api.zip',
+				'targetFolderName' => 'agents-api',
+				'activate'         => true,
+				'provenance'       => array( 'source' => 'runtime-component-registry' ),
+			),
+			'data-machine'      => array(
+				'resource'         => 'url',
+				'url'              => 'https://github.com/Extra-Chill/data-machine/releases/latest/download/data-machine.zip',
+				'targetFolderName' => 'data-machine',
+				'activate'         => true,
+				'provenance'       => array( 'source' => 'runtime-component-registry' ),
+			),
+			'data-machine-code' => array(
+				'resource'         => 'url',
+				'url'              => 'https://github.com/Extra-Chill/data-machine-code/releases/latest/download/data-machine-code.zip',
+				'targetFolderName' => 'data-machine-code',
+				'activate'         => true,
+				'provenance'       => array( 'source' => 'runtime-component-registry' ),
+			),
+		);
+
+		if ( function_exists( 'apply_filters' ) ) {
+			$registry = apply_filters( 'wp_codebox_browser_runtime_component_registry', $registry );
+		}
+
+		return is_array( $registry ) ? $registry : array();
 	}
 
 	private static function browser_component_plugins_required( array $input ): bool {
@@ -1573,7 +1777,7 @@ final class WP_Codebox_Abilities {
 
 	/** @param array<string,mixed> $input Ability input. @return array{agents_api:string,data_machine:string,data_machine_code:string} */
 	private static function browser_component_paths( array $input ): array {
-		$configured = array_merge( self::browser_default_component_paths(), self::browser_configured_component_paths() );
+		$configured = self::browser_configured_component_paths();
 
 		return array(
 			'agents_api'        => self::browser_clean_path( self::browser_component_path_value( $input, 'agents_api_path', $configured['agents_api'] ?? '' ) ),
@@ -1585,35 +1789,6 @@ final class WP_Codebox_Abilities {
 	private static function browser_component_path_value( array $input, string $key, string $fallback ): string {
 		$value = trim( (string) ( $input[ $key ] ?? '' ) );
 		return '' !== $value ? $value : $fallback;
-	}
-
-	/** @return array{agents_api:string,data_machine:string,data_machine_code:string} */
-	private static function browser_default_component_paths(): array {
-		$paths = array(
-			'agents_api'        => '',
-			'data_machine'      => '',
-			'data_machine_code' => '',
-		);
-
-		if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
-			return $paths;
-		}
-
-		$plugin_dir = self::browser_clean_path( (string) WP_PLUGIN_DIR );
-		foreach (
-			array(
-				'agents_api'        => 'agents-api',
-				'data_machine'      => 'data-machine',
-				'data_machine_code' => 'data-machine-code',
-			) as $key => $slug
-		) {
-			$path = $plugin_dir . DIRECTORY_SEPARATOR . $slug;
-			if ( is_dir( $path ) ) {
-				$paths[ $key ] = $path;
-			}
-		}
-
-		return $paths;
 	}
 
 	/** @return array<string,mixed> */
@@ -1648,7 +1823,7 @@ final class WP_Codebox_Abilities {
 		return false !== $real ? $real : rtrim( $path, '/\\' );
 	}
 
-	/** @return array{url:string,path:string,sha256:string}|WP_Error */
+	/** @return array{url:string,fetch_url:string,path:string,sha256:string}|WP_Error */
 	private static function browser_package_component_plugin( string $slug, string $source_path ): array|WP_Error {
 		if ( ! class_exists( 'ZipArchive' ) ) {
 			return new WP_Error( 'wp_codebox_browser_plugin_packager_missing', 'Browser runtime plugin packaging requires ZipArchive.', array( 'status' => 500, 'slug' => $slug ) );
@@ -1684,21 +1859,23 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_hash_failed', 'Could not hash browser runtime plugin package.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $url, $slug );
+		$safe_url     = self::browser_safe_local_package_url( $url );
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $safe_url, $slug );
 		if ( is_wp_error( $delivery_url ) ) {
 			return $delivery_url;
 		}
 
 		return array(
-			'url'    => $delivery_url,
-			'path'   => $zip_path,
-			'sha256' => $sha256,
+			'url'       => $delivery_url,
+			'fetch_url' => $safe_url,
+			'path'      => $zip_path,
+			'sha256'    => $sha256,
 		);
 	}
 
-	/** @return array{url:string,path:string,sha256:string}|WP_Error */
+	/** @return array{url:string,fetch_url:string,path:string,sha256:string}|WP_Error */
 	private static function browser_package_remote_plugin( string $slug, string $url, int $index, string $expected_sha256 = '' ): array|WP_Error {
-		$source = self::browser_plugin_url( $url, $index );
+		$source = self::browser_remote_plugin_package_url( $url, $index );
 		if ( is_wp_error( $source ) ) {
 			return $source;
 		}
@@ -1743,22 +1920,24 @@ final class WP_Codebox_Abilities {
 			return new WP_Error( 'wp_codebox_browser_plugin_package_url_missing', 'Browser runtime plugin package URL is missing.', array( 'status' => 500, 'slug' => $slug ) );
 		}
 
-		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $url, $slug );
+		$safe_url     = self::browser_safe_local_package_url( $url );
+		$delivery_url = self::browser_plugin_delivery_url( $zip_path, $safe_url, $slug );
 		if ( is_wp_error( $delivery_url ) ) {
 			return $delivery_url;
 		}
 
 		return array(
-			'url'    => $delivery_url,
-			'path'   => $zip_path,
-			'sha256' => $sha256,
+			'url'       => $delivery_url,
+			'fetch_url' => $safe_url,
+			'path'      => $zip_path,
+			'sha256'    => $sha256,
 		);
 	}
 
 	private static function browser_plugin_delivery_url( string $zip_path, string $public_url, string $slug ): string|WP_Error {
-		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 512 * 1024, $zip_path, $slug );
+		$max_bytes = (int) apply_filters( 'wp_codebox_browser_plugin_data_url_max_bytes', 16 * 1024 * 1024, $zip_path, $slug );
 		$size      = filesize( $zip_path );
-		if ( is_int( $size ) && $size > $max_bytes ) {
+		if ( is_int( $size ) && $size > $max_bytes && ! self::browser_plugin_uses_loopback_url( $public_url ) ) {
 			return $public_url;
 		}
 
@@ -1768,6 +1947,32 @@ final class WP_Codebox_Abilities {
 		}
 
 		return 'data:application/zip;base64,' . base64_encode( $contents );
+	}
+
+	private static function browser_safe_local_package_url( string $url ): string {
+		$parts = wp_parse_url( $url );
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		if ( ! is_array( $parts ) || ! in_array( $scheme, array( 'http', 'https' ), true ) || ! self::is_loopback_host( (string) ( $parts['host'] ?? '' ) ) ) {
+			return $url;
+		}
+
+		$host = strtolower( trim( (string) $parts['host'], '[]' ) );
+		if ( 'localhost' === $host && 'http' === $scheme ) {
+			return $url;
+		}
+
+		$port     = isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '';
+		$path     = (string) ( $parts['path'] ?? '' );
+		$query    = isset( $parts['query'] ) ? '?' . (string) $parts['query'] : '';
+		$fragment = isset( $parts['fragment'] ) ? '#' . (string) $parts['fragment'] : '';
+
+		return 'http://localhost' . $port . $path . $query . $fragment;
+	}
+
+	private static function browser_plugin_uses_loopback_url( string $url ): bool {
+		$parts = wp_parse_url( $url );
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		return is_array( $parts ) && in_array( $scheme, array( 'http', 'https' ), true ) && self::is_loopback_host( (string) ( $parts['host'] ?? '' ) );
 	}
 
 	private static function browser_download_remote_plugin( string $url, string $zip_path, string $slug ): true|WP_Error {
@@ -1919,6 +2124,9 @@ final class WP_Codebox_Abilities {
 				'slug'             => $slug,
 				'resource'         => $resource,
 				'activate'         => ! array_key_exists( 'activate', $plugin ) || (bool) $plugin['activate'],
+				'local_package'    => ! empty( $plugin['local_package'] ),
+				'local_package_fetch_url' => ! empty( $plugin['local_package'] ) ? trim( (string) ( $plugin['local_package_fetch_url'] ?? $plugin['url'] ?? '' ) ) : '',
+				'sha256'           => $sha256,
 				'ref'              => sanitize_text_field( (string) ( $plugin['ref'] ?? '' ) ),
 				'refType'          => sanitize_key( (string) ( $plugin['refType'] ?? '' ) ),
 				'path'             => 'git:directory' === $resource ? ltrim( str_replace( '\\', '/', (string) ( $plugin['path'] ?? '' ) ), '/' ) : '',
@@ -1962,6 +2170,28 @@ final class WP_Codebox_Abilities {
 	}
 
 	/** @return array{url:string,origin:string,host:string}|WP_Error */
+	private static function browser_remote_plugin_package_url( string $url, int $index ): array|WP_Error {
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_invalid', 'Browser plugin URL must be absolute.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$scheme = strtolower( (string) $parts['scheme'] );
+		$host   = strtolower( (string) $parts['host'] );
+		if ( 'https' !== $scheme ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_url_insecure', 'Browser plugin URL must use https://.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$default_hosts = array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com' );
+		$allowed_hosts = array_map( 'strtolower', self::string_list( apply_filters( 'wp_codebox_browser_runtime_plugin_package_allowed_hosts', $default_hosts, $url, $index ) ) );
+		if ( ! in_array( $host, $allowed_hosts, true ) ) {
+			return new WP_Error( 'wp_codebox_browser_plugin_host_not_allowed', 'Browser plugin URL host is not allowed.', array( 'status' => 400, 'index' => $index, 'host' => $host ) );
+		}
+
+		return array( 'url' => $url, 'origin' => self::url_origin( $parts ), 'host' => $host );
+	}
+
+	/** @return array{url:string,origin:string,host:string}|WP_Error */
 	private static function browser_plugin_url( string $url, int $index ): array|WP_Error {
 		$parts = wp_parse_url( $url );
 		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
@@ -1976,7 +2206,7 @@ final class WP_Codebox_Abilities {
 		}
 
 		$origin        = self::url_origin( $parts );
-		$default_hosts = self::is_loopback_host( $host ) ? array( 'downloads.wordpress.org', $host ) : array( 'downloads.wordpress.org' );
+		$default_hosts = self::is_loopback_host( $host ) ? array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com', $host ) : array( 'downloads.wordpress.org', 'github.com', 'codeload.github.com' );
 		$allowed_hosts = array_map( 'strtolower', self::string_list( apply_filters( 'wp_codebox_browser_plugin_allowed_hosts', $default_hosts, $url, $index ) ) );
 		if ( ! in_array( $host, $allowed_hosts, true ) ) {
 			return new WP_Error( 'wp_codebox_browser_plugin_host_not_allowed', 'Browser plugin URL host is not allowed.', array( 'status' => 400, 'index' => $index, 'host' => $host ) );
@@ -2096,6 +2326,14 @@ final class WP_Codebox_Abilities {
 		}
 
 		foreach ( $runtime['plugins'] as $plugin ) {
+			if ( ! empty( $plugin['local_package'] ) && self::browser_plugin_uses_loopback_url( (string) ( $plugin['url'] ?? '' ) ) ) {
+				$steps[] = array(
+					'step' => 'runPHP',
+					'code' => self::browser_plugin_install_php( $plugin ),
+				);
+				continue;
+			}
+
 			$plugin_data = array(
 				'resource' => (string) ( $plugin['resource'] ?? 'url' ),
 				'url'      => $plugin['url'],
@@ -2173,8 +2411,76 @@ final class WP_Codebox_Abilities {
 		return $blueprint;
 	}
 
+	/** @param array<string,mixed> $plugin Plugin spec. */
+	private static function browser_plugin_install_php( array $plugin ): string {
+		$target_folder = sanitize_key( (string) ( $plugin['targetFolderName'] ?? $plugin['slug'] ?? '' ) );
+		if ( '' === $target_folder ) {
+			$target_folder = 'wp-codebox-runtime-plugin';
+		}
+
+		$package_fetch_url = (string) ( $plugin['local_package_fetch_url'] ?? $plugin['url'] ?? '' );
+
+		return '<?php
+$package_url = ' . var_export( $package_fetch_url, true ) . ';
+$expected_sha256 = ' . var_export( (string) ( $plugin['sha256'] ?? '' ), true ) . ';
+$target_folder = ' . var_export( $target_folder, true ) . ';
+$activate = ' . ( ! empty( $plugin['activate'] ) ? 'true' : 'false' ) . ';
+
+$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+	? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
+	: file_get_contents( $package_url );
+if ( ! is_string( $archive ) || "" === $archive ) {
+	throw new RuntimeException( "Could not read browser plugin package." );
+}
+if ( "" !== $expected_sha256 && ! hash_equals( $expected_sha256, hash( "sha256", $archive ) ) ) {
+	throw new RuntimeException( "Browser plugin package hash mismatch." );
+}
+
+$tmp_zip = tempnam( sys_get_temp_dir(), "wp-codebox-plugin-" );
+if ( false === $tmp_zip || false === file_put_contents( $tmp_zip, $archive ) ) {
+	throw new RuntimeException( "Could not stage browser plugin package." );
+}
+
+$zip = new ZipArchive();
+if ( true !== $zip->open( $tmp_zip ) ) {
+	@unlink( $tmp_zip );
+	throw new RuntimeException( "Could not open browser plugin package." );
+}
+
+$plugins_directory = "/wordpress/wp-content/plugins";
+if ( ! is_dir( $plugins_directory ) ) {
+	mkdir( $plugins_directory, 0777, true );
+}
+$zip->extractTo( $plugins_directory );
+$zip->close();
+@unlink( $tmp_zip );
+
+if ( $activate ) {
+	require_once "/wordpress/wp-load.php";
+	require_once ABSPATH . "wp-admin/includes/plugin.php";
+	$plugins = get_plugins( "/" . $target_folder );
+	$plugin_file = "";
+	foreach ( array_keys( $plugins ) as $file ) {
+		$plugin_file = $target_folder . "/" . $file;
+		break;
+	}
+	if ( "" === $plugin_file ) {
+		throw new RuntimeException( "Browser plugin package entry file is missing." );
+	}
+	$result = activate_plugin( $plugin_file );
+	if ( is_wp_error( $result ) ) {
+		throw new RuntimeException( $result->get_error_message() );
+	}
+}
+';
+	}
+
 	/** @param array<string,mixed> $mu_plugin Mu-plugin spec. */
 	private static function browser_mu_plugin_install_php( array $mu_plugin ): string {
+		if ( ! empty( $mu_plugin['local_package'] ) ) {
+			return self::browser_packaged_mu_plugin_install_php( $mu_plugin );
+		}
+
 		return '<?php
 $path = ' . var_export( $mu_plugin['path'], true ) . ';
 $directory = dirname( $path );
@@ -2182,6 +2488,54 @@ if ( ! is_dir( $directory ) ) {
 	mkdir( $directory, 0777, true );
 }
 file_put_contents( $path, ' . var_export( $mu_plugin['content'], true ) . ' );
+';
+	}
+
+	/** @param array<string,mixed> $mu_plugin Packaged mu-plugin spec. */
+	private static function browser_packaged_mu_plugin_install_php( array $mu_plugin ): string {
+		return '<?php
+$package_url = ' . var_export( (string) $mu_plugin['url'], true ) . ';
+$expected_sha256 = ' . var_export( (string) ( $mu_plugin['sha256'] ?? '' ), true ) . ';
+$target_directory = "/wordpress/wp-content/mu-plugins/" . ' . var_export( (string) $mu_plugin['targetFolderName'], true ) . ';
+$loader_path = ' . var_export( (string) $mu_plugin['path'], true ) . ';
+$entry = ' . var_export( (string) $mu_plugin['entry'], true ) . ';
+
+$archive = str_starts_with( $package_url, "data:application/zip;base64," )
+	? base64_decode( substr( $package_url, strlen( "data:application/zip;base64," ) ), true )
+	: file_get_contents( $package_url );
+if ( ! is_string( $archive ) || "" === $archive ) {
+	throw new RuntimeException( "Could not read browser mu-plugin package." );
+}
+if ( "" !== $expected_sha256 && ! hash_equals( $expected_sha256, hash( "sha256", $archive ) ) ) {
+	throw new RuntimeException( "Browser mu-plugin package hash mismatch." );
+}
+
+$tmp_zip = tempnam( sys_get_temp_dir(), "wp-codebox-mu-plugin-" );
+if ( false === $tmp_zip || false === file_put_contents( $tmp_zip, $archive ) ) {
+	throw new RuntimeException( "Could not stage browser mu-plugin package." );
+}
+
+$zip = new ZipArchive();
+if ( true !== $zip->open( $tmp_zip ) ) {
+	@unlink( $tmp_zip );
+	throw new RuntimeException( "Could not open browser mu-plugin package." );
+}
+if ( ! is_dir( $target_directory ) ) {
+	mkdir( $target_directory, 0777, true );
+}
+$zip->extractTo( dirname( $target_directory ) );
+$zip->close();
+@unlink( $tmp_zip );
+
+$entry_path = $target_directory . "/" . $entry;
+if ( ! is_readable( $entry_path ) ) {
+	throw new RuntimeException( "Browser mu-plugin package entry file is missing." );
+}
+$loader_directory = dirname( $loader_path );
+if ( ! is_dir( $loader_directory ) ) {
+	mkdir( $loader_directory, 0777, true );
+}
+file_put_contents( $loader_path, "<?php\nrequire_once " . var_export( $entry_path, true ) . ";\n" );
 ';
 	}
 

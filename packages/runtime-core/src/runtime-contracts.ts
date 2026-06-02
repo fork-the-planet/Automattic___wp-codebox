@@ -47,6 +47,23 @@ export interface WorkspaceRecipeMount {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceRecipeRuntimeStack {
+  mounts?: WorkspaceRecipeMount[]
+}
+
+export type WorkspaceRecipeRuntimeOverlayKind = "bundled-library"
+export type WorkspaceRecipeRuntimeOverlayLibrary = "php-ai-client"
+export type WorkspaceRecipeRuntimeOverlayStrategy = "wordpress-scoped-bundle"
+
+export interface WorkspaceRecipeRuntimeOverlay {
+  kind: WorkspaceRecipeRuntimeOverlayKind
+  library: WorkspaceRecipeRuntimeOverlayLibrary
+  source: string
+  target?: string
+  strategy: WorkspaceRecipeRuntimeOverlayStrategy
+  metadata?: Record<string, unknown>
+}
+
 export interface WorkspaceRecipeStagedFile {
   source: string
   target: string
@@ -167,6 +184,8 @@ export interface WorkspaceRecipe {
     name?: string
     wp?: string
     blueprint?: unknown
+    stack?: WorkspaceRecipeRuntimeStack
+    overlays?: WorkspaceRecipeRuntimeOverlay[]
   }
   inputs?: {
     workspaces?: WorkspaceRecipeWorkspace[]

@@ -54,9 +54,12 @@ export interface MountDiff {
   mountIndex: number
   source: string
   target: string
-  baselineSource: string
+  baselineSource?: string
   artifactPath: string
   changed: boolean
+  status: "changed" | "unchanged" | "skipped" | "failed"
+  reason?: string
+  error?: string
 }
 
 export interface ChangedFile {
@@ -82,6 +85,7 @@ export interface MountDiffsResult {
   mountDiffs: MountDiff[]
   changedFiles: CanonicalChangedFiles
   patch: string
+  diagnostics: ArtifactDiagnostic[]
 }
 
 interface RedactionResult {
@@ -117,7 +121,7 @@ export class ArtifactRedactor {
         this.replacements.push({ kind: "configured-secret-name", pattern: new RegExp(escapeRegExp(name), "g") })
       }
 
-      if (value.length >= 4) {
+      if (shouldRedactConfiguredSecretValue(value)) {
         this.replacements.push({ kind: "configured-secret-value", pattern: new RegExp(escapeRegExp(value), "g") })
       }
     }
@@ -170,6 +174,23 @@ export class ArtifactRedactor {
     }
     this.artifactCounts.set(path, artifact)
   }
+}
+
+function shouldRedactConfiguredSecretValue(value: string): boolean {
+  const trimmed = value.trim()
+  if (trimmed.length < 8) {
+    return false
+  }
+
+  if (["true", "false", "null", "undefined"].includes(trimmed.toLowerCase())) {
+    return false
+  }
+
+  if (/^[0-9]+$/.test(trimmed)) {
+    return false
+  }
+
+  return true
 }
 
 function escapeRegExp(value: string): string {

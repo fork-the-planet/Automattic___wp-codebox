@@ -26,6 +26,12 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           name: { type: "string" },
           wp: { type: "string" },
           blueprint: { type: "object" },
+          stack: { $ref: "#/$defs/runtimeStack" },
+          overlays: {
+            type: "array",
+            description: "Typed runtime overlays prepared by WP Codebox before mounting into Playground.",
+            items: { $ref: "#/$defs/runtimeOverlay" },
+          },
         },
       },
       inputs: {
@@ -140,6 +146,30 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
           source: { type: "string" },
           target: { type: "string", pattern: "^/" },
           mode: { enum: ["readonly", "readwrite"] },
+          metadata: { $ref: "#/$defs/metadata" },
+        },
+      },
+      runtimeStack: {
+        type: "object",
+        additionalProperties: false,
+        description: "Explicit runtime stack overlays mounted before recipe workspaces, plugins, and workflow steps. Use this to test alternate WordPress core or bundled dependency refs without consumer-specific shims.",
+        properties: {
+          mounts: {
+            type: "array",
+            items: { $ref: "#/$defs/mount" },
+          },
+        },
+      },
+      runtimeOverlay: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "library", "source", "strategy"],
+        properties: {
+          kind: { const: "bundled-library" },
+          library: { const: "php-ai-client" },
+          source: { type: "string" },
+          target: { type: "string", pattern: "^/" },
+          strategy: { const: "wordpress-scoped-bundle" },
           metadata: { $ref: "#/$defs/metadata" },
         },
       },
