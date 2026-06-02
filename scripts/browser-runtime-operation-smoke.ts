@@ -114,6 +114,23 @@ const rawResponse = { text: "raw response" }
 const rawClient = createClient(rawResponse)
 assert.equal(await runtime.runPhpRequest(rawClient, { code: "<?php echo 'ok';" }), rawResponse)
 
+const recipeClient = createClient('{"success":true,"schema":"wp-codebox/browser-agent-run/v1"}')
+const recipeResult = await runtime.runRecipe(recipeClient, {
+  browser: { task_path: "/tmp/wp-codebox-agent-task.json" },
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.run-php",
+        args: ["code=<?php echo wp_json_encode( array( 'success' => true ) );"],
+      },
+    ],
+  },
+}, { goal: "Smoke test browser recipe marker." })
+assert.equal(recipeResult.success, true)
+assert.equal(recipeClient.files[0]?.path, "/tmp/wp-codebox-agent-task.json")
+assert.match(recipeClient.files[1]?.contents ?? "", /WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER/)
+assert.match(recipeClient.files[1]?.contents ?? "", /<\?php\ndefine\( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true \);/)
+
 await assert.rejects(
   () => runtime.runWordPressOperation(createClient("{}"), { args: {} }),
   /WordPress browser operation must include a type/

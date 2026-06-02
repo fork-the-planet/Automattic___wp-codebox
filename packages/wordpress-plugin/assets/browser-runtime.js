@@ -335,6 +335,16 @@ try {
 		args,
 	}, options );
 
+	const markBrowserPlaygroundRunner = ( code ) => {
+		const marker = "define( 'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER', true );";
+		const source = String( code || '' );
+		if ( source.startsWith( '<?php' ) ) {
+			return source.replace( '<?php', `<?php\n${ marker }` );
+		}
+
+		return `<?php\n${ marker }\n?>\n${ source }`;
+	};
+
 	const runRecipe = async ( client, recipe, taskPayload, options = {} ) => {
 		const taskPath = recipe?.browser?.task_path;
 		const steps = Array.isArray( recipe?.workflow?.steps ) ? recipe.workflow.steps : [];
@@ -357,7 +367,7 @@ try {
 
 			lastResult = await runPhpRequest( client, {
 				...options,
-				code: codeArg.slice( 5 ),
+				code: markBrowserPlaygroundRunner( codeArg.slice( 5 ) ),
 				name: options.name || 'codebox-recipe',
 				expectJson: true,
 			} );
