@@ -11,6 +11,7 @@ import { buildArtifactDiagnostics, createPlaygroundRuntimeBackend } from "@chube
 
 const execFileAsync = promisify(execFile)
 const artifactsDirectory = await mkdtemp(join(tmpdir(), "wp-codebox-artifacts-"))
+const packageProvenanceFixture = JSON.parse(await readFile(resolve(import.meta.dirname, "../tests/fixtures/artifact-package-provenance-shape.json"), "utf8"))
 
 try {
   const { stdout } = await execFileAsync(
@@ -110,6 +111,22 @@ try {
   assert.equal(metadata.provenance.runtime.backend, "wordpress-playground")
   assert.equal(metadata.provenance.runtime.version, "0.0.0")
   assert.equal(metadata.provenance.runtime.wordpressVersion, "latest")
+  assert.equal(metadata.provenance.packages.schema, packageProvenanceFixture.schema)
+  assert.equal(metadata.provenance.packages.wpCodebox.name, packageProvenanceFixture.wpCodebox.name)
+  assert.equal(metadata.provenance.packages.wpCodebox.version, packageProvenanceFixture.wpCodebox.version)
+  assert.match(metadata.provenance.packages.wpCodebox.source.digest.value, /^[a-f0-9]{64}$/)
+  assert.equal(metadata.provenance.packages.runtimeCore.name, packageProvenanceFixture.runtimeCore.name)
+  assert.equal(metadata.provenance.packages.runtimeCore.version, packageProvenanceFixture.runtimeCore.version)
+  assert.match(metadata.provenance.packages.runtimeCore.source.digest.value, /^[a-f0-9]{64}$/)
+  assert.equal(metadata.provenance.packages.runtimePlayground.name, packageProvenanceFixture.runtimePlayground.name)
+  assert.equal(metadata.provenance.packages.runtimePlayground.version, packageProvenanceFixture.runtimePlayground.version)
+  assert.match(metadata.provenance.packages.runtimePlayground.source.digest.value, /^[a-f0-9]{64}$/)
+  assert.equal(metadata.provenance.packages.playground.cli.name, packageProvenanceFixture.playground.cli.name)
+  assert.equal(metadata.provenance.packages.playground.cli.version, packageProvenanceFixture.playground.cli.version)
+  assert.equal(metadata.provenance.packages.playground.wordpressBuilds.name, packageProvenanceFixture.playground.wordpressBuilds.name)
+  assert.equal(metadata.provenance.packages.playground.wordpressBuilds.version, packageProvenanceFixture.playground.wordpressBuilds.version)
+  assert.equal(metadata.provenance.packages.environment.wordpressVersion, "latest")
+  assert.equal(metadata.provenance.packages.environment.nodeVersion, process.versions.node)
   assert.equal(metadata.provenance.task.kind, "recipe-run")
   assert.equal(metadata.provenance.task.recipePath.endsWith("examples/recipes/seeded-plugin-workspace.json"), true)
   assert.equal(metadata.provenance.task.previewPublicUrl, "https://preview.example.test/codebox/")
@@ -150,6 +167,7 @@ try {
   assert.deepEqual(review.preview, artifacts.preview)
   assert.equal(review.provenance.task.kind, "recipe-run")
   assert.equal(review.provenance.runtime.wordpressVersion, "latest")
+  assert.deepEqual(review.provenance.packages, metadata.provenance.packages)
   assert.equal(review.evidence.patch, "files/patch.diff")
   assert.equal(review.evidence.artifactContentDigest, contentDigest)
   assert.equal(review.evidence.changedFiles, "files/changed-files.json")

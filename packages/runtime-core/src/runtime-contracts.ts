@@ -1,7 +1,7 @@
 import { assertRuntimePolicy } from "./runtime-policy.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import { SANDBOX_WORKSPACE_ROOT } from "./runtime-action-adapter.js"
-import type { ArtifactSpec } from "./artifact-manifest.js"
+import type { ArtifactFileDigest, ArtifactSpec } from "./artifact-manifest.js"
 import type { HostToolDefinition, HostToolRegistry } from "./host-tool-registry.js"
 import type {
   RUNTIME_EPISODE_ACTION_SCHEMA,
@@ -418,6 +418,7 @@ export interface RuntimeRestoreSpec {
 export interface ArtifactProvenance {
   task?: Record<string, unknown>
   workspace?: SandboxWorkspaceContract
+  packages?: ArtifactPackageProvenance
   runtime: {
     backend: RuntimeBackendKind
     version?: string
@@ -431,6 +432,32 @@ export interface ArtifactProvenance {
     mode: MountSpec["mode"]
     metadata?: Record<string, unknown>
   }>
+}
+
+export interface ArtifactPackageProvenance {
+  schema: "wp-codebox/package-provenance/v1"
+  wpCodebox?: ArtifactPackageIdentity
+  runtimeCore?: ArtifactPackageIdentity
+  runtimePlayground?: ArtifactPackageIdentity
+  playground?: {
+    cli?: ArtifactPackageIdentity
+    wordpressBuilds?: ArtifactPackageIdentity
+  }
+  environment?: {
+    wordpressVersion?: string
+    phpVersion?: string
+    nodeVersion?: string
+  }
+}
+
+export interface ArtifactPackageIdentity {
+  name: string
+  version?: string
+  source?: {
+    ref?: string
+    sha?: string
+    digest?: ArtifactFileDigest
+  }
 }
 
 export interface ArtifactPreview {
