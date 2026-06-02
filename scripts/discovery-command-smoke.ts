@@ -43,6 +43,7 @@ const expectedCommandIds = [
   "wordpress.browser-probe",
   "wordpress.capture-html",
   "wordpress.browser-actions",
+  "wordpress.editor-open",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",
 ]
@@ -63,6 +64,7 @@ const expectedCatalogCommandIds = [
   "wordpress.browser-probe",
   "wordpress.capture-html",
   "wordpress.browser-actions",
+  "wordpress.editor-open",
   "wordpress.browser-actions.evaluate",
   "wp-codebox.agent-runtime-probe",
   "wp-codebox.agent-sandbox-run",
