@@ -353,6 +353,37 @@ private static function browser_materializer_contract_schema(): array {
 }
 
 /** @return array<string,mixed> */
+private static function browser_task_contract_schema(): array {
+	return array(
+		'type'       => 'object',
+		'properties' => array(
+			'success'          => array( 'type' => 'boolean' ),
+			'schema'           => array( 'type' => 'string' ),
+			'execution'        => array(
+				'type' => 'string',
+				'enum' => array( 'browser-playground' ),
+			),
+			'execution_scope'  => array(
+				'type' => 'string',
+				'enum' => array( 'disposable-playground' ),
+			),
+			'permission_model' => array(
+				'type' => 'string',
+				'enum' => array( 'sandbox-bypass' ),
+			),
+			'session'          => array( 'type' => 'object' ),
+			'primary'          => self::browser_playground_session_schema(),
+			'phases'           => array(
+				'type'        => 'array',
+				'description' => 'Named browser task phases. The first supported kind is materializer, which returns a browser-materializer-contract envelope.',
+				'items'       => array( 'type' => 'object' ),
+			),
+			'provenance'       => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
 private static function browser_session_authorization_schema(): array {
 	return self::trusted_orchestrator_authorization_schema( self::BROWSER_SESSION_CREATE_SCOPE, 'Explicit trusted orchestrator authorization for browser session creation. Callers must provide a caller id and the browser-session:create scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' );
 }
