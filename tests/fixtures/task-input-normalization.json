@@ -12,6 +12,7 @@
       "allowed_tools": [],
       "expected_artifacts": [],
       "agent_bundles": [],
+      "sandbox_tool_policy": {},
       "policy": {},
       "context": {}
     }
@@ -46,6 +47,7 @@
           "token_env": "AGENT_BUNDLE_TOKEN"
         }
       ],
+      "sandbox_tool_policy": {},
       "policy": {
         "applyBack": "reviewed"
       },
@@ -84,6 +86,7 @@
           "token_env": "AGENT_BUNDLE_TOKEN"
         }
       ],
+      "sandbox_tool_policy": {},
       "policy": {
         "applyBack": "reviewed"
       },

@@ -107,9 +107,9 @@ backend or host adapter. The important modules are:
   manifest and content digest primitives.
 - [`src/workspace-policy.ts`](../packages/runtime-core/src/workspace-policy.ts):
   writable-root and hidden-path checks for workspace artifacts.
-- [`src/sandbox-datamachine-tool-policy.ts`](../packages/runtime-core/src/sandbox-datamachine-tool-policy.ts):
-  generic allow-list policy for optional in-sandbox tools. The core contract is
-  the tool boundary, not any parent control-plane operation.
+- [`src/sandbox-tool-policy.ts`](../packages/runtime-core/src/sandbox-tool-policy.ts):
+  generic resolved sandbox tool policy snapshot shape. Callers own product tool
+  taxonomy; Codebox owns validation and enforcement.
 - [`src/task-input.ts`](../packages/runtime-core/src/task-input.ts): normalized
   structured task input shared by host adapters.
 

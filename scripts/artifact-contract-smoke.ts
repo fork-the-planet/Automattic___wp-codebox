@@ -138,11 +138,7 @@ try {
   assert.equal(metadata.provenance.workspace.schema, "wp-codebox/sandbox-workspace/v1")
   assert.equal(metadata.provenance.workspace.root, "/workspace")
   assert.equal(metadata.provenance.workspace.defaultMode, "repo-backed")
-  assert.ok(metadata.provenance.workspace.dmc.safeAbilities.includes("datamachine/workspace-edit"))
-  assert.ok(metadata.provenance.workspace.dmc.safeAbilities.includes("datamachine/get-github-file"))
-  assert.ok(metadata.provenance.workspace.dmc.parentOnlyAbilities.includes("datamachine/workspace-git-push"))
-  assert.ok(metadata.provenance.workspace.dmc.parentOnlyAbilities.includes("datamachine/create-github-pull-request"))
-  assert.equal(metadata.provenance.workspace.dmc.safeAbilities.includes("datamachine/workspace-git-push"), false)
+  assert.equal(Object.hasOwn(metadata.provenance.workspace, "dmc"), false)
   assert.ok(metadata.provenance.workspace.mounts.some((mount: { target: string; sourceMode: string; mountRole?: string }) =>
     mount.target === "/wordpress/wp-content/plugins/seeded-helper" && mount.sourceMode === "repo-backed" && mount.mountRole === "recipe-workspace",
   ))

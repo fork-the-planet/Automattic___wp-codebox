@@ -206,10 +206,7 @@ export interface SandboxWorkspaceContract {
   root: typeof SANDBOX_WORKSPACE_ROOT | (string & {})
   defaultMode: SandboxWorkspaceMode
   mounts: SandboxWorkspaceMountRef[]
-  dmc: {
-    safeAbilities: string[]
-    parentOnlyAbilities: string[]
-  }
+  toolPolicy?: unknown
 }
 
 export interface WorkspaceRecipe {

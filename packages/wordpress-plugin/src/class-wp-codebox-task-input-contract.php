@@ -17,7 +17,7 @@ final class WP_Codebox_Task_Input_Contract {
 		return array(
 			'$id'        => self::SCHEMA,
 			'type'       => 'object',
-			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'policy', 'context' ),
+			'required'   => array( 'schema', 'version', 'goal', 'target', 'allowed_tools', 'expected_artifacts', 'agent_bundles', 'sandbox_tool_policy', 'policy', 'context' ),
 			'properties' => array(
 				'schema'             => array(
 					'type'        => 'string',
@@ -73,6 +73,10 @@ final class WP_Codebox_Task_Input_Contract {
 						),
 					),
 				),
+				'sandbox_tool_policy' => array(
+					'type'        => 'object',
+					'description' => 'Resolved caller-owned sandbox tool policy snapshot. Codebox validates and enforces it without owning product-specific tool taxonomy.',
+				),
 				'policy'             => array(
 					'type'        => 'object',
 					'description' => 'Caller policy hints for approvals, apply-back, sandboxing, and risk controls.',
@@ -100,6 +104,7 @@ final class WP_Codebox_Task_Input_Contract {
 			'allowed_tools'      => self::string_list( $input['allowed_tools'] ?? array() ),
 			'expected_artifacts' => self::string_list( $input['expected_artifacts'] ?? array() ),
 			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? $input['agentBundles'] ?? array() ),
+			'sandbox_tool_policy' => is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : ( is_array( $input['sandboxToolPolicy'] ?? null ) ? $input['sandboxToolPolicy'] : array() ),
 			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
 			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),
 		);

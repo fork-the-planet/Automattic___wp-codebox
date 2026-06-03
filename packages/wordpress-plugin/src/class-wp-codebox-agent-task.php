@@ -29,7 +29,7 @@ final class WP_Codebox_Agent_Task {
 		}
 
 		if ( ! empty( $task_input['allowed_tools'] ) && null !== $allowed_tools_validator ) {
-			$error = $allowed_tools_validator( $task_input['allowed_tools'] );
+			$error = $allowed_tools_validator( $task_input['allowed_tools'], $task_input );
 			if ( is_wp_error( $error ) ) {
 				return $error;
 			}
