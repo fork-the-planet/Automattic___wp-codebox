@@ -11,6 +11,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-schemas.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-execution.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-permissions.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-inheritance.php';
+require_once __DIR__ . '/trait-wp-codebox-abilities-provider-adapter.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-artifacts.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runtime.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
@@ -32,6 +33,7 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Execution;
 	use WP_Codebox_Abilities_Permissions;
 	use WP_Codebox_Abilities_Inheritance;
+	use WP_Codebox_Abilities_Provider_Adapter;
 	use WP_Codebox_Abilities_Browser_Artifacts;
 	use WP_Codebox_Abilities_Browser_Runtime;
 	use WP_Codebox_Abilities_Browser_Blueprint;
@@ -639,6 +641,58 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::browser_connector_response_schema(),
 					'execute_callback'    => array( self::class, 'browser_connector_request' ),
 					'permission_callback' => array( self::class, 'can_request_browser_connector' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/execute-browser-provider-request',
+				array(
+					'label'               => 'Execute Browser Provider Request',
+					'description'         => 'Dispatch a connector-scoped browser provider request through the generic parent-side provider adapter hook without exposing raw provider credentials to the browser Playground.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'required'   => array( 'operation', 'request', 'inherit' ),
+						'properties' => array(
+							'operation' => array(
+								'type'        => 'string',
+								'description' => 'Generic provider operation id, for example chat.completions. WP Codebox treats this as opaque adapter input.',
+							),
+							'provider'  => array( 'type' => 'string' ),
+							'model'     => array( 'type' => 'string' ),
+							'connector' => array(
+								'type'        => 'string',
+								'description' => 'Optional connector name to select from the resolved inheritance connector set. Defaults to the first resolved connector.',
+							),
+							'inherit'   => $inherit_schema,
+							'request'   => array(
+								'type'        => 'object',
+								'description' => 'Generic provider request payload. Secret-like fields are redacted before adapter/audit envelopes are returned.',
+							),
+							'sandbox_session_id' => $session_input['sandbox_session_id'],
+							'session_id'         => array( 'type' => 'string' ),
+							'caller_session_id'  => array( 'type' => 'string' ),
+							'job_id'             => array( 'type' => 'string' ),
+							'orchestrator'       => $session_input['orchestrator'],
+							'authorization'      => self::browser_session_authorization_schema(),
+						),
+					),
+					'output_schema'       => array(
+						'type'       => 'object',
+						'properties' => array(
+							'success'   => array( 'type' => 'boolean' ),
+							'schema'    => array( 'type' => 'string', 'const' => 'wp-codebox/browser-provider-adapter-response/v1' ),
+							'operation' => array( 'type' => 'string' ),
+							'provider'  => array( 'type' => 'string' ),
+							'model'     => array( 'type' => 'string' ),
+							'connector' => array( 'type' => 'object' ),
+							'response'  => array( 'type' => 'object' ),
+							'audit'     => array( 'type' => 'object' ),
+						),
+					),
+					'execute_callback'    => array( self::class, 'execute_browser_provider_request' ),
+					'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);

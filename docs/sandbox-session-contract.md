@@ -52,6 +52,56 @@ adds any permission bypass. If the runner is copied into a normal host WordPress
 install, it fails with `wp_codebox_browser_runner_not_playground` instead of
 executing the requested sandbox invocation.
 
+## Browser Provider Adapter Contract
+
+Browser Playground provider calls that need parent-side connector authorization
+use the generic `wp-codebox/execute-browser-provider-request` ability. WP Codebox
+resolves connector inheritance on the parent site, strips raw credential values,
+and dispatches the request through the `wp_codebox_browser_provider_request`
+filter.
+
+```text
+Browser connector bridge
+  -> wp-codebox/execute-browser-provider-request
+    -> parent-side connector inheritance resolution
+      -> wp_codebox_browser_provider_request filter
+        -> provider adapter owned by the host/control plane
+```
+
+The adapter filter receives a redacted request envelope:
+
+```json
+{
+  "schema": "wp-codebox/browser-provider-adapter-request/v1",
+  "operation": "chat.completions",
+  "provider": "openai",
+  "model": "gpt-5.5",
+  "connector": {
+    "name": "primary-ai",
+    "status": "resolved",
+    "provider": "openai",
+    "model": "gpt-5.5"
+  },
+  "context": {
+    "session_id": "browser-session-123",
+    "caller": "trusted-orchestrator",
+    "authorization_scope": "browser-session:create"
+  },
+  "request": {}
+}
+```
+
+Adapters return an array response envelope or `WP_Error`. If no adapter handles
+the request, WP Codebox fails closed with
+`wp_codebox_browser_provider_adapter_missing`. Returned success and error data is
+redacted before WP Codebox exposes the normalized
+`wp-codebox/browser-provider-adapter-response/v1` response.
+
+WP Codebox core does not implement provider-specific execution here. Adapters
+must resolve provider credentials server-side from their trusted connector
+configuration. Raw provider keys must not be returned to browser JavaScript,
+browser Playground PHP, artifacts, diagnostics, or audit metadata.
+
 ## Request Fields
 
 `wp-codebox/run-agent-task` and `wp-codebox/run-agent-task-batch` accept these
