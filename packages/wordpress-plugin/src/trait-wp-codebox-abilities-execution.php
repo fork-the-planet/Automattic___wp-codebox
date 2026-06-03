@@ -172,6 +172,101 @@ public static function create_browser_materializer_contract( array $input ): arr
 	);
 }
 
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function create_browser_task_contract( array $input ): array|WP_Error {
+	$primary = self::create_browser_playground_session( $input );
+	if ( is_wp_error( $primary ) ) {
+		return $primary;
+	}
+
+	$session_envelope = is_array( $primary['session'] ?? null ) ? $primary['session'] : array();
+	if ( true !== ( $primary['success'] ?? false ) ) {
+		return array_filter(
+			array(
+				'success'          => false,
+				'schema'           => 'wp-codebox/browser-task-contract/v1',
+				'execution'        => 'browser-playground',
+				'execution_scope'  => 'disposable-playground',
+				'permission_model' => 'sandbox-bypass',
+				'status'           => (string) ( $primary['status'] ?? 'blocked' ),
+				'error'            => is_array( $primary['error'] ?? null ) ? $primary['error'] : array(),
+				'session'          => $session_envelope,
+				'primary'          => $primary,
+				'phases'           => array(),
+			),
+			static fn( mixed $value ): bool => array() !== $value && '' !== $value
+		);
+	}
+
+	$phases = self::browser_task_contract_phases( $input, $session_envelope );
+	if ( is_wp_error( $phases ) ) {
+		return $phases;
+	}
+
+	return array(
+		'success'          => true,
+		'schema'           => 'wp-codebox/browser-task-contract/v1',
+		'execution'        => 'browser-playground',
+		'execution_scope'  => 'disposable-playground',
+		'permission_model' => 'sandbox-bypass',
+		'session'          => $session_envelope,
+		'primary'          => $primary,
+		'phases'           => $phases,
+		'provenance'       => array(
+			'generated_by' => 'wp-codebox/browser-task-contract',
+			'source'       => 'wp-codebox/create-browser-playground-session',
+		),
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $session_envelope Primary browser session envelope. @return array<int,array<string,mixed>>|WP_Error */
+private static function browser_task_contract_phases( array $input, array $session_envelope ): array|WP_Error {
+	$phase_specs = is_array( $input['phases'] ?? null ) ? $input['phases'] : array();
+	if ( empty( $phase_specs ) && is_array( $input['materializers'] ?? null ) ) {
+		$phase_specs = array_map(
+			static fn( mixed $materializer ): array => array(
+				'kind'  => 'materializer',
+				'input' => is_array( $materializer ) ? $materializer : array(),
+			),
+			$input['materializers']
+		);
+	}
+
+	$phases = array();
+	foreach ( $phase_specs as $index => $phase ) {
+		if ( ! is_array( $phase ) ) {
+			return new WP_Error( 'wp_codebox_browser_phase_invalid', 'Each browser task phase must be an object.', array( 'status' => 400, 'index' => $index ) );
+		}
+
+		$kind = self::safe_key( (string) ( $phase['kind'] ?? 'materializer' ) );
+		if ( 'materializer' !== $kind ) {
+			return new WP_Error( 'wp_codebox_browser_phase_kind_invalid', 'Browser task phases currently support materializer phases only.', array( 'status' => 400, 'index' => $index, 'kind' => $kind ) );
+		}
+
+		$phase_input = is_array( $phase['input'] ?? null ) ? $phase['input'] : array();
+		$phase_input = array_replace_recursive( $input, $phase_input );
+		unset( $phase_input['phases'], $phase_input['materializers'] );
+
+		if ( empty( $phase_input['sandbox_session_id'] ) && '' !== (string) ( $session_envelope['id'] ?? '' ) ) {
+			$phase_input['sandbox_session_id'] = (string) $session_envelope['id'];
+		}
+
+		$contract = self::create_browser_materializer_contract( $phase_input );
+		if ( is_wp_error( $contract ) ) {
+			return $contract;
+		}
+
+		$phases[] = array(
+			'name'     => self::safe_key( (string) ( $phase['name'] ?? $kind . '-' . ( $index + 1 ) ) ),
+			'kind'     => $kind,
+			'index'    => $index,
+			'contract' => $contract,
+		);
+	}
+
+	return $phases;
+}
+
 /**
  * @param array<string,mixed> $input Ability input.
  * @param array<string,mixed> $task_input Normalized task input.

@@ -391,6 +391,12 @@ $assert( 'browser materializer contract ability is REST visible', true === ( $br
 $assert( 'browser materializer contract accepts goal or legacy task', array( 'goal' ) === ( $browser_materializer_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_materializer_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
 $assert( 'browser materializer contract exposes recipe materialization and authorization output', 'object' === ( $browser_materializer_ability['output_schema']['properties']['recipe']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['materialization']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['authorization']['type'] ?? '' ) );
 
+$browser_task_contract_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-task-contract'] ?? null;
+$assert( 'browser task contract ability registered', is_array( $browser_task_contract_ability ) );
+$assert( 'browser task contract ability is REST visible', true === ( $browser_task_contract_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'browser task contract accepts goal or legacy task', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser task contract exposes phase schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && array( 'materializer' ) === ( $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array() ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) );
+
 $trusted_browser_authorization = array(
 	'authorization' => array(
 		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
@@ -405,6 +411,7 @@ $assert( 'browser Playground session allows trusted orchestrator caller with bro
 $assert( 'browser Playground session denies untrusted orchestrator caller', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'unknown-product', 'scope' => 'browser-session:create' ) ) ) );
 $assert( 'browser Playground session denies trusted caller without browser-session scope', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $assert( 'browser materializer contract reuses trusted browser-session authorization', true === call_user_func( $browser_materializer_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_materializer_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
+$assert( 'browser task contract reuses trusted browser-session authorization', true === call_user_func( $browser_task_contract_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_task_contract_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
 
 $artifact_abilities = array(
@@ -684,6 +691,61 @@ $assert( 'browser materializer contract preserves trusted authorization shape', 
 $assert( 'browser materializer contract returns same runnable recipe as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['recipe'] ?? array() ) === ( $browser_materializer_contract['recipe'] ?? array() ) );
 $assert( 'browser materializer contract returns same materialization descriptor as duplicate session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['materialization'] ?? array() ) === ( $browser_materializer_contract['materialization'] ?? array() ) );
 $assert( 'browser materializer contract preserves runnable context for existing browser session', ! is_wp_error( $browser_materializer_contract ) && ( $browser_session['task_payload'] ?? array() ) === ( $browser_materializer_contract['task_payload'] ?? array() ) && ( $browser_session['playground'] ?? array() ) === ( $browser_materializer_contract['playground'] ?? array() ) && ( $browser_session['artifacts'] ?? array() ) === ( $browser_materializer_contract['artifacts'] ?? array() ) );
+
+$browser_task_contract_input = array_replace_recursive(
+	$browser_session_input,
+	array(
+		'phases' => array(
+			array(
+				'name'  => 'static-site-materializer',
+				'kind'  => 'materializer',
+				'input' => array(
+					'goal'           => 'Materialize generated browser artifacts.',
+					'browser_runner' => array(
+						'task_path'     => '/tmp/materializer-task.json',
+						'result_path'   => '/tmp/materializer-result.json',
+						'invocation'    => array(
+							'type' => 'task',
+							'hook' => 'caller_runtime_task',
+						),
+						'capture_paths' => array(
+							array(
+								'path'      => '/wordpress/wp-content/uploads/wp-codebox/artifacts/materializer/report.json',
+								'name'      => 'phase-report',
+								'kind'      => 'report',
+								'mime_type' => 'application/json',
+								'max_bytes' => 2048,
+							),
+						),
+					),
+				),
+			),
+		),
+	)
+);
+$browser_task_contract = call_user_func(
+	$browser_task_contract_ability['execute_callback'],
+	$browser_task_contract_input
+);
+$assert( 'browser task contract returns primary session and phases', ! is_wp_error( $browser_task_contract ) && true === ( $browser_task_contract['success'] ?? false ) && 'wp-codebox/browser-task-contract/v1' === ( $browser_task_contract['schema'] ?? '' ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_task_contract['primary']['schema'] ?? '' ) && 1 === count( $browser_task_contract['phases'] ?? array() ) );
+$assert( 'browser task contract preserves primary browser session envelope', ! is_wp_error( $browser_task_contract ) && ( $browser_task_contract['primary']['session'] ?? array() ) === ( $browser_task_contract['session'] ?? array() ) && 'browser-session-123' === ( $browser_task_contract['session']['id'] ?? '' ) );
+$assert( 'browser task contract composes named materializer phase contract', ! is_wp_error( $browser_task_contract ) && 'static-site-materializer' === ( $browser_task_contract['phases'][0]['name'] ?? '' ) && 'materializer' === ( $browser_task_contract['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-contract/v1' === ( $browser_task_contract['phases'][0]['contract']['schema'] ?? '' ) );
+$assert( 'browser task contract shares parent session id with materializer by default', ! is_wp_error( $browser_task_contract ) && 'browser-session-123' === ( $browser_task_contract['phases'][0]['contract']['session_id'] ?? '' ) && '/tmp/materializer-result.json' === ( $browser_task_contract['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
+
+$invalid_browser_task_contract = call_user_func(
+	$browser_task_contract_ability['execute_callback'],
+	array_replace_recursive(
+		$browser_session_input,
+		array(
+			'phases' => array(
+				array(
+					'kind' => 'host-task',
+				),
+			),
+		)
+	)
+);
+$assert( 'browser task contract rejects unsupported phase kinds', is_wp_error( $invalid_browser_task_contract ) && 'wp_codebox_browser_phase_kind_invalid' === $invalid_browser_task_contract->get_error_code() );
 
 $runner_report_path = $root . '/browser-materialization-report.json';
 add_filter(
