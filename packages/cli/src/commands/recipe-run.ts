@@ -231,7 +231,7 @@ class RecipeRuntimeCreateError extends Error {
 class RecipeCleanupError extends Error {
   readonly code = "recipe-cleanup-failed"
 
-  constructor(readonly evidence: WorkerFanoutCleanupEvidence, cause: unknown) {
+  constructor(readonly evidence: RunResourceCleanupEvidence, cause: unknown) {
     super("Runtime cleanup failed after recipe workflow execution.", { cause })
     this.name = "RecipeCleanupError"
   }
@@ -409,7 +409,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
     runRecord = await runRegistry.update(runRecord.runId, {
       status: "failed",
-      metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: "failed", failure }) },
+      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", failure }) },
       error: failure,
     })
     return {
@@ -434,7 +434,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
-  let cleanupEvidence: WorkerFanoutCleanupEvidence | undefined
+  let cleanupEvidence: RunResourceCleanupEvidence | undefined
   const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
     return interruption ? interruption.interruptible(guarded) : guarded
@@ -634,7 +634,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeInfo ?? await runtime.info(),
         preview: artifacts.preview,
         artifactRefs: artifactBundleRunRef(artifacts),
-        metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: strictFailure ?? agentFailure }) },
+        metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: strictFailure ?? agentFailure }) },
         error: strictFailure ?? agentFailure,
       })
       return {
@@ -660,7 +660,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runtime: runtimeInfo ?? await runtime.info(),
       preview: artifacts.preview,
       artifactRefs: artifactBundleRunRef(artifacts),
-      metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts }) },
+      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts }) },
     })
     return {
       success: true,
@@ -714,7 +714,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       status: interruption?.metadata ? "cancelled" : "failed",
       ...(runtime ? { runtime: await runtime.info() } : {}),
       ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
-      metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: interruption?.metadata ? "cancelled" : "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError }) },
+      metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: interruption?.metadata ? "cancelled" : "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError }) },
       error: serializedError,
     })
 
@@ -733,17 +733,17 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   }
 }
 
-interface WorkerFanoutCleanupEvidence {
+interface RunResourceCleanupEvidence {
   durationMs: number
   state: "completed" | "failed"
   error?: RunOutput["error"]
 }
 
-interface WorkerFanoutEvidenceOptions {
+interface RunResourceEvidenceOptions {
   startedAtMs: number
   status: RuntimeRunRecord["status"]
   startupDurationMs?: number
-  cleanup?: WorkerFanoutCleanupEvidence
+  cleanup?: RunResourceCleanupEvidence
   artifacts?: ArtifactBundle
   failure?: RunOutput["error"]
 }
@@ -754,7 +754,7 @@ async function releaseRuntimeWithEvidence(
   afterDestroy: () => Promise<void>,
   interruption: RecipeInterruptionController | undefined,
   awaitRecipe: (operation: string, promise: Promise<void>) => Promise<void>,
-): Promise<WorkerFanoutCleanupEvidence> {
+): Promise<RunResourceCleanupEvidence> {
   const startedAtMs = Date.now()
   try {
     await awaitRecipe("runtime.release", releaseRuntime(runtime, previewHoldSeconds, afterDestroy, interruption))
@@ -765,7 +765,7 @@ async function releaseRuntimeWithEvidence(
   }
 }
 
-async function cleanupPreparedSourcesWithEvidence(workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[]): Promise<WorkerFanoutCleanupEvidence> {
+async function cleanupPreparedSourcesWithEvidence(workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[]): Promise<RunResourceCleanupEvidence> {
   const startedAtMs = Date.now()
   try {
     await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
@@ -775,9 +775,9 @@ async function cleanupPreparedSourcesWithEvidence(workspaceMounts: PreparedWorks
   }
 }
 
-async function workerFanoutEvidence(options: WorkerFanoutEvidenceOptions): Promise<Record<string, unknown>> {
+async function runResourceEvidence(options: RunResourceEvidenceOptions): Promise<Record<string, unknown>> {
   return stripUndefined({
-    schema: "wp-codebox/worker-fanout-evidence/v1",
+    schema: "wp-codebox/run-resource-evidence/v1",
     status: options.status,
     timing: {
       startup: metricOrUnavailable(options.startupDurationMs, "runtime creation was not reached"),
@@ -791,7 +791,7 @@ async function workerFanoutEvidence(options: WorkerFanoutEvidenceOptions): Promi
     },
     artifacts: await artifactSizeEvidence(options.artifacts),
     reliability: {
-      failureClassification: classifyWorkerFanoutFailure(options.status, options.failure),
+      failureClassification: classifyRunResourceFailure(options.status, options.failure),
       retryCount: unavailableMetric("recipe-run does not retry worker executions"),
     },
   })
@@ -849,7 +849,7 @@ async function directorySizeBytes(directory: string): Promise<number> {
   return total
 }
 
-function classifyWorkerFanoutFailure(status: RuntimeRunRecord["status"], failure: RunOutput["error"] | undefined): Record<string, unknown> {
+function classifyRunResourceFailure(status: RuntimeRunRecord["status"], failure: RunOutput["error"] | undefined): Record<string, unknown> {
   if (!failure) {
     return { available: true, value: status === "succeeded" ? "none" : "unknown" }
   }
