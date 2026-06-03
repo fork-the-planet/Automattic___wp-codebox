@@ -387,6 +387,60 @@ return array_merge(
 );
 }
 
+function wp_codebox_browser_artifact_capture_diagnostics( array $payload, array $artifact_bundle ) {
+$contract = wp_codebox_browser_artifact_contract( $payload );
+$root = (string) ( $contract[\'root\'] ?? \'\' );
+$root = rtrim( ltrim( str_replace( chr( 92 ), "/", $root ), "/" ), "/" ) . "/";
+$base = \'/wordpress/wp-content/uploads/studio-web/\' . $root;
+$entrypoint = wp_codebox_browser_safe_artifact_path( (string) ( $contract[\'entrypoint\'] ?? $root . \'index.html\' ), $root );
+$contract_files = is_array( $contract[\'files\'] ?? null ) ? $contract[\'files\'] : array();
+
+return array_filter( array(
+	\'contract_schema\' => (string) ( $contract[\'schema\'] ?? \'\' ),
+	\'root\' => \'/\' === $root ? \'\' : $root,
+	\'base_exists\' => \'/\' !== $root && is_dir( $base ),
+	\'entrypoint\' => $entrypoint,
+	\'entrypoint_exists\' => \'\' !== $entrypoint && is_readable( \'/wordpress/wp-content/uploads/studio-web/\' . $entrypoint ),
+	\'contract_file_count\' => count( $contract_files ),
+	\'captured_file_count\' => is_array( $artifact_bundle[\'files\'] ?? null ) ? count( $artifact_bundle[\'files\'] ) : 0,
+	\'captured\' => ! empty( $artifact_bundle ),
+) );
+}
+
+function wp_codebox_browser_response_diagnostics( $response ) {
+if ( ! is_array( $response ) ) {
+	return array( \'type\' => is_object( $response ) ? get_class( $response ) : gettype( $response ) );
+}
+
+$metadata = is_array( $response[\'metadata\'] ?? null ) ? $response[\'metadata\'] : array();
+$datamachine = is_array( $metadata[\'datamachine\'] ?? null ) ? $metadata[\'datamachine\'] : array();
+
+return array_filter( array(
+	\'keys\' => array_slice( array_keys( $response ), 0, 20 ),
+	\'tool_call_count\' => is_array( $response[\'tool_calls\'] ?? null ) ? count( $response[\'tool_calls\'] ) : null,
+	\'last_tool_call_count\' => is_array( $response[\'last_tool_calls\'] ?? null ) ? count( $response[\'last_tool_calls\'] ) : null,
+	\'tool_execution_result_count\' => is_array( $response[\'tool_execution_results\'] ?? null ) ? count( $response[\'tool_execution_results\'] ) : null,
+	\'datamachine_tool_call_count\' => is_array( $datamachine[\'tool_calls\'] ?? null ) ? count( $datamachine[\'tool_calls\'] ) : null,
+	\'datamachine_tool_execution_summary_count\' => is_array( $datamachine[\'tool_execution_summary\'] ?? null ) ? count( $datamachine[\'tool_execution_summary\'] ) : null,
+	\'completion_assertions_required\' => is_array( $datamachine[\'completion_assertions_required\'] ?? null ) ? $datamachine[\'completion_assertions_required\'] : null,
+	\'completion_assertions_missing\' => is_array( $datamachine[\'completion_assertions_missing\'] ?? null ) ? $datamachine[\'completion_assertions_missing\'] : null,
+	\'completion_assertions_satisfied\' => is_array( $datamachine[\'completion_assertions_satisfied\'] ?? null ) ? $datamachine[\'completion_assertions_satisfied\'] : null,
+	\'completion_assertions_complete\' => isset( $datamachine[\'completion_assertions_complete\'] ) ? (bool) $datamachine[\'completion_assertions_complete\'] : null,
+	\'text_bytes\' => isset( $response[\'response\'] ) && is_string( $response[\'response\'] ) ? strlen( $response[\'response\'] ) : null,
+	\'status\' => is_scalar( $response[\'status\'] ?? null ) ? (string) $response[\'status\'] : null,
+) );
+}
+
+function wp_codebox_browser_input_control_diagnostics( array $input ): array {
+return array_filter( array(
+	\'has_tool_policy\' => is_array( $input[\'tool_policy\'] ?? null ),
+	\'tool_policy_mode\' => is_scalar( $input[\'tool_policy\'][\'mode\'] ?? null ) ? (string) $input[\'tool_policy\'][\'mode\'] : null,
+	\'tool_policy_tools\' => is_array( $input[\'tool_policy\'][\'tools\'] ?? null ) ? array_values( array_map( \'strval\', $input[\'tool_policy\'][\'tools\'] ) ) : null,
+	\'allow_only\' => is_array( $input[\'allow_only\'] ?? null ) ? array_values( array_map( \'strval\', $input[\'allow_only\'] ) ) : null,
+	\'completion_required_tool_names\' => is_array( $input[\'completion_assertions\'][\'required_tool_names\'] ?? null ) ? array_values( array_map( \'strval\', $input[\'completion_assertions\'][\'required_tool_names\'] ) ) : null,
+) );
+}
+
 function wp_codebox_browser_import_agent_bundles( array $bundle_specs ): array {
 if ( empty( $bundle_specs ) ) {
 	return array();
@@ -522,11 +576,38 @@ if ( is_array( $raw_payload ) ) {
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
 $session_id = (string) ( $payload[\'session_id\'] ?? ' . var_export( $session_id, true ) . ' );
+$runtime_user_id = (int) ( $payload[\'user_id\'] ?? ( function_exists( \'get_current_user_id\' ) ? get_current_user_id() : 0 ) );
+if ( $runtime_user_id <= 0 ) {
+	$runtime_user_id = 1;
+}
+if ( function_exists( \'wp_set_current_user\' ) ) {
+	wp_set_current_user( $runtime_user_id );
+}
 $agent_bundle_imports = array();
+$sandbox_tool_ids = array();
+$sandbox_policy = is_array( $payload[\'task_input\'][\'sandbox_tool_policy\'] ?? null ) ? $payload[\'task_input\'][\'sandbox_tool_policy\'] : array();
+foreach ( is_array( $sandbox_policy[\'tools\'] ?? null ) ? $sandbox_policy[\'tools\'] : array() as $tool_policy_entry ) {
+	if ( ! is_array( $tool_policy_entry ) || empty( $tool_policy_entry[\'allowed\'] ) ) {
+		continue;
+	}
+	$tool_id = trim( (string) ( $tool_policy_entry[\'id\'] ?? \'\' ) );
+	if ( \'\' !== $tool_id ) {
+		$sandbox_tool_ids[] = $tool_id;
+	}
+}
+if ( empty( $sandbox_tool_ids ) && is_array( $payload[\'task_input\'][\'allowed_tools\'] ?? null ) ) {
+	foreach ( $payload[\'task_input\'][\'allowed_tools\'] as $tool_id ) {
+		$tool_id = trim( (string) $tool_id );
+		if ( \'\' !== $tool_id ) {
+			$sandbox_tool_ids[] = $tool_id;
+		}
+	}
+}
+$sandbox_tool_ids = array_values( array_unique( $sandbox_tool_ids ) );
 $base_input = array(
 \'agent\' => $agent,
 \'message\' => $message,
-\'user_id\' => ( function_exists( \'get_current_user_id\' ) ? get_current_user_id() : 0 ) ?: 1,
+\'user_id\' => $runtime_user_id,
 \'provider\' => (string) ( $payload[\'provider\'] ?? \'\' ),
 \'model\' => (string) ( $payload[\'model\'] ?? \'\' ),
 \'session_owner\' => array(
@@ -562,6 +643,16 @@ $base_input = array(
 	\'task_input\' => $payload[\'task_input\'] ?? array(),
 ),
 );
+if ( ! empty( $sandbox_tool_ids ) ) {
+	$base_input[\'tool_policy\'] = array(
+		\'mode\' => \'allow\',
+		\'tools\' => $sandbox_tool_ids,
+	);
+	$base_input[\'allow_only\'] = $sandbox_tool_ids;
+	$base_input[\'completion_assertions\'] = array(
+		\'required_tool_names\' => $sandbox_tool_ids,
+	);
+}
 $input = array_replace_recursive( $base_input, is_array( $invocation[\'input\'] ?? null ) ? $invocation[\'input\'] : array() );
 $invocation_type = (string) ( $invocation[\'type\'] ?? \'ability\' );
 $permission_filters = is_array( $invocation[\'permission_filters\'] ?? null ) ? $invocation[\'permission_filters\'] : array_filter( array( (string) ( $invocation[\'permission_filter\'] ?? \'\' ) ) );
@@ -632,6 +723,10 @@ $diagnostics = array(
 \'capture_count\' => count( $captures ),
 \'captured_paths\' => array_values( array_map( static fn( $capture ) => (string) ( $capture[\'path\'] ?? \'\' ), $captures ) ),
 \'agent_bundle_imports\' => $agent_bundle_imports,
+\'sandbox_tool_ids\' => $sandbox_tool_ids,
+\'input_controls\' => wp_codebox_browser_input_control_diagnostics( is_array( $input ?? null ) ? $input : array() ),
+\'artifact_capture\' => wp_codebox_browser_artifact_capture_diagnostics( $payload, $artifact_bundle ),
+\'response\' => wp_codebox_browser_response_diagnostics( $response ?? null ),
 );
 $provenance = array(
 \'generated_by\' => \'wp-codebox/browser-runner\',
