@@ -1,4 +1,5 @@
 import { isPlainObject, stringList } from "./object-utils.js"
+import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 
 export type TaskTargetKind = "repo" | "site" | "plugin" | "theme" | (string & {})
 
@@ -36,6 +37,7 @@ export interface TaskInput {
   allowed_tools: string[]
   expected_artifacts: string[]
   agent_bundles: TaskInputAgentBundle[]
+  sandbox_tool_policy: SandboxToolPolicySnapshot | Record<string, never>
   policy: TaskInputPolicy
   context: Record<string, unknown>
 }
@@ -43,12 +45,13 @@ export interface TaskInput {
 export type TaskInputRequest = Partial<Omit<TaskInput, "schema" | "version" | "goal">> & {
   goal?: string
   task?: string
+  sandboxToolPolicy?: SandboxToolPolicySnapshot
 }
 
 export const TASK_INPUT_JSON_SCHEMA = {
   $id: TASK_INPUT_SCHEMA,
   type: "object",
-  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "agent_bundles", "policy", "context"],
+  required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "agent_bundles", "sandbox_tool_policy", "policy", "context"],
   properties: {
     schema: { const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
     version: { const: TASK_INPUT_VERSION, description: "Task input contract version." },
@@ -89,6 +92,10 @@ export const TASK_INPUT_JSON_SCHEMA = {
         },
       },
     },
+    sandbox_tool_policy: {
+      type: "object",
+      description: "Resolved caller-owned sandbox tool policy snapshot. Codebox validates and enforces it without owning product-specific tool taxonomy.",
+    },
     policy: {
       type: "object",
       description: "Caller policy hints for approvals, apply-back, sandboxing, and risk controls.",
@@ -103,6 +110,7 @@ export const TASK_INPUT_JSON_SCHEMA = {
 export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
   const goal = String(input.goal ?? input.task ?? "").trim()
   if (goal === "") throw new Error("goal or task is required.")
+  const rawPolicy = (input as Record<string, unknown>).sandbox_tool_policy ?? (input as Record<string, unknown>).sandboxToolPolicy
 
   return {
     schema: TASK_INPUT_SCHEMA,
@@ -112,6 +120,7 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     allowed_tools: stringList(input.allowed_tools),
     expected_artifacts: stringList(input.expected_artifacts),
     agent_bundles: normalizeAgentBundles((input as Record<string, unknown>).agent_bundles ?? (input as Record<string, unknown>).agentBundles),
+    sandbox_tool_policy: isPlainObject(rawPolicy) ? rawPolicy as unknown as SandboxToolPolicySnapshot : {},
     policy: isPlainObject(input.policy) ? input.policy : {},
     context: isPlainObject(input.context) ? input.context : {},
   }

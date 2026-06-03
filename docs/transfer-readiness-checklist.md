@@ -59,9 +59,9 @@ Current workspace packages:
   registration, WP-CLI wrappers, task input normalization, parent-side sandbox
   launch, artifact listing/get/discard/apply, pending-action staging, host
   configuration, and filter-based integration points.
-- `packages/sandbox-datamachine-tool-policy.json` and the generated PHP mirror
-  define the sandbox-safe Data Machine ability allow-list shared across JS and
-  PHP boundaries.
+- `packages/runtime-core/src/sandbox-tool-policy.ts` defines the generic
+  resolved sandbox tool policy snapshot shape enforced across JS and PHP
+  boundaries. Product-specific tool taxonomy lives with the caller.
 
 Transfer checklist:
 

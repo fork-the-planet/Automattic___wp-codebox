@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { basename, resolve } from "node:path"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { normalizeSandboxToolPolicySnapshot, SANDBOX_WORKSPACE_ROOT, stripUndefined, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
 import type { AgentBundleSpec } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"
@@ -28,6 +28,7 @@ export interface AgentSandboxRunOptions extends AgentRuntimeProbeOptions {
   maxTurns?: string
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
+  sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
   sandboxWorkspace?: SandboxWorkspaceContract
@@ -115,6 +116,7 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       timeoutSeconds: argValue(args, "timeout-seconds"),
       agentBundles: parseAgentBundles(args),
       sandboxWorkspace: parseSandboxWorkspace(args) ?? sandboxWorkspace,
+      sandboxToolPolicy: parseSandboxToolPolicy(args),
     }))
 
     return {
@@ -231,7 +233,7 @@ export function parseAgentRuntimeProbeOptions(args: string[], parseMount: (value
 }
 
 export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: string) => AgentRuntimeMount): AgentSandboxRunOptions {
-  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
+  const options = parseAgentRuntimeProbeOptions(args, parseMount, ["--task", "--agent", "--mode", "--provider", "--model", "--session-id", "--max-turns", "--timeout-seconds", "--agent-bundles-json", "--sandbox-tool-policy-json", "--code", "--code-file", "--workspace-context-json", "--secret-env", "--mount"]) as Partial<AgentSandboxRunOptions>
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]
@@ -271,6 +273,9 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
         break
       case "--agent-bundles-json":
         options.agentBundles = parseAgentBundleList(value)
+        break
+      case "--sandbox-tool-policy-json":
+        options.sandboxToolPolicy = normalizeSandboxToolPolicySnapshot(JSON.parse(value))
         break
       case "--workspace-context-json":
         options.sandboxWorkspace = parseSandboxWorkspaceValue(value)
@@ -419,11 +424,16 @@ export function sandboxWorkspaceContract(workspaceMounts: PreparedWorkspaceMount
     root: SANDBOX_WORKSPACE_ROOT,
     defaultMode: "repo-backed",
     mounts: mountRefs,
-    dmc: {
-      safeAbilities: [...SANDBOX_DMC_SAFE_ABILITIES],
-      parentOnlyAbilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
-    },
   }
+}
+
+function parseSandboxToolPolicy(args: string[]): SandboxToolPolicySnapshot | undefined {
+  const raw = argValue(args, "sandbox-tool-policy-json")
+  if (!raw) {
+    return undefined
+  }
+
+  return normalizeSandboxToolPolicySnapshot(JSON.parse(raw))
 }
 
 function componentMount(source: string, target: string, slug: string): AgentRuntimeMount {

@@ -125,6 +125,26 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 
 	return $filter;
 }
+function wp_codebox_smoke_sandbox_tool_policy( array $tools ): array {
+	$entries = array();
+	foreach ( $tools as $tool => $attributes ) {
+		$attributes = is_array( $attributes ) ? $attributes : array();
+		$entries[] = array(
+			'id'                   => (string) $tool,
+			'runtime_tool_id'      => (string) ( $attributes['runtime_tool_id'] ?? str_replace( array( 'datamachine/', '-', '.' ), array( '', '_', '_' ), (string) $tool ) ),
+			'execution_location'   => (string) ( $attributes['execution_location'] ?? 'sandbox' ),
+			'transport_visibility' => (string) ( $attributes['transport_visibility'] ?? 'sandbox' ),
+			'allowed'              => (bool) ( $attributes['allowed'] ?? true ),
+		);
+	}
+
+	return array(
+		'schema'   => 'wp-codebox/sandbox-tool-policy/v1',
+		'version'  => 1,
+		'tools'    => $entries,
+		'metadata' => array( 'source' => 'smoke' ),
+	);
+}
 function wp_parse_url( string $url ): array|false { return parse_url( $url ); }
 function wp_json_encode( mixed $value, int $flags = 0, int $depth = 512 ): string|false { return json_encode( $value, $flags, $depth ); }
 function wp_safe_remote_get( string $url, array $args = array() ): array|WP_Error {
@@ -328,6 +348,7 @@ $assert( 'ability accepts goal or legacy task', array( 'goal' ) === ( $ability['
 $assert( 'ability exposes task target schema', isset( $ability['input_schema']['properties']['target']['properties']['kind'] ) );
 $assert( 'ability exposes canonical task input metadata schema', 'wp-codebox/task-input/v1' === ( $ability['output_schema']['properties']['task_input']['properties']['schema']['const'] ?? '' ) && 1 === ( $ability['output_schema']['properties']['task_input']['properties']['version']['const'] ?? 0 ) );
 $assert( 'ability exposes allowed tools schema', 'array' === ( $ability['input_schema']['properties']['allowed_tools']['type'] ?? '' ) );
+$assert( 'ability exposes sandbox tool policy schema', 'object' === ( $ability['input_schema']['properties']['sandbox_tool_policy']['type'] ?? '' ) );
 $assert( 'ability exposes expected artifacts schema', 'array' === ( $ability['input_schema']['properties']['expected_artifacts']['type'] ?? '' ) );
 $assert( 'ability exposes policy and context schema', 'object' === ( $ability['input_schema']['properties']['policy']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['context']['type'] ?? '' ) );
 $assert( 'ability exposes generic mounts schema', 'array' === ( $ability['input_schema']['properties']['mounts']['type'] ?? '' ) && 'object' === ( $ability['input_schema']['properties']['mounts']['items']['properties']['metadata']['type'] ?? '' ) );
@@ -473,6 +494,7 @@ $browser_session_input = array(
 		'sandbox_session_id'    => 'browser-session-123',
 		'target'                => array( 'kind' => 'sandbox-runtime' ),
 		'allowed_tools'         => array( 'filesystem-write', 'filesystem-write', '' ),
+		'sandbox_tool_policy'   => wp_codebox_smoke_sandbox_tool_policy( array( 'filesystem-write' => array( 'runtime_tool_id' => 'filesystem_write' ) ) ),
 		'expected_artifacts'    => array( 'repair-summary', 'changed-files' ),
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'inherit'               => array( 'connectors' => array( 'openai' ) ),
@@ -978,9 +1000,9 @@ $browser_inherited_session = call_user_func(
 					'agent_id'     => 123,
 					'owner_id'     => 1,
 					'token_id'     => 456,
-					'capabilities' => array( 'datamachine_manage_agents' ),
+					'capabilities' => array( 'runtime_import_agent' ),
 					'scope'        => array(
-						'ability_allow' => array( 'datamachine/import-agent' ),
+						'ability_allow' => array( 'runtime/import-agent' ),
 					),
 				),
 			),
@@ -1005,13 +1027,14 @@ $assert( 'browser Playground session embeds first-class browser task payload', !
 $assert( 'browser Playground session records inherited connector credential provenance without values', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/connector-credentials/v1' === ( $browser_inherited_session['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $browser_inherited_session['task_payload']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) && str_contains( $browser_inherited_encoded, 'OPENAI_API_KEY' ) && ! str_contains( $browser_inherited_encoded, 'sk-browser-secret-value' ) && ! str_contains( $browser_inherited_encoded, 'secret_env_values' ) );
 $assert( 'browser Playground recipe defaults to agents chat invocation with embedded payload', ! is_wp_error( $browser_inherited_session ) && 'ability' === ( $browser_inherited_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'agents/chat' === ( $browser_inherited_session['recipe']['browser']['invocation']['name'] ?? '' ) && str_contains( (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) );
 $browser_runner_code = (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
+$assert( 'browser Playground recipe bypasses agents chat transcript permissions only inside sandbox', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, 'agents_chat_permission' ) && str_contains( $browser_runner_code, 'agents_conversation_sessions_permission' ) && str_contains( $browser_runner_code, '$wp_codebox_is_playground' ) );
 $assert( 'browser Playground recipe provides bounded user context to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0" ) );
 $assert( 'browser Playground recipe passes inherited provider and model to agents chat', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'provider' => (string) ( \$payload['provider'] ?? '' )" ) && str_contains( $browser_runner_code, "'model' => (string) ( \$payload['model'] ?? '' )" ) );
 $assert( 'browser Playground recipe keeps sandbox id in client context instead of transcript session id', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "'caller_session_id' => \$session_id" ) && ! str_contains( $browser_runner_code, "'message' => \$message,\n\t'session_id' => \$session_id" ) );
-$assert( 'browser Playground recipe preserves and imports multiple Data Machine agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'datamachine/import-agent' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
-$assert( 'browser Playground recipe preserves non-secret Data Machine import principal', ! is_wp_error( $browser_inherited_session ) && 123 === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['agent_id'] ?? null ) && array( 'datamachine/import-agent' ) === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['scope']['ability_allow'] ?? array() ) );
-$assert( 'browser Playground recipe imports Data Machine bundles through scoped agent context', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, 'wp_codebox_browser_agent_bundle_import_principal' ) && str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper::set_agent_context' ) && str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper::clear_agent_context' ) );
-$assert( 'browser Playground recipe stages inline Data Machine bundles as JSON files', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, '$temp_source = $temp_base . \'.json\';' ) );
+$assert( 'browser Playground recipe preserves and imports multiple runtime agent bundles before agents chat', ! is_wp_error( $browser_inherited_session ) && 2 === count( $browser_inherited_session['recipe']['inputs']['agent_bundles'] ?? array() ) && 2 === count( $browser_inherited_session['task_payload']['agent_bundles'] ?? array() ) && str_contains( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) && str_contains( $browser_runner_code, 'wp_agent_runtime_import_bundle' ) && strpos( $browser_runner_code, 'wp_codebox_browser_import_agent_bundles' ) < strpos( $browser_runner_code, 'wp_get_ability( $ability_name )' ) );
+$assert( 'browser Playground recipe preserves non-secret runtime import principal', ! is_wp_error( $browser_inherited_session ) && 123 === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['agent_id'] ?? null ) && array( 'runtime/import-agent' ) === ( $browser_inherited_session['task_payload']['agent_bundles'][0]['import_principal']['scope']['ability_allow'] ?? array() ) );
+$assert( 'browser Playground recipe delegates runtime bundle imports through a generic hook', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, "apply_filters( 'wp_agent_runtime_import_bundle'" ) && ! str_contains( $browser_runner_code, '\\DataMachine\\Abilities\\PermissionHelper' ) && ! str_contains( $browser_runner_code, "wp_get_ability( 'datamachine/import-agent' )" ) );
+$assert( 'browser Playground recipe stages inline runtime bundles as JSON files', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, '$temp_source = $temp_base . \'.json\';' ) );
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_provider'] = 'openai';
 $GLOBALS['wp_codebox_filters']['wp_codebox_default_model']    = 'gpt-5.5';
 unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] );
@@ -1121,24 +1144,24 @@ $browser_parent_only_tool = call_user_func(
 	array(
 		'goal'                  => 'Prepare a browser preview with a parent-only tool.',
 		'allowed_tools'         => array( 'datamachine/workspace-git-push' ),
+		'sandbox_tool_policy'   => wp_codebox_smoke_sandbox_tool_policy( array( 'datamachine/workspace-git-push' => array( 'runtime_tool_id' => 'workspace_git_push', 'execution_location' => 'parent', 'transport_visibility' => 'parent', 'allowed' => false ) ) ),
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'inherit'               => array( 'connectors' => array( 'openai' ) ),
 	)
 );
 $assert( 'browser Playground session rejects parent-only Data Machine tools before recipe emission', is_wp_error( $browser_parent_only_tool ) && 'wp_codebox_tool_not_allowed' === $browser_parent_only_tool->get_error_code() );
 
-$GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] = array( 'datamachine/workspace-read' );
 $browser_not_allowlisted_tool = call_user_func(
 	$browser_session_ability['execute_callback'],
 	array(
 		'goal'                  => 'Prepare a browser preview with an unconfigured tool.',
 		'allowed_tools'         => array( 'datamachine/workspace-write' ),
+		'sandbox_tool_policy'   => wp_codebox_smoke_sandbox_tool_policy( array( 'datamachine/workspace-read' => array( 'runtime_tool_id' => 'workspace_read' ) ) ),
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
 		'inherit'               => array( 'connectors' => array( 'openai' ) ),
 	)
 );
-$assert( 'browser Playground session rejects tools outside configured allow-list before recipe emission', is_wp_error( $browser_not_allowlisted_tool ) && 'wp_codebox_tool_not_allowed' === $browser_not_allowlisted_tool->get_error_code() && 'not-allowlisted' === ( $browser_not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
-unset( $GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] );
+$assert( 'browser Playground session rejects tools outside configured allow-list before recipe emission', is_wp_error( $browser_not_allowlisted_tool ) && 'wp_codebox_tool_not_allowed' === $browser_not_allowlisted_tool->get_error_code() && 'not-in-policy' === ( $browser_not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
 
 $browser_insecure_plugin_url = call_user_func(
 	$browser_session_ability['execute_callback'],
@@ -1821,6 +1844,13 @@ $structured_result = $runner->run(
 			'path' => 'wp-content/plugins/simple-plugin',
 		),
 		'allowed_tools'      => array( 'workspace.read', 'workspace.write', 'datamachine/workspace-read', '' ),
+		'sandbox_tool_policy' => wp_codebox_smoke_sandbox_tool_policy(
+			array(
+				'workspace.read' => array( 'runtime_tool_id' => 'workspace_read' ),
+				'workspace.write' => array( 'runtime_tool_id' => 'workspace_write' ),
+				'datamachine/workspace-read' => array( 'runtime_tool_id' => 'workspace_read' ),
+			)
+		),
 		'expected_artifacts' => array( 'patch', 'tests', 'patch' ),
 		'policy'             => array( 'applyBack' => 'reviewed' ),
 		'context'            => array( 'issue' => 'https://github.com/Automattic/wp-codebox/issues/29' ),
@@ -1835,10 +1865,20 @@ $assert( 'runner returns canonical structured task input shape', ! is_wp_error( 
 $assert( 'runner passes structured task contract to recipe', str_contains( $captured_recipe, 'wp-codebox/task-input/v1' ) && str_contains( $captured_recipe, 'allowed_tools' ) );
 $assert( 'runner leaves preview config unset by default', ! str_contains( $captured_command, '--preview-port' ) && ! str_contains( $captured_command, '--preview-bind' ) && ! str_contains( $captured_command, '--preview-public-url' ) );
 
+$missing_tool_policy_result = $runner->run(
+	array(
+		'goal'           => 'Try a tool without a resolved policy snapshot.',
+		'allowed_tools'  => array( 'workspace.read' ),
+		'artifacts_path' => $root . '/artifacts',
+	)
+);
+$assert( 'missing sandbox tool policy snapshot fails closed', is_wp_error( $missing_tool_policy_result ) && 'wp_codebox_sandbox_tool_policy_invalid' === $missing_tool_policy_result->get_error_code() );
+
 $host_browser_equivalent_input = array(
 	'goal'               => 'Prepare a browser Playground preview.',
 	'target'             => array( 'kind' => 'sandbox-runtime' ),
 	'allowed_tools'      => array( 'filesystem-write', 'filesystem-write', '' ),
+	'sandbox_tool_policy' => wp_codebox_smoke_sandbox_tool_policy( array( 'filesystem-write' => array( 'runtime_tool_id' => 'filesystem_write' ) ) ),
 	'expected_artifacts' => array( 'repair-summary', 'changed-files' ),
 );
 $host_browser_equivalent_task = WP_Codebox_Agent_Task::normalize_input( $host_browser_equivalent_input );
@@ -1964,23 +2004,23 @@ $parent_only_tool = $runner->run(
 	array(
 		'goal'           => 'Try a parent-only workspace mutation.',
 		'allowed_tools'  => array( 'datamachine/workspace-git-push' ),
+		'sandbox_tool_policy' => wp_codebox_smoke_sandbox_tool_policy( array( 'datamachine/workspace-git-push' => array( 'runtime_tool_id' => 'workspace_git_push', 'execution_location' => 'parent', 'transport_visibility' => 'parent', 'allowed' => false ) ) ),
 		'artifacts_path' => $root . '/artifacts',
 	)
 );
 $assert( 'parent-only Data Machine tool request fails closed', is_wp_error( $parent_only_tool ) && 'wp_codebox_tool_not_allowed' === $parent_only_tool->get_error_code() );
 $assert( 'tool denial includes structured redacted details', is_wp_error( $parent_only_tool ) && 'wp-codebox/tool-allowlist-denial/v1' === ( $parent_only_tool->get_error_data()['schema'] ?? '' ) && 'parent-only' === ( $parent_only_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
 
-$GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] = array( 'datamachine/workspace-read' );
 $not_allowlisted_tool = $runner->run(
 	array(
 		'goal'           => 'Try an unconfigured sandbox tool.',
 		'allowed_tools'  => array( 'datamachine/workspace-write' ),
+		'sandbox_tool_policy' => wp_codebox_smoke_sandbox_tool_policy( array( 'datamachine/workspace-read' => array( 'runtime_tool_id' => 'workspace_read' ) ) ),
 		'artifacts_path' => $root . '/artifacts',
 	)
 );
 $assert( 'configured Data Machine tool allow-list fails closed', is_wp_error( $not_allowlisted_tool ) && 'wp_codebox_tool_not_allowed' === $not_allowlisted_tool->get_error_code() );
-$assert( 'configured allow-list denial reports allowed tools', is_wp_error( $not_allowlisted_tool ) && array( 'datamachine/workspace-read' ) === ( $not_allowlisted_tool->get_error_data()['allowed_tools'] ?? array() ) && 'not-allowlisted' === ( $not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
-unset( $GLOBALS['wp_codebox_filters']['wp_codebox_allowed_sandbox_tools'] );
+$assert( 'configured allow-list denial reports allowed tools', is_wp_error( $not_allowlisted_tool ) && array( 'datamachine/workspace-read' ) === ( $not_allowlisted_tool->get_error_data()['allowed_tools'] ?? array() ) && 'not-in-policy' === ( $not_allowlisted_tool->get_error_data()['denied_tools'][0]['reason'] ?? '' ) );
 
 $batch_result = $runner->run_batch(
 	array(

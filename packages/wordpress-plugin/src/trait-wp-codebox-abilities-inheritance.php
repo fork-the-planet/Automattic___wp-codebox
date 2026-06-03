@@ -10,7 +10,7 @@ defined( 'ABSPATH' ) || exit;
 trait WP_Codebox_Abilities_Inheritance {
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 private static function normalize_task_input( array $input ): array|WP_Error {
-	return WP_Codebox_Agent_Task::normalize_input( $input, fn( array $tools ): WP_Error|null => ( new WP_Codebox_Agent_Sandbox_Runner() )->validate_allowed_tools( $tools ), true );
+	return WP_Codebox_Agent_Task::normalize_input( $input, fn( array $tools, array $task_input ): WP_Error|null => ( new WP_Codebox_Agent_Sandbox_Runner() )->validate_allowed_tools( $tools, $task_input ), true );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array{connectors:string[],settings:string[]} */
