@@ -84,11 +84,13 @@
 
 	const siteOperationEnvelope = ( operation, result, meta = {} ) => {
 		const errors = result?.success === false ? [ result.error ].filter( Boolean ) : [];
+		const success = result?.success === true;
 		return {
 			operation,
-			status: result?.success ? 'ok' : 'error',
+			success,
+			status: success ? 'ok' : 'error',
 			...meta,
-			data: result?.success ? result.data ?? null : null,
+			data: success ? result.data ?? null : null,
 			errors,
 		};
 	};
