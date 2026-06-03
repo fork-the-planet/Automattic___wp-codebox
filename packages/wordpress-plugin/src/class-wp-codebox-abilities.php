@@ -15,6 +15,7 @@ require_once __DIR__ . '/trait-wp-codebox-abilities-browser-artifacts.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runtime.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-blueprint.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-browser-runner.php';
+require_once __DIR__ . '/trait-wp-codebox-abilities-browser-connectors.php';
 require_once __DIR__ . '/trait-wp-codebox-abilities-utils.php';
 
 final class WP_Codebox_Abilities {
@@ -22,6 +23,7 @@ final class WP_Codebox_Abilities {
 	private const BROWSER_ARTIFACT_MAX_BYTES = 5242880;
 	private const BROWSER_CAPTURE_MAX_BYTES  = 262144;
 	private const BROWSER_SESSION_CREATE_SCOPE = 'browser-session:create';
+	private const BROWSER_CONNECTOR_REQUEST_SCOPE = 'browser-connector:request';
 	private const BROWSER_ARTIFACT_WRITE_SCOPE = 'artifact:write';
 
 	private static bool $registered = false;
@@ -34,6 +36,7 @@ final class WP_Codebox_Abilities {
 	use WP_Codebox_Abilities_Browser_Runtime;
 	use WP_Codebox_Abilities_Browser_Blueprint;
 	use WP_Codebox_Abilities_Browser_Runner;
+	use WP_Codebox_Abilities_Browser_Connectors;
 	use WP_Codebox_Abilities_Utils;
 
 	public function __construct() {
@@ -554,6 +557,20 @@ final class WP_Codebox_Abilities {
 					'output_schema'       => self::browser_materializer_contract_schema(),
 					'execute_callback'    => array( self::class, 'create_browser_materializer_contract' ),
 					'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
+				'wp-codebox/browser-connector-request',
+				array(
+					'label'               => 'Run Browser Connector Request',
+					'description'         => 'Resolve connector credentials server-side and dispatch a generic browser connector request without exposing raw secrets to the browser sandbox.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::browser_connector_request_schema(),
+					'output_schema'       => self::browser_connector_response_schema(),
+					'execute_callback'    => array( self::class, 'browser_connector_request' ),
+					'permission_callback' => array( self::class, 'can_request_browser_connector' ),
 					'meta'                => array( 'show_in_rest' => true ),
 				)
 			);
