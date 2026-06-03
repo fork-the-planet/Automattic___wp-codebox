@@ -52,7 +52,30 @@ final class WP_Codebox_Abilities {
 
 		$this->register_category();
 		$this->register();
+		add_action( 'rest_api_init', array( self::class, 'register_rest_routes' ) );
 		self::$registered = true;
+	}
+
+	public static function register_rest_routes(): void {
+		register_rest_route(
+			'wp-codebox/v1',
+			'/browser-provider-request',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( self::class, 'rest_browser_provider_request' ),
+				'permission_callback' => static fn(): bool => current_user_can( 'manage_options' ),
+			)
+		);
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_browser_provider_request( WP_REST_Request $request ): array|WP_Error {
+		$input = $request->get_json_params();
+		if ( ! is_array( $input ) ) {
+			return new WP_Error( 'wp_codebox_browser_provider_rest_payload_invalid', 'Browser provider proxy requests must send a JSON object.', array( 'status' => 400 ) );
+		}
+
+		return self::execute_browser_provider_request( $input );
 	}
 
 	/**

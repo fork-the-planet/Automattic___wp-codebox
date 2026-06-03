@@ -262,6 +262,112 @@ if ( $max_bytes > 0 ) {
 return array_filter( $record, static fn( $value ) => \'\' !== $value );
 }
 
+function wp_codebox_browser_install_provider_proxy( array $payload ): void {
+if ( ! function_exists( \'post_message_to_js\' ) || ! class_exists( \'\\WordPress\\AiClient\\AiClient\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' ) ) {
+	return;
+}
+
+$provider = trim( (string) ( $payload[\'provider\'] ?? \'\' ) );
+if ( \'\' === $provider ) {
+	return;
+}
+
+$registry = \\WordPress\\AiClient\\AiClient::defaultRegistry();
+if ( ! method_exists( $registry, \'setHttpTransporter\' ) || ! method_exists( $registry, \'setProviderRequestAuthentication\' ) ) {
+	return;
+}
+
+$provider_id = $provider;
+if ( method_exists( $registry, \'getProviderId\' ) ) {
+	try {
+		$provider_id = (string) $registry->getProviderId( $provider );
+	} catch ( Throwable $exception ) {
+		$provider_id = $provider;
+	}
+}
+
+$inherit = is_array( $payload[\'inherit\'] ?? null ) ? $payload[\'inherit\'] : array();
+if ( empty( $inherit[\'connectors\'] ) && is_array( $payload[\'inheritance\'][\'connectors\'] ?? null ) ) {
+	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
+		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
+	}, $payload[\'inheritance\'][\'connectors\'] ) ) );
+}
+if ( empty( $inherit[\'connectors\'] ) ) {
+	return;
+}
+
+$registry->setProviderRequestAuthentication(
+	$provider_id,
+	new class implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface {
+		public static function getJsonSchema(): array {
+			return array( \'type\' => \'object\' );
+		}
+
+		public function authenticateRequest( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request {
+			return $request;
+		}
+	}
+);
+
+$registry->setHttpTransporter(
+	new class( $payload, $inherit ) implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface {
+		private array $payload;
+		private array $inherit;
+
+		public function __construct( array $payload, array $inherit ) {
+			$this->payload = $payload;
+			$this->inherit = $inherit;
+		}
+
+		public function send( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request, ?\\WordPress\\AiClient\\Providers\\Http\\DTO\\RequestOptions $options = null ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Response {
+			unset( $options );
+			$connector = trim( (string) ( $this->payload[\'connector\'] ?? $this->inherit[\'connectors\'][0] ?? \'\' ) );
+			$message   = array(
+				\'schema\'             => \'wp-codebox/browser-provider-proxy-request/v1\',
+				\'id\'                 => \'provider-\' . bin2hex( random_bytes( 8 ) ),
+				\'operation\'          => \'http.request\',
+				\'provider\'           => (string) ( $this->payload[\'provider\'] ?? \'\' ),
+				\'model\'              => (string) ( $this->payload[\'model\'] ?? \'\' ),
+				\'connector\'          => $connector,
+				\'inherit\'            => $this->inherit,
+				\'sandbox_session_id\' => (string) ( $this->payload[\'sandbox_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
+				\'caller_session_id\'  => (string) ( $this->payload[\'caller_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
+				\'job_id\'             => (string) ( $this->payload[\'job_id\'] ?? \'\' ),
+				\'orchestrator\'       => is_array( $this->payload[\'orchestrator\'] ?? null ) ? $this->payload[\'orchestrator\'] : array(),
+				\'authorization\'      => is_array( $this->payload[\'authorization\'] ?? null ) ? $this->payload[\'authorization\'] : array(),
+				\'request\'            => array(
+					\'method\'  => method_exists( $request->getMethod(), \'value\' ) ? $request->getMethod()->value : (string) $request->getMethod(),
+					\'uri\'     => $request->getUri(),
+					\'headers\' => $request->getHeaders(),
+					\'body\'    => $request->getBody(),
+					\'data\'    => $request->getData(),
+				),
+			);
+
+			$response_json = post_message_to_js( wp_json_encode( $message, JSON_UNESCAPED_SLASHES ) );
+			$response      = json_decode( is_string( $response_json ) ? $response_json : \'\', true );
+			if ( ! is_array( $response ) || empty( $response[\'success\'] ) ) {
+				$error = is_array( $response[\'error\'] ?? null ) ? $response[\'error\'] : array();
+				throw new RuntimeException( (string) ( $error[\'message\'] ?? \'Browser provider proxy request failed.\' ) );
+			}
+
+			$response_payload = is_array( $response[\'response\'] ?? null ) ? $response[\'response\'] : array();
+			$http = is_array( $response_payload[\'http\'] ?? null ) ? $response_payload[\'http\'] : ( is_array( $response[\'http\'] ?? null ) ? $response[\'http\'] : array() );
+			$status = (int) ( $http[\'status\'] ?? 0 );
+			if ( $status < 100 || $status > 599 ) {
+				throw new RuntimeException( \'Browser provider proxy returned a malformed HTTP response.\' );
+			}
+
+			return new \\WordPress\\AiClient\\Providers\\Http\\DTO\\Response(
+				$status,
+				is_array( $http[\'headers\'] ?? null ) ? $http[\'headers\'] : array( \'Content-Type\' => \'application/json\' ),
+				isset( $http[\'body\'] ) ? (string) $http[\'body\'] : \'\'
+			);
+		}
+	}
+);
+}
+
 function wp_codebox_browser_safe_artifact_path( $path, $root ) {
 $path = str_replace( chr( 92 ), "/", (string) $path );
 $path = ltrim( preg_replace( "#/+#", "/", $path ), "/" );
@@ -417,19 +523,12 @@ if ( ! is_array( $response ) ) {
 }
 
 $metadata = is_array( $response[\'metadata\'] ?? null ) ? $response[\'metadata\'] : array();
-$datamachine = is_array( $metadata[\'datamachine\'] ?? null ) ? $metadata[\'datamachine\'] : array();
 
 return array_filter( array(
 	\'keys\' => array_slice( array_keys( $response ), 0, 20 ),
 	\'tool_call_count\' => is_array( $response[\'tool_calls\'] ?? null ) ? count( $response[\'tool_calls\'] ) : null,
 	\'last_tool_call_count\' => is_array( $response[\'last_tool_calls\'] ?? null ) ? count( $response[\'last_tool_calls\'] ) : null,
 	\'tool_execution_result_count\' => is_array( $response[\'tool_execution_results\'] ?? null ) ? count( $response[\'tool_execution_results\'] ) : null,
-	\'datamachine_tool_call_count\' => is_array( $datamachine[\'tool_calls\'] ?? null ) ? count( $datamachine[\'tool_calls\'] ) : null,
-	\'datamachine_tool_execution_summary_count\' => is_array( $datamachine[\'tool_execution_summary\'] ?? null ) ? count( $datamachine[\'tool_execution_summary\'] ) : null,
-	\'completion_assertions_required\' => is_array( $datamachine[\'completion_assertions_required\'] ?? null ) ? $datamachine[\'completion_assertions_required\'] : null,
-	\'completion_assertions_missing\' => is_array( $datamachine[\'completion_assertions_missing\'] ?? null ) ? $datamachine[\'completion_assertions_missing\'] : null,
-	\'completion_assertions_satisfied\' => is_array( $datamachine[\'completion_assertions_satisfied\'] ?? null ) ? $datamachine[\'completion_assertions_satisfied\'] : null,
-	\'completion_assertions_complete\' => isset( $datamachine[\'completion_assertions_complete\'] ) ? (bool) $datamachine[\'completion_assertions_complete\'] : null,
 	\'text_bytes\' => isset( $response[\'response\'] ) && is_string( $response[\'response\'] ) ? strlen( $response[\'response\'] ) : null,
 	\'status\' => is_scalar( $response[\'status\'] ?? null ) ? (string) $response[\'status\'] : null,
 ) );
@@ -537,27 +636,6 @@ class WP_Codebox_Browser_Filesystem_Write_Tool {
 	}
 }
 
-add_filter( \'datamachine_resolved_tools\', function ( array $tools, $mode, array $args ) {
-	$tools[\'filesystem-write\'] = array(
-		\'name\'        => \'filesystem-write\',
-		\'description\' => \'Write one generated website artifact file inside /wordpress/wp-content/uploads/studio-web/website/. Call this once per file, including website/index.html and any CSS, JavaScript, metadata, or product JSON files.\',
-		\'class\'       => \'WP_Codebox_Browser_Filesystem_Write_Tool\',
-		\'method\'      => \'handle_tool_call\',
-		\'parameters\'  => array(
-			\'type\'       => \'object\',
-			\'required\'   => array( \'path\', \'content\' ),
-			\'properties\' => array(
-				\'path\'     => array( \'type\' => \'string\', \'description\' => \'Relative artifact path under website/, for example website/index.html or website/styles.css.\' ),
-				\'content\'  => array( \'type\' => \'string\', \'description\' => \'Full file contents. Use UTF-8 text unless encoding is base64.\' ),
-				\'encoding\' => array( \'type\' => \'string\', \'enum\' => array( \'utf-8\', \'base64\' ) ),
-			),
-		),
-		\'access_level\' => \'public\',
-		\'modes\'        => is_array( $mode ) ? $mode : array( (string) $mode ),
-	);
-	return $tools;
-}, 20, 3 );
-
 $wp_codebox_playground_root = defined( \'ABSPATH\' ) ? wp_normalize_path( ABSPATH ) : \'\';
 $wp_codebox_is_playground = \'/wordpress/\' === $wp_codebox_playground_root && ( \'Emscripten\' === PHP_OS_FAMILY || ( defined( \'WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER\' ) && WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER ) );
 
@@ -576,6 +654,8 @@ if ( is_array( $raw_payload ) ) {
 	$payload = array_replace_recursive( $payload, $raw_payload );
 }
 }
+
+wp_codebox_browser_install_provider_proxy( $payload );
 
 $agent = sanitize_key( (string) ( $payload[\'agent\'] ?? \'wp-codebox-sandbox\' ) );
 $message = (string) ( $payload[\'message\'] ?? ( $payload[\'task_input\'][\'goal\'] ?? \'\' ) );
