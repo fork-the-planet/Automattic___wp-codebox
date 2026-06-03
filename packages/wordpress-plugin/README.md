@@ -26,13 +26,11 @@ may still pass `task` as a string; the runner normalizes it into `goal` and
 returns the normalized `task_input` in the ability response. Raw PHP `code` and
 `code_file` fields remain rejected on this product ability path.
 
-When `allowed_tools` includes Data Machine ability names, the parent-side runner
-enforces the sandbox allow-list before launching the CLI. Parent-only abilities
-such as workspace worktree, Git push, GitSync, GitHub mutation, and code-task
-creation fail closed with `wp_codebox_tool_not_allowed`; hosts can narrow the
-safe Data Machine tool set with the `wp_codebox_allowed_sandbox_tools` option or
-filter. Non-Data-Machine labels remain descriptive task hints for the sandbox
-agent.
+When `allowed_tools` is non-empty, the parent-side runner requires a resolved
+`sandbox_tool_policy` snapshot before launching the CLI. Codebox validates and
+enforces the snapshot generically: tools that are not present, not allowed, not
+visible to the sandbox, or assigned to a non-sandbox execution location fail
+closed with `wp_codebox_tool_not_allowed`.
 
 ```json
 {
@@ -40,6 +38,15 @@ agent.
   "goal": "Fix the failing settings save flow.",
   "target": { "kind": "plugin", "path": "wp-content/plugins/example" },
   "allowed_tools": ["workspace.read", "workspace.write", "tests.run"],
+  "sandbox_tool_policy": {
+    "schema": "wp-codebox/sandbox-tool-policy/v1",
+    "version": 1,
+    "tools": [
+      { "id": "workspace.read", "runtime_tool_id": "workspace_read", "execution_location": "sandbox", "transport_visibility": "sandbox", "allowed": true },
+      { "id": "workspace.write", "runtime_tool_id": "workspace_write", "execution_location": "sandbox", "transport_visibility": "sandbox", "allowed": true },
+      { "id": "tests.run", "runtime_tool_id": "tests_run", "execution_location": "sandbox", "transport_visibility": "sandbox", "allowed": true }
+    ]
+  },
   "expected_artifacts": ["patch", "tests", "review"],
   "policy": { "applyBack": "reviewed" },
   "context": { "issue": "https://github.com/Automattic/wp-codebox/issues/29" }
@@ -236,11 +243,10 @@ produces artifact metadata, changed files, patches, and review evidence; the
 parent control plane performs reviewed apply-back, branch pushes, deploys, and PR
 creation.
 
-The WordPress runner validates any requested `datamachine/*` entries in
-`allowed_tools` against that boundary before the sandbox process starts. The
-default list matches the sandbox-safe DMC abilities above; installations can
-narrow it with `wp_codebox_allowed_sandbox_tools` while parent-only abilities are
-always removed from the effective allow-list.
+The WordPress runner validates requested `allowed_tools` against the caller's
+resolved `sandbox_tool_policy` before the sandbox process starts. Product layers
+such as Data Machine own their own tool taxonomy and risk policy; WP Codebox only
+validates the generic snapshot shape and enforces the resolved boundary.
 
 Data Machine, Data Machine Code, and other systems are consumers or mounted
 tools. They do not own WP Codebox's artifact contract.

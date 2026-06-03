@@ -16,7 +16,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	private const TOOL_DENIAL_SCHEMA = 'wp-codebox/tool-allowlist-denial/v1';
 	private const REMEDIATION_OUTCOME_SCHEMA = 'wp-codebox/agent-sandbox-remediation-outcome/v1';
 	private const COMPLETION_OUTCOME_SCHEMA = 'wp-codebox/sandbox-completion-outcome/v1';
-	private const SANDBOX_TOOL_POLICY_FILE = __DIR__ . '/generated-sandbox-datamachine-tool-policy.php';
+	private const SANDBOX_TOOL_POLICY_SCHEMA = 'wp-codebox/sandbox-tool-policy/v1';
 
 	/** @var array<string, callable> */
 	private array $callbacks;
@@ -409,6 +409,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 					'goal'                   => $goal,
 					'target'                 => is_array( $task['target'] ?? null ) ? $task['target'] : array(),
 					'allowed_tools'          => is_array( $task['allowed_tools'] ?? null ) ? $task['allowed_tools'] : array(),
+					'sandbox_tool_policy'    => is_array( $task['sandbox_tool_policy'] ?? $task['sandboxToolPolicy'] ?? null ) ? ( $task['sandbox_tool_policy'] ?? $task['sandboxToolPolicy'] ) : array(),
 					'expected_artifacts'     => is_array( $task['expected_artifacts'] ?? null ) ? $task['expected_artifacts'] : array(),
 					'policy'                 => is_array( $task['policy'] ?? null ) ? $task['policy'] : array(),
 					'context'                => $context,
@@ -892,7 +893,19 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function task_input( array $input ): array|WP_Error {
-		return WP_Codebox_Agent_Task::normalize_input( $input, fn( array $tools ): WP_Error|null => $this->validate_allowed_tools( $tools ) );
+		$task_input = WP_Codebox_Agent_Task::normalize_input( $input );
+		if ( is_wp_error( $task_input ) ) {
+			return $task_input;
+		}
+
+		if ( ! empty( $task_input['allowed_tools'] ) ) {
+			$error = $this->validate_task_tools( $task_input );
+			if ( is_wp_error( $error ) ) {
+				return $error;
+			}
+		}
+
+		return $task_input;
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
@@ -1055,18 +1068,26 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $workspaces;
 	}
 
-	/** @param string[] $tools */
-	public function validate_allowed_tools( array $tools ): WP_Error|null {
-		$allowed = $this->sandbox_tool_allowlist();
+	/** @param string[] $tools @param array<string,mixed>|null $task_input Normalized task input. */
+	public function validate_allowed_tools( array $tools, ?array $task_input = null ): WP_Error|null {
+		return $this->validate_task_tools( is_array( $task_input ) ? $task_input : array( 'allowed_tools' => $tools ) );
+	}
+
+	/** @param array<string,mixed> $task_input Normalized task input. */
+	private function validate_task_tools( array $task_input ): WP_Error|null {
+		$tools  = $this->string_list( $task_input['allowed_tools'] ?? array() );
+		$policy = $this->resolved_sandbox_tool_policy( $task_input );
+		if ( is_wp_error( $policy ) ) {
+			return $policy;
+		}
+
+		$allowed = $this->allowed_sandbox_tools( $policy );
 		$denied  = array();
 
 		foreach ( $tools as $tool ) {
-			if ( ! str_starts_with( $tool, 'datamachine/' ) ) {
-				continue;
-			}
-
-			$reason = in_array( $tool, self::parent_only_sandbox_tools(), true ) ? 'parent-only' : 'not-allowlisted';
-			if ( 'parent-only' === $reason || ! in_array( $tool, $allowed, true ) ) {
+			$policy_tool = $this->sandbox_policy_tool( $policy, $tool );
+			$reason      = null === $policy_tool ? 'not-in-policy' : $this->sandbox_policy_denial_reason( $policy_tool );
+			if ( null !== $reason ) {
 				$denied[] = array(
 					'tool'   => $tool,
 					'reason' => $reason,
@@ -1080,12 +1101,13 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		return new WP_Error(
 			'wp_codebox_tool_not_allowed',
-			'One or more requested Data Machine tools are not allowed in the sandbox scope.',
+			'One or more requested tools are not allowed by the resolved sandbox tool policy.',
 			array(
 				'status'        => 403,
 				'schema'        => self::TOOL_DENIAL_SCHEMA,
 				'denied_tools'  => $denied,
 				'allowed_tools' => $allowed,
+				'policy_schema' => $policy['schema'] ?? '',
 			)
 		);
 	}
@@ -1397,56 +1419,105 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		);
 	}
 
-	/** @return string[] */
-	private function sandbox_tool_allowlist(): array {
-		$tools = $this->config_option( 'wp_codebox_allowed_sandbox_tools', self::default_sandbox_tools() );
-		if ( function_exists( 'apply_filters' ) ) {
-			$tools = apply_filters( 'wp_codebox_allowed_sandbox_tools', $tools );
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function resolved_sandbox_tool_policy( array $input ): array|WP_Error {
+		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : ( is_array( $input['sandboxToolPolicy'] ?? null ) ? $input['sandboxToolPolicy'] : array() );
+		if ( empty( $policy ) && function_exists( 'apply_filters' ) ) {
+			$policy = apply_filters( 'wp_codebox_resolved_sandbox_tool_policy', $policy, $input );
 		}
 
-		if ( ! is_array( $tools ) ) {
-			$tools = array();
-		}
-
-		return array_values(
-			array_unique(
-				array_filter(
-					array_map(
-						static fn( $tool ): string => trim( (string) $tool ),
-						$tools
-					),
-					static fn( string $tool ): bool => str_starts_with( $tool, 'datamachine/' ) && ! in_array( $tool, self::parent_only_sandbox_tools(), true )
+		$issues = $this->sandbox_tool_policy_issues( is_array( $policy ) ? $policy : array() );
+		if ( ! empty( $issues ) ) {
+			return new WP_Error(
+				'wp_codebox_sandbox_tool_policy_invalid',
+				'Allowed tools require a valid resolved sandbox_tool_policy snapshot.',
+				array(
+					'status' => 400,
+					'schema' => 'wp-codebox/sandbox-tool-policy-validation/v1',
+					'issues' => $issues,
 				)
-			)
-		);
-	}
-
-	/** @return array<string,mixed> */
-	private static function sandbox_tool_policy(): array {
-		static $policy = null;
-
-		if ( null !== $policy ) {
-			return $policy;
+			);
 		}
-
-		$loaded = is_readable( self::SANDBOX_TOOL_POLICY_FILE ) ? require self::SANDBOX_TOOL_POLICY_FILE : array();
-		$policy = is_array( $loaded ) ? $loaded : array();
 
 		return $policy;
 	}
 
-	/** @return string[] */
-	private static function default_sandbox_tools(): array {
-		$policy = self::sandbox_tool_policy();
+	/** @param array<string,mixed> $policy @return array<int,array<string,string>> */
+	private function sandbox_tool_policy_issues( array $policy ): array {
+		$issues = array();
+		if ( self::SANDBOX_TOOL_POLICY_SCHEMA !== ( $policy['schema'] ?? '' ) ) {
+			$issues[] = array( 'field' => 'schema', 'message' => 'sandbox_tool_policy.schema must be ' . self::SANDBOX_TOOL_POLICY_SCHEMA . '.' );
+		}
+		if ( 1 !== (int) ( $policy['version'] ?? 0 ) ) {
+			$issues[] = array( 'field' => 'version', 'message' => 'sandbox_tool_policy.version must be 1.' );
+		}
+		if ( empty( $policy['tools'] ) || ! is_array( $policy['tools'] ) ) {
+			$issues[] = array( 'field' => 'tools', 'message' => 'sandbox_tool_policy.tools must be a non-empty array.' );
+			return $issues;
+		}
 
-		return is_array( $policy['safe_tools'] ?? null ) ? array_values( $policy['safe_tools'] ) : array();
+		$seen = array();
+		foreach ( $policy['tools'] as $index => $tool ) {
+			if ( ! is_array( $tool ) ) {
+				$issues[] = array( 'field' => 'tools[' . $index . ']', 'message' => 'Each sandbox tool policy tool must be an object.' );
+				continue;
+			}
+			$id = trim( (string) ( $tool['id'] ?? '' ) );
+			if ( '' === $id ) {
+				$issues[] = array( 'field' => 'tools[' . $index . '].id', 'message' => 'Tool id must be a non-empty string.' );
+			} elseif ( isset( $seen[ $id ] ) ) {
+				$issues[] = array( 'field' => 'tools[' . $index . '].id', 'message' => 'Duplicate tool id: ' . $id . '.' );
+			}
+			$seen[ $id ] = true;
+			foreach ( array( 'runtime_tool_id', 'execution_location', 'transport_visibility' ) as $field ) {
+				if ( '' === trim( (string) ( $tool[ $field ] ?? '' ) ) ) {
+					$issues[] = array( 'field' => 'tools[' . $index . '].' . $field, 'message' => 'Tool ' . $field . ' must be a non-empty string.' );
+				}
+			}
+			if ( ! is_bool( $tool['allowed'] ?? null ) ) {
+				$issues[] = array( 'field' => 'tools[' . $index . '].allowed', 'message' => 'Tool allowed must be boolean.' );
+			}
+		}
+
+		return $issues;
 	}
 
-	/** @return string[] */
-	private static function parent_only_sandbox_tools(): array {
-		$policy = self::sandbox_tool_policy();
+	/** @param array<string,mixed> $policy @return string[] */
+	private function allowed_sandbox_tools( array $policy ): array {
+		$allowed = array();
+		foreach ( is_array( $policy['tools'] ?? null ) ? $policy['tools'] : array() as $tool ) {
+			if ( is_array( $tool ) && null === $this->sandbox_policy_denial_reason( $tool ) ) {
+				$allowed[] = (string) $tool['id'];
+			}
+		}
 
-		return is_array( $policy['parent_only_tools'] ?? null ) ? array_values( $policy['parent_only_tools'] ) : array();
+		return array_values( array_unique( $allowed ) );
+	}
+
+	/** @param array<string,mixed> $policy @return array<string,mixed>|null */
+	private function sandbox_policy_tool( array $policy, string $tool_id ): array|null {
+		foreach ( is_array( $policy['tools'] ?? null ) ? $policy['tools'] : array() as $tool ) {
+			if ( is_array( $tool ) && $tool_id === (string) ( $tool['id'] ?? '' ) ) {
+				return $tool;
+			}
+		}
+
+		return null;
+	}
+
+	/** @param array<string,mixed> $tool */
+	private function sandbox_policy_denial_reason( array $tool ): string|null {
+		if ( 'sandbox' !== (string) ( $tool['execution_location'] ?? '' ) ) {
+			return 'parent-only';
+		}
+		if ( ! in_array( (string) ( $tool['transport_visibility'] ?? '' ), array( 'sandbox', 'both' ), true ) ) {
+			return 'not-visible-in-sandbox';
+		}
+		if ( true !== ( $tool['allowed'] ?? false ) ) {
+			return 'not-allowed';
+		}
+
+		return null;
 	}
 
 	private function default_artifacts_path(): string {
@@ -1713,6 +1784,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$agent_bundles  = $this->agent_bundles( $input );
 		$steps          = array();
 		foreach ( $task_prompts as $task_prompt ) {
+			$task_input = $this->task_input( array_merge( $input, array( 'goal' => $task_prompt ) ) );
+			if ( is_wp_error( $task_input ) ) {
+				return $task_input;
+			}
+
 			$args = array(
 				'task=' . $task_prompt,
 				'agent=' . $this->agent_slug( $input ),
@@ -1720,6 +1796,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'provider=' . $this->provider( $input, $inheritance ),
 				'model=' . $this->model( $input, $inheritance ),
 				'provider-plugin-slugs=' . implode( ',', $provider_slugs ),
+				'sandbox-tool-policy-json=' . $this->json_encode( $task_input['sandbox_tool_policy'] ),
 			);
 			if ( ! empty( $agent_bundles ) ) {
 				$args[] = 'agent-bundles-json=' . $this->json_encode( $agent_bundles );

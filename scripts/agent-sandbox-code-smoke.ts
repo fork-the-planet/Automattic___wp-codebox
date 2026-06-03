@@ -30,6 +30,17 @@ async function main() {
     model: "opencode-go/kimi-k2.6",
     sessionId: "codebox-smoke-session",
     sandboxWorkspace,
+    sandboxToolPolicy: {
+      schema: "wp-codebox/sandbox-tool-policy/v1",
+      version: 1,
+      tools: [
+        { id: "datamachine/workspace-read", runtime_tool_id: "workspace_read", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
+        { id: "datamachine/workspace-write", runtime_tool_id: "workspace_write", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
+        { id: "datamachine/workspace-edit", runtime_tool_id: "workspace_edit", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
+        { id: "datamachine/workspace-git-status", runtime_tool_id: "workspace_git_status", execution_location: "parent", transport_visibility: "parent", allowed: false },
+      ],
+      metadata: { source: "smoke" },
+    },
     agentBundles: [
       { source: "/tmp/site-generator-agent.json", slug: "site-generator" },
       {
@@ -67,10 +78,7 @@ async function main() {
   assert.match(code, /linked_worktree_mount/, "sandbox setup should report linked worktree mounts as non-fatal diagnostics")
   assert.ok(code.indexOf("linked_worktree_mount") < code.indexOf("$sandbox_adopt_result = $sandbox_adopt_ability->execute"), "linked worktree mounts should be skipped before Data Machine workspace adoption")
   assert.match(code, /Do not invent alternate tool names such as read_file/, "sandbox guidance should prevent pseudo-tool aliases")
-  assert.doesNotMatch(code, /workspace_apply_patch/, "sandbox tool policy should not advertise git-backed patch application")
-  assert.doesNotMatch(code, /workspace_git_status/, "sandbox tool policy should not advertise unbridged git status")
-  assert.doesNotMatch(code, /workspace_git_log/, "sandbox tool policy should not advertise unbridged git log")
-  assert.doesNotMatch(code, /workspace_git_diff/, "sandbox tool policy should not advertise unbridged git diff")
+  assert.match(code, /\\"tool_policy\\":\{\\"mode\\":\\"allow\\",\\"tools\\":\[\\"workspace_read\\",\\"workspace_write\\",\\"workspace_edit\\"\]/, "sandbox agent tool policy should include only sandbox-visible runtime tool ids")
   assert.match(code, /For changes use workspace_write or workspace_edit/, "sandbox guidance should steer changes to tools that work without git")
   assert.match(code, /wp_codebox_import_sandbox_agent_bundles/, "sandbox setup should import declared Data Machine agent bundles")
   assert.match(code, /wp_get_ability\('datamachine\/import-agent'\)/, "sandbox setup should use the canonical Data Machine import ability")
@@ -85,7 +93,18 @@ async function main() {
   const recipeSpec = await recipeExecutionSpec(
     {
       command: "wp-codebox.agent-sandbox-run",
-      args: ["task=Inspect the mounted repo", "agent=sandbox-agent"],
+      args: [
+        "task=Inspect the mounted repo",
+        "agent=sandbox-agent",
+        "sandbox-tool-policy-json=" + JSON.stringify({
+          schema: "wp-codebox/sandbox-tool-policy/v1",
+          version: 1,
+          tools: [
+            { id: "datamachine/workspace-read", runtime_tool_id: "workspace_read", execution_location: "sandbox", transport_visibility: "sandbox", allowed: true },
+          ],
+          metadata: { source: "smoke" },
+        }),
+      ],
     },
     process.cwd(),
     sandboxWorkspace,

@@ -197,8 +197,8 @@ Artifact bundles include `metadata.json.provenance.workspace` with:
 - `defaultMode`: `repo-backed` unless a mount declares `sourceMode: site-backed`.
 - `mounts`: normalized workspace mount refs for repo components and site
   snapshots.
-- `dmc.safeAbilities`: the sandbox DMC ability allow-list.
-- `dmc.parentOnlyAbilities`: DMC abilities reserved for the parent control plane.
+- `toolPolicy`: optional caller-owned sandbox tool policy snapshot when the
+  recipe provides one.
 
 Sandbox agents may read, write, edit, patch, grep, list, and diff files inside
 the mounted workspace. Read-only GitHub abilities may be exposed for context.

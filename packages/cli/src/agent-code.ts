@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { SANDBOX_DMC_PARENT_ONLY_ABILITIES, SANDBOX_DMC_SAFE_ABILITIES, SANDBOX_WORKSPACE_ROOT, type SandboxWorkspaceContract } from "@automattic/wp-codebox-core"
+import { sandboxAllowedRuntimeToolIds, SANDBOX_WORKSPACE_ROOT, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract } from "@automattic/wp-codebox-core"
 
 export interface AgentBundleSpec {
   source?: string
@@ -21,6 +21,7 @@ export interface AgentSandboxCodeOptions {
   maxTurns?: string
   timeoutSeconds?: string
   agentBundles?: AgentBundleSpec[]
+  sandboxToolPolicy?: SandboxToolPolicySnapshot
   code?: string
   codeFile?: string
   sandboxWorkspace?: SandboxWorkspaceContract
@@ -45,7 +46,12 @@ export async function resolveSandboxTaskCode(options: AgentSandboxCodeOptions): 
 function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const mode = options.mode ?? "sandbox"
   const agentModes = sandboxAgentModes(mode)
-  const agentConfig = scopedAgentConfig(mode, options.provider, options.model)
+  const sandboxToolPolicy = options.sandboxToolPolicy
+  if (!sandboxToolPolicy) {
+    throw new Error("wp-codebox.agent-sandbox-run requires sandbox-tool-policy-json for agent runs")
+  }
+  const runtimeToolIds = sandboxAllowedRuntimeToolIds(sandboxToolPolicy)
+  const agentConfig = scopedAgentConfig(mode, options.provider, options.model, runtimeToolIds)
   const input: Record<string, unknown> = {
     agent: options.agent,
     message: options.task,
@@ -61,7 +67,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
       workspace_root: SANDBOX_WORKSPACE_ROOT,
       sandbox_workspace: options.sandboxWorkspace ?? null,
       default_workspace: defaultSandboxWorkspace(options.sandboxWorkspace),
-      tool_contract: sandboxToolContract(),
+      tool_contract: sandboxToolContract(sandboxToolPolicy),
     },
   }
 
@@ -154,14 +160,6 @@ add_filter('agents_chat_permission', static function () {
     return true;
 }, 100, 2);
 
-add_filter('datamachine_code_sandbox_safe_abilities', static function () {
-    return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_SAFE_ABILITIES]))}, true);
-}, 100);
-
-add_filter('datamachine_code_sandbox_parent_only_abilities', static function () {
-    return json_decode(${JSON.stringify(JSON.stringify([...SANDBOX_DMC_PARENT_ONLY_ABILITIES]))}, true);
-}, 100);
-
 add_action('datamachine_agent_modes', static function () {
     if (class_exists('DataMachine\\Engine\\AI\\AgentModeRegistry')) {
         DataMachine\\Engine\\AI\\AgentModeRegistry::register('sandbox', 25, array(
@@ -172,7 +170,7 @@ add_action('datamachine_agent_modes', static function () {
 }, 100);
 
 add_filter('datamachine_agent_mode_sandbox', static function (string $content): string {
-    $guidance = ${JSON.stringify(sandboxModeGuidance())};
+    $guidance = ${JSON.stringify(sandboxModeGuidance(runtimeToolIds))};
     return trim($content) === '' ? $guidance : trim($content) . "\n\n" . $guidance;
 }, 100, 1);
 
@@ -502,18 +500,14 @@ echo json_encode($sandbox_agent_runtime, JSON_PRETTY_PRINT);
 `
 }
 
-function sandboxToolContract(): Record<string, unknown> {
+function sandboxToolContract(policy: SandboxToolPolicySnapshot): Record<string, unknown> {
   return {
-    schema: "wp-codebox/sandbox-dmc-tools/v1",
+    schema: policy.schema,
+    version: policy.version,
     modes: ["chat", "sandbox"],
-    tools: sandboxToolNames(),
-    safe_abilities: [...SANDBOX_DMC_SAFE_ABILITIES],
-    parent_only_abilities: [...SANDBOX_DMC_PARENT_ONLY_ABILITIES],
+    tools: sandboxAllowedRuntimeToolIds(policy),
+    policy,
   }
-}
-
-function sandboxToolNames(): string[] {
-  return SANDBOX_DMC_SAFE_ABILITIES.map((ability) => ability.replace(/^datamachine\//, "").replaceAll("-", "_"))
 }
 
 function sandboxAgentModes(mode: string): string[] {
@@ -544,22 +538,22 @@ function normalizeAgentBundleSpecs(specs: AgentBundleSpec[]): AgentBundleSpec[] 
   })
 }
 
-function sandboxModeGuidance(): string {
+function sandboxModeGuidance(runtimeToolIds: string[]): string {
   return `# WP Codebox Sandbox Context
 
 You are running inside a disposable WP Codebox sandbox. The sandbox can produce a reviewed artifact bundle from workspace changes.
 
-Use the available workspace tools by their exact names: ${sandboxToolNames().join(", ")}.
+Use the available tools by their exact names: ${runtimeToolIds.join(", ")}.
 
 Do not invent alternate tool names such as read_file, read-file, write_file, or edit_file. For file inspection use workspace_read, workspace_ls, and workspace_grep. For changes use workspace_write or workspace_edit.
 
 The sandbox workspace root is ${SANDBOX_WORKSPACE_ROOT}. Keep changes focused on the requested task and prefer patchable repository edits over prose-only answers.`
 }
 
-function scopedAgentConfig(mode: string, provider: string | undefined, model: string | undefined): Record<string, unknown> {
+function scopedAgentConfig(mode: string, provider: string | undefined, model: string | undefined, runtimeToolIds: string[]): Record<string, unknown> {
   const toolPolicy = {
     mode: "allow",
-    tools: sandboxToolNames(),
+    tools: runtimeToolIds,
   }
 
   if (!provider && !model) {
