@@ -52,6 +52,22 @@ public static function can_persist_browser_artifact( mixed $input = null ): bool
 	return true === ( $authorization['authorized'] ?? false );
 }
 
+/** @param mixed $input Ability input or request-like object. */
+public static function can_request_browser_connector( mixed $input = null ): bool {
+	if ( current_user_can( 'manage_options' ) ) {
+		return true;
+	}
+
+	$input = self::permission_input_array( $input );
+	if ( empty( $input ) ) {
+		return false;
+	}
+
+	$authorization = self::trusted_orchestrator_authorization( $input, self::BROWSER_CONNECTOR_REQUEST_SCOPE );
+
+	return true === ( $authorization['authorized'] ?? false );
+}
+
 /** @param mixed $input Ability input or request-like object. @return array<string,mixed> */
 private static function permission_input_array( mixed $input ): array {
 	if ( is_array( $input ) ) {

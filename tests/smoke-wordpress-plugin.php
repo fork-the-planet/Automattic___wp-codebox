@@ -397,6 +397,12 @@ $assert( 'browser task contract ability is REST visible', true === ( $browser_ta
 $assert( 'browser task contract accepts goal or legacy task', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
 $assert( 'browser task contract exposes phase schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && array( 'materializer' ) === ( $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array() ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) );
 
+$browser_connector_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/browser-connector-request'] ?? null;
+$assert( 'browser connector request ability registered', is_array( $browser_connector_ability ) );
+$assert( 'browser connector request ability is REST visible', true === ( $browser_connector_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'browser connector request uses canonical schemas', 'wp-codebox/browser-connector-request/v1' === ( $browser_connector_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/browser-connector-response/v1' === ( $browser_connector_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
+$assert( 'browser connector request uses connector-specific authorization scope', array( 'browser-connector:request' ) === ( $browser_connector_ability['input_schema']['properties']['authorization']['properties']['scope']['enum'] ?? array() ) );
+
 $trusted_browser_authorization = array(
 	'authorization' => array(
 		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
@@ -1087,6 +1093,81 @@ $assert( 'browser Playground session resolves inherited provider and model', ! i
 $assert( 'browser Playground session packages inherited provider plugin path', ! is_wp_error( $browser_inherited_session ) && 1 === count( array_filter( $browser_inherited_session['plugins'] ?? array(), static fn( array $plugin ): bool => 'ai-provider-inherited' === ( $plugin['slug'] ?? '' ) ) ) );
 $assert( 'browser Playground session embeds first-class browser task payload', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/browser-agent-task-payload/v1' === ( $browser_inherited_session['task_payload']['schema'] ?? '' ) && 'openai' === ( $browser_inherited_session['recipe']['browser']['task_payload']['provider'] ?? '' ) && 'gpt-5.5' === ( $browser_inherited_session['recipe']['browser']['task_payload']['model'] ?? '' ) );
 $assert( 'browser Playground session records inherited connector credential provenance without values', ! is_wp_error( $browser_inherited_session ) && 'wp-codebox/connector-credentials/v1' === ( $browser_inherited_session['inheritance']['connectors'][0]['credentials']['schema'] ?? '' ) && 'available' === ( $browser_inherited_session['task_payload']['inheritance']['connectors'][0]['credentials']['secrets'][0]['status'] ?? '' ) && str_contains( $browser_inherited_encoded, 'OPENAI_API_KEY' ) && ! str_contains( $browser_inherited_encoded, 'sk-browser-secret-value' ) && ! str_contains( $browser_inherited_encoded, 'secret_env_values' ) );
+$browser_connector_handler_saw_secret = false;
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_connector_request'] = function ( mixed $response, array $request ) use ( &$browser_connector_handler_saw_secret ): array {
+	$browser_connector_handler_saw_secret = 'sk-browser-secret-value' === ( $request['credentials']['OPENAI_API_KEY'] ?? '' );
+	return array(
+		'schema'            => 'caller/provider-response/v1',
+		'ok'                => true,
+		'credentials'       => $request['credentials'],
+		'secret_env_values' => $request['credentials'],
+	);
+};
+$browser_connector_response = is_array( $browser_connector_ability ) ? call_user_func(
+	$browser_connector_ability['execute_callback'],
+	array(
+		'schema'    => 'wp-codebox/browser-connector-request/v1',
+		'connector' => 'primary-ai',
+		'provider'  => 'openai',
+		'model'     => 'gpt-5.5',
+		'operation' => 'chat.completions.create',
+		'payload'   => array( 'messages' => array( array( 'role' => 'user', 'content' => 'hello' ) ) ),
+	)
+) : null;
+$browser_connector_response_encoded = ! is_wp_error( $browser_connector_response ) ? json_encode( $browser_connector_response, JSON_UNESCAPED_SLASHES ) : '';
+$assert( 'browser connector bridge dispatches available credential values only to server-side handler', ! is_wp_error( $browser_connector_response ) && true === ( $browser_connector_response['success'] ?? false ) && true === $browser_connector_handler_saw_secret );
+$assert( 'browser connector bridge response redacts credential values', ! is_wp_error( $browser_connector_response ) && 'wp-codebox/browser-connector-response/v1' === ( $browser_connector_response['schema'] ?? '' ) && 'available' === ( $browser_connector_response['credentials']['status'] ?? '' ) && str_contains( $browser_connector_response_encoded, 'OPENAI_API_KEY' ) && ! str_contains( $browser_connector_response_encoded, 'sk-browser-secret-value' ) && ! str_contains( $browser_connector_response_encoded, 'secret_env_values' ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_browser_connector_request'] );
+$browser_connector_no_handler = is_array( $browser_connector_ability ) ? call_user_func(
+	$browser_connector_ability['execute_callback'],
+	array(
+		'connector' => 'primary-ai',
+		'provider'  => 'openai',
+		'model'     => 'gpt-5.5',
+		'operation' => 'chat.completions.create',
+	)
+) : null;
+$assert( 'browser connector bridge fails closed without handler', ! is_wp_error( $browser_connector_no_handler ) && false === ( $browser_connector_no_handler['success'] ?? true ) && 'failed-closed' === ( $browser_connector_no_handler['status'] ?? '' ) && 'wp_codebox_browser_connector_handler_missing' === ( $browser_connector_no_handler['error']['code'] ?? '' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+	$resolution['connectors'] = array(
+		array(
+			'name'        => $request['connectors'][0] ?? 'primary-ai',
+			'status'      => 'resolved',
+			'provider'    => 'openai',
+			'model'       => 'gpt-5.5',
+			'credentials' => array(
+				'schema'  => 'wp-codebox/connector-credentials/v1',
+				'status'  => 'missing',
+				'secrets' => array( array( 'name' => 'OPENAI_API_KEY', 'status' => 'missing', 'reason' => 'not configured' ) ),
+			),
+		),
+	);
+	return $resolution;
+};
+$browser_connector_missing = is_array( $browser_connector_ability ) ? call_user_func( $browser_connector_ability['execute_callback'], array( 'connector' => 'primary-ai', 'operation' => 'chat.completions.create' ) ) : null;
+$assert( 'browser connector bridge fails closed for missing credentials', ! is_wp_error( $browser_connector_missing ) && false === ( $browser_connector_missing['success'] ?? true ) && 'failed-closed' === ( $browser_connector_missing['status'] ?? '' ) && 'wp_codebox_connector_credentials_unavailable' === ( $browser_connector_missing['error']['code'] ?? '' ) && 'missing' === ( $browser_connector_missing['credentials']['status'] ?? '' ) );
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+	$resolution['connectors'] = array(
+		array(
+			'name'        => $request['connectors'][0] ?? 'primary-ai',
+			'status'      => 'resolved',
+			'provider'    => 'openai',
+			'model'       => 'gpt-5.5',
+			'secret_env_values' => array( 'OPENAI_API_KEY' => 'sk-denied-secret-value' ),
+			'credentials' => array(
+				'schema'  => 'wp-codebox/connector-credentials/v1',
+				'status'  => 'denied',
+				'secrets' => array( array( 'name' => 'OPENAI_API_KEY', 'status' => 'denied', 'reason' => 'scope denied' ) ),
+			),
+		),
+	);
+	return $resolution;
+};
+$browser_connector_denied = is_array( $browser_connector_ability ) ? call_user_func( $browser_connector_ability['execute_callback'], array( 'connector' => 'primary-ai', 'operation' => 'chat.completions.create' ) ) : null;
+$browser_connector_denied_encoded = ! is_wp_error( $browser_connector_denied ) ? json_encode( $browser_connector_denied, JSON_UNESCAPED_SLASHES ) : '';
+$assert( 'browser connector bridge fails closed for denied credentials without leaking values', ! is_wp_error( $browser_connector_denied ) && false === ( $browser_connector_denied['success'] ?? true ) && 'denied' === ( $browser_connector_denied['credentials']['status'] ?? '' ) && ! str_contains( $browser_connector_denied_encoded, 'sk-denied-secret-value' ) );
 $assert( 'browser Playground recipe defaults to agents chat invocation with embedded payload', ! is_wp_error( $browser_inherited_session ) && 'ability' === ( $browser_inherited_session['recipe']['browser']['invocation']['type'] ?? '' ) && 'agents/chat' === ( $browser_inherited_session['recipe']['browser']['invocation']['name'] ?? '' ) && str_contains( (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' ), 'wp_get_ability( $ability_name )' ) );
 $browser_runner_code = (string) ( $browser_inherited_session['recipe']['workflow']['steps'][0]['args'][0] ?? '' );
 $assert( 'browser Playground recipe bypasses agents chat transcript permissions only inside sandbox', ! is_wp_error( $browser_inherited_session ) && str_contains( $browser_runner_code, 'agents_chat_permission' ) && str_contains( $browser_runner_code, 'agents_conversation_sessions_permission' ) && str_contains( $browser_runner_code, '$wp_codebox_is_playground' ) );
