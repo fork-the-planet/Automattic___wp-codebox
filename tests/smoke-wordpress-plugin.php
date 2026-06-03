@@ -610,6 +610,7 @@ $browser_session = call_user_func(
 );
 $assert( 'browser Playground session returns without shelling out', ! is_wp_error( $browser_session ) && true === ( $browser_session['success'] ?? false ) );
 $assert( 'browser runtime admin bar operation does not fall through', str_contains( $browser_runtime_source, "'target' => 'frontendAdminBar'" ) && str_contains( $browser_runtime_source, "\n\t\t\tbreak;\n\n\t\tcase 'writeReviewFile':" ) );
+$assert( 'browser runtime operation envelopes expose success boolean', str_contains( $browser_runtime_source, 'const success = result?.success === true;' ) && str_contains( $browser_runtime_source, "\n\t\t\tsuccess,\n\t\t\tstatus: success ? 'ok' : 'error'," ) );
 $assert( 'browser Playground session schema is stable', ! is_wp_error( $browser_session ) && 'wp-codebox/browser-playground-session/v1' === ( $browser_session['schema'] ?? '' ) );
 $assert( 'browser Playground session pins browser execution', ! is_wp_error( $browser_session ) && 'browser-playground' === ( $browser_session['execution'] ?? '' ) );
 $assert( 'browser Playground session identifies disposable execution scope', ! is_wp_error( $browser_session ) && 'disposable-playground' === ( $browser_session['execution_scope'] ?? '' ) && 'disposable-playground' === ( $browser_session['session']['execution_scope'] ?? '' ) );
