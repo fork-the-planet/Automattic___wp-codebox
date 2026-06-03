@@ -403,6 +403,12 @@ $assert( 'browser connector request ability is REST visible', true === ( $browse
 $assert( 'browser connector request uses canonical schemas', 'wp-codebox/browser-connector-request/v1' === ( $browser_connector_ability['input_schema']['properties']['schema']['const'] ?? '' ) && 'wp-codebox/browser-connector-response/v1' === ( $browser_connector_ability['output_schema']['properties']['schema']['const'] ?? '' ) );
 $assert( 'browser connector request uses connector-specific authorization scope', array( 'browser-connector:request' ) === ( $browser_connector_ability['input_schema']['properties']['authorization']['properties']['scope']['enum'] ?? array() ) );
 
+$browser_provider_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/execute-browser-provider-request'] ?? null;
+$assert( 'browser provider request ability registered', is_array( $browser_provider_ability ) );
+$assert( 'browser provider request ability is REST visible', true === ( $browser_provider_ability['meta']['show_in_rest'] ?? false ) );
+$assert( 'browser provider request requires connector-scoped input', array( 'operation', 'request', 'inherit' ) === ( $browser_provider_ability['input_schema']['required'] ?? array() ) && 'object' === ( $browser_provider_ability['input_schema']['properties']['inherit']['type'] ?? '' ) );
+$assert( 'browser provider request exposes redacted response envelope schema', 'wp-codebox/browser-provider-adapter-response/v1' === ( $browser_provider_ability['output_schema']['properties']['schema']['const'] ?? '' ) && 'object' === ( $browser_provider_ability['output_schema']['properties']['audit']['type'] ?? '' ) );
+
 $trusted_browser_authorization = array(
 	'authorization' => array(
 		'schema' => 'wp-codebox/trusted-orchestrator-authorization/v1',
@@ -418,7 +424,79 @@ $assert( 'browser Playground session denies untrusted orchestrator caller', fals
 $assert( 'browser Playground session denies trusted caller without browser-session scope', false === call_user_func( $browser_session_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $assert( 'browser materializer contract reuses trusted browser-session authorization', true === call_user_func( $browser_materializer_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_materializer_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $assert( 'browser task contract reuses trusted browser-session authorization', true === call_user_func( $browser_task_contract_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_task_contract_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
+$assert( 'browser provider request reuses trusted browser-session authorization', true === call_user_func( $browser_provider_ability['permission_callback'], $trusted_browser_authorization ) && false === call_user_func( $browser_provider_ability['permission_callback'], array( 'authorization' => array( 'caller' => 'studio-web', 'scope' => 'artifact:write' ) ) ) );
 $GLOBALS['wp_codebox_current_user_can_manage_options'] = true;
+
+$GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] = function ( array $resolution, array $request ): array {
+	$resolution['connectors'] = array(
+		array(
+			'name'       => $request['connectors'][0] ?? 'primary-ai',
+			'status'     => 'resolved',
+			'provider'   => 'openai',
+			'model'      => 'gpt-5.5',
+			'secret_env_values' => array( 'OPENAI_API_KEY' => 'sk-browser-provider-secret' ),
+			'credentials' => array(
+				'schema'    => 'wp-codebox/connector-credentials/v1',
+				'connector' => $request['connectors'][0] ?? 'primary-ai',
+				'scope'     => 'connector',
+				'status'    => 'available',
+				'secrets'   => array(
+					array(
+						'name'   => 'OPENAI_API_KEY',
+						'status' => 'available',
+						'value'  => 'sk-browser-provider-secret',
+					),
+				),
+			),
+		),
+	);
+
+	return $resolution;
+};
+
+$provider_missing_adapter = call_user_func(
+	$browser_provider_ability['execute_callback'],
+	array(
+		'operation' => 'chat.completions',
+		'inherit'   => array( 'connectors' => array( 'primary-ai' ) ),
+		'request'   => array( 'messages' => array( array( 'role' => 'user', 'content' => 'Hello' ) ) ),
+	)
+);
+$assert( 'browser provider request fails closed without adapter', is_wp_error( $provider_missing_adapter ) && 'wp_codebox_browser_provider_adapter_missing' === $provider_missing_adapter->get_error_code() );
+$assert( 'browser provider missing-adapter error is redacted', is_wp_error( $provider_missing_adapter ) && ! str_contains( json_encode( $provider_missing_adapter->get_error_data() ), 'sk-browser-provider-secret' ) );
+
+$captured_provider_adapter_request = array();
+$GLOBALS['wp_codebox_filters']['wp_codebox_browser_provider_request'] = function ( mixed $response, array $adapter_request ) use ( &$captured_provider_adapter_request ): array {
+	$captured_provider_adapter_request = $adapter_request;
+	return array(
+		'response' => array(
+			'id'      => 'provider-response-1',
+			'text'    => 'Adapter handled the request.',
+			'api_key' => 'sk-browser-provider-secret',
+		),
+		'audit' => array(
+			'token' => 'sk-browser-provider-secret',
+		),
+	);
+};
+$provider_adapter_response = call_user_func(
+	$browser_provider_ability['execute_callback'],
+	array(
+		'operation'          => 'chat.completions',
+		'inherit'            => array( 'connectors' => array( 'primary-ai' ) ),
+		'connector'          => 'primary-ai',
+		'sandbox_session_id' => 'browser-session-123',
+		'request'            => array(
+			'messages' => array( array( 'role' => 'user', 'content' => 'Hello' ) ),
+			'api_key'  => 'sk-browser-provider-secret',
+		),
+	)
+);
+$provider_adapter_encoded = json_encode( $provider_adapter_response );
+$assert( 'browser provider adapter receives generic redacted connector context', ! is_wp_error( $provider_adapter_response ) && 'wp-codebox/browser-provider-adapter-request/v1' === ( $captured_provider_adapter_request['schema'] ?? '' ) && 'openai' === ( $captured_provider_adapter_request['provider'] ?? '' ) && 'gpt-5.5' === ( $captured_provider_adapter_request['model'] ?? '' ) && 'primary-ai' === ( $captured_provider_adapter_request['connector']['name'] ?? '' ) && 'browser-session-123' === ( $captured_provider_adapter_request['context']['session_id'] ?? '' ) );
+$assert( 'browser provider adapter request excludes raw provider secrets', ! str_contains( json_encode( $captured_provider_adapter_request ), 'sk-browser-provider-secret' ) && '[redacted]' === ( $captured_provider_adapter_request['request']['api_key'] ?? '' ) );
+$assert( 'browser provider response envelope redacts adapter secrets', ! is_wp_error( $provider_adapter_response ) && 'wp-codebox/browser-provider-adapter-response/v1' === ( $provider_adapter_response['schema'] ?? '' ) && ! str_contains( $provider_adapter_encoded, 'sk-browser-provider-secret' ) && '[redacted]' === ( $provider_adapter_response['response']['api_key'] ?? '' ) );
+unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'], $GLOBALS['wp_codebox_filters']['wp_codebox_browser_provider_request'] );
 
 $artifact_abilities = array(
 	'wp-codebox/list-artifacts',
