@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readdir, readFile, stat } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { RuntimeRunRegistry, artifactBundleRunRef, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, stripUndefined, type ArtifactBundle, type ExecutionResult, type Runtime, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
@@ -228,6 +228,15 @@ class RecipeRuntimeCreateError extends Error {
   }
 }
 
+class RecipeCleanupError extends Error {
+  readonly code = "recipe-cleanup-failed"
+
+  constructor(readonly evidence: WorkerFanoutCleanupEvidence, cause: unknown) {
+    super("Runtime cleanup failed after recipe workflow execution.", { cause })
+    this.name = "RecipeCleanupError"
+  }
+}
+
 function createRecipeInterruptionController(): RecipeInterruptionController {
   let metadata: RecipeInterruptionMetadata | undefined
   let rejectInterrupted: ((error: RecipeInterruptedError) => void) | undefined
@@ -378,6 +387,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const recipe = parseWorkspaceRecipe(await readFile(recipePath, "utf8"), recipePath)
   const configuredArtifactsDirectory = options.artifactsDirectory ?? recipe.artifacts?.directory
   const runRegistry = new RuntimeRunRegistry(options.runRegistryDirectory ?? defaultRunRegistryDirectory(configuredArtifactsDirectory))
+  const startedAtMs = Date.now()
   let runRecord = await runRegistry.create({
     runId: createRuntimeRunId(),
     status: "queued",
@@ -393,12 +403,14 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   })
   const issues = await validateWorkspaceRecipe(recipe, recipePath)
   if (issues.length > 0) {
+    const failure = {
+      name: "RecipeValidationError",
+      message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
+    }
     runRecord = await runRegistry.update(runRecord.runId, {
       status: "failed",
-      error: {
-        name: "RecipeValidationError",
-        message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
-      },
+      metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: "failed", failure }) },
+      error: failure,
     })
     return {
       success: false,
@@ -407,10 +419,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       executions: [],
       validation: { issues },
       run: runRecord,
-      error: {
-        name: "RecipeValidationError",
-        message: `Recipe validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
-      },
+      error: failure,
     }
   }
 
@@ -424,7 +433,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
   let artifacts: ArtifactBundle | undefined
-  const startedAtMs = Date.now()
+  let startupDurationMs: number | undefined
+  let cleanupEvidence: WorkerFanoutCleanupEvidence | undefined
   const awaitRecipe = <T>(operation: string, promise: Promise<T>, timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     const guarded = watchRecipeOperation(operation, promise, startedAtMs, timeoutMs, options.timeoutMs)
     return interruption ? interruption.interruptible(guarded) : guarded
@@ -458,10 +468,12 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
     }
     try {
+      const startupStartedAtMs = Date.now()
       runtime = await awaitRecipe("runtime.create", createRuntime(
         runtimeCreateSpec,
         createPlaygroundRuntimeBackend(),
       ))
+      startupDurationMs = Date.now() - startupStartedAtMs
     } catch (error) {
       throw new RecipeRuntimeCreateError("Runtime creation failed before recipe workflow execution.", {
         operation: "runtime.create",
@@ -609,7 +621,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       Object.assign(evidence, agentEvidence)
     }
     const runtimeInfo = successfulRecipe && options.previewHoldSeconds ? await runtime.info() : undefined
-    await awaitRecipe("runtime.release", releaseRuntime(runtime, successfulRecipe ? options.previewHoldSeconds : 0, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption))
+    cleanupEvidence = await releaseRuntimeWithEvidence(runtime, successfulRecipe ? options.previewHoldSeconds ?? 0 : 0, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays), interruption, awaitRecipe)
     interruption?.throwIfInterrupted()
 
     const benchResultsList = executions
@@ -622,6 +634,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         runtime: runtimeInfo ?? await runtime.info(),
         preview: artifacts.preview,
         artifactRefs: artifactBundleRunRef(artifacts),
+        metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: strictFailure ?? agentFailure }) },
         error: strictFailure ?? agentFailure,
       })
       return {
@@ -647,6 +660,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       runtime: runtimeInfo ?? await runtime.info(),
       preview: artifacts.preview,
       artifactRefs: artifactBundleRunRef(artifacts),
+      metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: "succeeded", startupDurationMs, cleanup: cleanupEvidence, artifacts }) },
     })
     return {
       success: true,
@@ -664,6 +678,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       run: runRecord,
     }
   } catch (error) {
+    if (error instanceof RecipeCleanupError) {
+      cleanupEvidence = error.evidence
+    }
+
     if (runtime) {
       if (error instanceof RecipeRunTimeoutError) {
         void runtime.destroy().catch(() => undefined)
@@ -690,12 +708,14 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
     }
 
-    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
+    cleanupEvidence = await cleanupPreparedSourcesWithEvidence(workspaceMounts, extraPlugins, stagedFiles, overlays)
+    const serializedError = serializeRecipeRunError(error)
     runRecord = await runRegistry.update(runRecord.runId, {
       status: interruption?.metadata ? "cancelled" : "failed",
       ...(runtime ? { runtime: await runtime.info() } : {}),
       ...(artifacts ? { preview: artifacts.preview, artifactRefs: artifactBundleRunRef(artifacts) } : {}),
-      error: serializeRecipeRunError(error),
+      metadata: { workerFanoutEvidence: await workerFanoutEvidence({ startedAtMs, status: interruption?.metadata ? "cancelled" : "failed", startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError }) },
+      error: serializedError,
     })
 
     return {
@@ -708,9 +728,146 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ...(artifacts ? { artifacts } : {}),
       run: runRecord,
       ...(interruption?.metadata ? { interruption: interruption.metadata } : {}),
-      error: serializeRecipeRunError(error),
+      error: serializedError,
     }
   }
+}
+
+interface WorkerFanoutCleanupEvidence {
+  durationMs: number
+  state: "completed" | "failed"
+  error?: RunOutput["error"]
+}
+
+interface WorkerFanoutEvidenceOptions {
+  startedAtMs: number
+  status: RuntimeRunRecord["status"]
+  startupDurationMs?: number
+  cleanup?: WorkerFanoutCleanupEvidence
+  artifacts?: ArtifactBundle
+  failure?: RunOutput["error"]
+}
+
+async function releaseRuntimeWithEvidence(
+  runtime: Runtime,
+  previewHoldSeconds: number,
+  afterDestroy: () => Promise<void>,
+  interruption: RecipeInterruptionController | undefined,
+  awaitRecipe: (operation: string, promise: Promise<void>) => Promise<void>,
+): Promise<WorkerFanoutCleanupEvidence> {
+  const startedAtMs = Date.now()
+  try {
+    await awaitRecipe("runtime.release", releaseRuntime(runtime, previewHoldSeconds, afterDestroy, interruption))
+    return { durationMs: Date.now() - startedAtMs, state: "completed" }
+  } catch (error) {
+    const evidence = { durationMs: Date.now() - startedAtMs, state: "failed" as const, error: serializeRecipeRunError(error) }
+    throw new RecipeCleanupError(evidence, error)
+  }
+}
+
+async function cleanupPreparedSourcesWithEvidence(workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[]): Promise<WorkerFanoutCleanupEvidence> {
+  const startedAtMs = Date.now()
+  try {
+    await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays)
+    return { durationMs: Date.now() - startedAtMs, state: "completed" }
+  } catch (error) {
+    return { durationMs: Date.now() - startedAtMs, state: "failed", error: serializeRecipeRunError(error) }
+  }
+}
+
+async function workerFanoutEvidence(options: WorkerFanoutEvidenceOptions): Promise<Record<string, unknown>> {
+  return stripUndefined({
+    schema: "wp-codebox/worker-fanout-evidence/v1",
+    status: options.status,
+    timing: {
+      startup: metricOrUnavailable(options.startupDurationMs, "runtime creation was not reached"),
+      duration: { available: true, unit: "ms", value: Date.now() - options.startedAtMs },
+      cleanup: options.cleanup ?? unavailableMetric("runtime cleanup was not reached"),
+    },
+    resources: {
+      hostProcess: hostProcessResourceEvidence(),
+      runtimeMemory: unavailableMetric("WordPress Playground runtime memory is not exposed by the runtime backend"),
+      runtimeProcessCount: unavailableMetric("WordPress Playground runtime process count is not exposed by the runtime backend"),
+    },
+    artifacts: await artifactSizeEvidence(options.artifacts),
+    reliability: {
+      failureClassification: classifyWorkerFanoutFailure(options.status, options.failure),
+      retryCount: unavailableMetric("recipe-run does not retry worker executions"),
+    },
+  })
+}
+
+function metricOrUnavailable(value: number | undefined, reason: string): Record<string, unknown> {
+  return typeof value === "number" ? { available: true, unit: "ms", value } : unavailableMetric(reason)
+}
+
+function unavailableMetric(reason: string): Record<string, unknown> {
+  return { available: false, reason }
+}
+
+function hostProcessResourceEvidence(): Record<string, unknown> {
+  const memory = process.memoryUsage()
+  const usage = process.resourceUsage()
+  return {
+    available: true,
+    pid: process.pid,
+    rssBytes: memory.rss,
+    heapUsedBytes: memory.heapUsed,
+    maxRssBytes: usage.maxRSS > 0 ? usage.maxRSS * 1024 : undefined,
+    source: "node-process",
+  }
+}
+
+async function artifactSizeEvidence(artifacts: ArtifactBundle | undefined): Promise<Record<string, unknown>> {
+  if (!artifacts) {
+    return unavailableMetric("artifact bundle was not created")
+  }
+
+  try {
+    return {
+      available: true,
+      directory: artifacts.directory,
+      bytes: await directorySizeBytes(artifacts.directory),
+      bundleId: artifacts.id,
+    }
+  } catch (error) {
+    return unavailableMetric(`artifact size could not be measured: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+async function directorySizeBytes(directory: string): Promise<number> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  let total = 0
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) {
+      total += await directorySizeBytes(path)
+    } else if (entry.isFile()) {
+      total += (await stat(path)).size
+    }
+  }
+  return total
+}
+
+function classifyWorkerFanoutFailure(status: RuntimeRunRecord["status"], failure: RunOutput["error"] | undefined): Record<string, unknown> {
+  if (!failure) {
+    return { available: true, value: status === "succeeded" ? "none" : "unknown" }
+  }
+
+  const code = failure.code ?? failure.name
+  const value = code === "recipe-run-timeout"
+    ? "timeout"
+    : code === "recipe-interrupted"
+      ? "cancelled"
+      : code === "recipe-cleanup-failed"
+        ? "cleanup"
+      : code === "recipe-runtime-create-failed" || code === "wp-codebox-playground-cli-exited"
+        ? "startup"
+        : status === "cancelled"
+          ? "cancelled"
+          : "execution"
+
+  return { available: true, value, code, message: failure.message }
 }
 
 async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
