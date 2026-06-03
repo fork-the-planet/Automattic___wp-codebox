@@ -562,6 +562,74 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/create-browser-task-contract',
+				array(
+					'label'               => 'Create Browser Task Contract',
+					'description'         => 'Prepare a product-facing multi-phase browser Playground task contract with a primary session and optional materializer phases.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => array(
+						'type'       => 'object',
+						'anyOf'      => array(
+							array( 'type' => 'object', 'required' => array( 'goal' ) ),
+							array( 'type' => 'object', 'required' => array( 'task' ) ),
+						),
+						'properties' => array(
+							'goal'               => $task_input_schema['properties']['goal'],
+							'task'               => array(
+								'type'        => 'string',
+								'description' => 'Legacy task description. Prefer goal for new product callers.',
+							),
+							'target'             => $task_input_schema['properties']['target'],
+							'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
+							'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
+							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
+							'policy'             => $task_input_schema['properties']['policy'],
+							'context'            => $task_input_schema['properties']['context'],
+							'agent'              => array( 'type' => 'string' ),
+							'provider'           => array( 'type' => 'string' ),
+							'model'              => array( 'type' => 'string' ),
+							'mode'               => array( 'type' => 'string' ),
+							'provider_plugin_paths' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+							'agent_bundles'      => self::agent_bundle_schema(),
+							'inherit'            => $inherit_schema,
+							'secret_env'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
+							'sandbox_session_id' => $session_input['sandbox_session_id'],
+							'orchestrator'       => $session_input['orchestrator'],
+							'authorization'      => self::browser_session_authorization_schema(),
+							'playground'         => array( 'type' => 'object' ),
+							'browser_runner'     => array( 'type' => 'object' ),
+							'browser_plugins'    => array( 'type' => 'array' ),
+							'runtime'            => array( 'type' => 'object' ),
+							'blueprint'          => array( 'type' => 'object' ),
+							'site_blueprint_artifact' => array( 'type' => 'object' ),
+							'artifact_files'     => array( 'type' => 'array' ),
+							'phases'             => array(
+								'type'        => 'array',
+								'description' => 'Optional named browser task phases. Each materializer phase may override any primary session input through input.',
+								'items'       => array(
+									'type'       => 'object',
+									'properties' => array(
+										'name'  => array( 'type' => 'string' ),
+										'kind'  => array( 'type' => 'string', 'enum' => array( 'materializer' ) ),
+										'input' => array( 'type' => 'object' ),
+									),
+								),
+							),
+							'materializers'      => array(
+								'type'        => 'array',
+								'description' => 'Convenience list of materializer input overrides. Prefer phases for named multi-phase contracts.',
+								'items'       => array( 'type' => 'object' ),
+							),
+						),
+					),
+					'output_schema'       => self::browser_task_contract_schema(),
+					'execute_callback'    => array( self::class, 'create_browser_task_contract' ),
+					'permission_callback' => array( self::class, 'can_create_browser_playground_session' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/browser-connector-request',
 				array(
 					'label'               => 'Run Browser Connector Request',
