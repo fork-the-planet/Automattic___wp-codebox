@@ -5,6 +5,7 @@ import type { Request } from "playwright"
 export interface BrowserProbeArtifact {
   requestedUrl: string
   url: string
+  prePageScript?: BrowserProbeScriptMetadata
   files: {
     actions?: string
     editorState?: string
@@ -64,6 +65,11 @@ export interface BrowserProbeTerminalFailure {
   reason?: string
   details?: unknown
   timestamp: string
+}
+
+export interface BrowserProbeScriptMetadata {
+  sha256: string
+  bytes: number
 }
 
 export interface BrowserAssertionsSummary {
