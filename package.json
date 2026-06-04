@@ -17,6 +17,9 @@
       "import": "./packages/cli/dist/index.js"
     }
   },
+  "bin": {
+    "wp-codebox": "packages/cli/dist/index.js"
+  },
   "files": [
     "packages/runtime-core/dist",
     "packages/runtime-core/package.json",
@@ -34,6 +37,7 @@
     "postinstall": "node scripts/normalize-playground-sqlite-package.mjs",
     "package:wordpress-plugin": "tsx scripts/build-wordpress-plugin-zip.ts",
     "package-distribution-smoke": "tsx scripts/package-distribution-smoke.ts",
+    "package-installed-binary-smoke": "tsx scripts/package-installed-binary-smoke.ts",
     "release:package": "tsx scripts/package-release-artifact.ts",
     "artifact-bundle-verifier-smoke": "tsx scripts/artifact-bundle-verifier-smoke.ts",
     "artifact-redaction-smoke": "tsx scripts/artifact-redaction-smoke.ts",

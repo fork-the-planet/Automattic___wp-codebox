@@ -266,12 +266,40 @@ npm run check
 
 ## Distribution Artifacts
 
-The CLI package is prepared as `@automattic/wp-codebox-cli` and exposes the
-`wp-codebox` binary from `packages/cli/dist/index.js`.
+The GitHub Release workspace tarball exposes the stable `wp-codebox` binary from
+`packages/cli/dist/index.js`. The scoped npm packages are prepared under
+`@automattic/wp-codebox-*`, but they are not published yet; do not document
+`npm install -g @automattic/wp-codebox-cli` as an available install path until
+the package exists in the registry.
 
 ```bash
 npm run build
 npm pack --workspace @automattic/wp-codebox-cli --dry-run --json
+npm pack --json
+```
+
+Install a GitHub Release tarball built from a release that includes the root
+`bin` mapping when a downstream control plane needs a stable binary path without
+pointing at a local feature worktree:
+
+```bash
+npm install -g https://github.com/Automattic/wp-codebox/releases/download/v<VERSION>/wp-codebox-workspace-<VERSION>.tgz
+wp-codebox commands --json
+wp-codebox recipe validate --recipe ./examples/recipes/cookbook/codex-agent-smoke.json --json
+```
+
+`v0.4.0` includes the fresh sandbox session fix and Codex recipe example, but its
+release asset predates the root `bin` mapping. Release managers need to cut a new
+release from a commit containing this section before relying on the GitHub
+Release tarball as the stable installed binary path.
+
+For a future npm release, publish all three scoped packages from the same clean
+release commit after approval:
+
+```bash
+npm publish --workspace @automattic/wp-codebox-core --access public
+npm publish --workspace @automattic/wp-codebox-playground --access public
+npm publish --workspace @automattic/wp-codebox-cli --access public
 ```
 
 The WordPress plugin zip is built from `packages/wordpress-plugin` with only the
@@ -284,10 +312,13 @@ unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip
 
 `npm run package-distribution-smoke` validates both artifact shapes. It checks
 that the CLI pack includes `package.json`, `README.md`, and compiled `dist/`
-files without TypeScript source, then builds the WordPress plugin zip and checks
-that it contains the plugin bootstrap, README, PHP sources, checked-in browser
-runtime asset, and vendored CLI runtime without package metadata or generated
-artifacts.
+files without TypeScript source, checks that the root release tarball installs a
+`wp-codebox` binary, then builds the WordPress plugin zip and checks that it
+contains the plugin bootstrap, README, PHP sources, checked-in browser runtime
+asset, and vendored CLI runtime without package metadata or generated artifacts.
+`npm run package-installed-binary-smoke` packs the root release tarball, installs
+it into a temporary global prefix, and verifies the installed `wp-codebox`
+binary can emit the command catalog.
 
 Versioning and release policy:
 
@@ -296,18 +327,21 @@ Versioning and release policy:
    `@automattic/wp-codebox-playground` stay on the same version.
 2. Keep `packages/wordpress-plugin/wp-codebox.php` `Version:` aligned with the
    package version used for the matching plugin zip.
-3. Treat the npm package and plugin zip as one release unit: publish the CLI,
-   build the plugin zip from the same commit, and attach the zip to the release.
+3. Treat the release tarball, npm packages, and plugin zip as one release unit:
+   attach the root `wp-codebox-workspace-<version>.tgz` tarball, publish the
+   scoped npm packages when approved, build the plugin zip from the same commit,
+   and attach the zip to the release.
 4. Use conventional semver: patch for fixes and docs-only distribution updates,
    minor for new commands or artifact fields, major for runtime contract breaks.
 
 Install notes by environment:
 
 1. Self-hosted WordPress control planes should install the CLI on the same host
-   that runs PHP, install `packages/wordpress-plugin/dist/wp-codebox.zip` as the
-   parent-site plugin, then set `wp_codebox_bin` to the resolved `wp-codebox`
-   binary path. Component paths can be supplied through
-   `wp_codebox_component_paths` or the matching filter.
+   that runs PHP from the GitHub Release workspace tarball, install
+   `packages/wordpress-plugin/dist/wp-codebox.zip` as the parent-site plugin,
+   then set `wp_codebox_bin` to the resolved `wp-codebox` binary path. Component
+   paths can be supplied through `wp_codebox_component_paths` or the matching
+   filter.
 2. Studio or local development environments can run from a checkout with
    `npm install`, `npm run build`, and `npm run wp-codebox -- ...`; install the
    plugin zip into the local parent site and point `wp_codebox_bin` at either
@@ -325,11 +359,22 @@ options because the executable path is host-level configuration.
 Release checklist:
 
 1. Run `npm run check` from a clean checkout.
-2. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
-3. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with `npm run package:wordpress-plugin` and inspect `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
-4. Confirm package and plugin versions are aligned on the release commit.
-5. Install the CLI in the target environment and configure the WordPress plugin `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
-6. Install the plugin zip on the parent site and run the WordPress plugin smoke or equivalent ability registration check in that environment.
+2. Run `npm run package-installed-binary-smoke` to verify the root release
+   tarball installs a working `wp-codebox` binary.
+3. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
+4. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with
+   `npm run package:wordpress-plugin` and inspect
+   `unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip`.
+5. Confirm package and plugin versions are aligned on the release commit.
+6. Build the root release tarball and attach it to the matching GitHub Release:
+   `npm pack --json`. The expected asset name is
+   `wp-codebox-workspace-<version>.tgz`.
+7. If npm publishing is approved, publish the scoped packages with the exact
+   `npm publish --workspace ... --access public` commands above.
+8. Install the CLI in the target environment and configure the WordPress plugin
+   `wp_codebox_bin` option or filter to the resolved `wp-codebox` binary path.
+9. Install the plugin zip on the parent site and run the WordPress plugin smoke
+   or equivalent ability registration check in that environment.
 
 ## Quick Start
 
