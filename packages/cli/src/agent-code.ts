@@ -151,7 +151,7 @@ $sandbox_runtime_task = json_decode(${JSON.stringify(JSON.stringify(runtimeTask)
 $sandbox_stack['runtime_task'] = is_array($sandbox_runtime_task) ? $sandbox_runtime_task : null;
 
 add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
-    if (!$principal instanceof AgentsAPI\AI\WP_Agent_Execution_Principal) {
+    if (!$principal instanceof AgentsAPI\\AI\\WP_Agent_Execution_Principal) {
         return $allowed;
     }
     if ('runtime' !== $principal->auth_source || 'runtime' !== $principal->request_context) {
