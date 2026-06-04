@@ -38,6 +38,10 @@ export interface BenchmarkArtifactRef {
   contentType?: string
   sha256?: string
   bytes?: number
+  source?: "scenario-artifact" | "metric-source" | "browser-artifact" | "sample-artifact" | (string & {})
+  name?: string
+  metric?: string
+  sampleIndex?: number
   metadata?: Record<string, unknown>
 }
 
@@ -51,6 +55,7 @@ export interface BenchmarkScenarioRecord {
     peak_bytes?: number
   }
   diagnostics: BenchmarkDiagnostic[]
+  artifactRefs?: BenchmarkArtifactRef[]
   steps?: Array<Record<string, unknown>>
   artifacts?: Record<string, BenchmarkArtifactRef>
   metadata?: Record<string, unknown>
@@ -224,6 +229,10 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
         contentType: { type: "string" },
         sha256: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
         bytes: { type: "integer", minimum: 0 },
+        source: { type: "string" },
+        name: { type: "string" },
+        metric: { type: "string" },
+        sampleIndex: { type: "integer", minimum: 0 },
         metadata: { type: "object", additionalProperties: true },
       },
     },
@@ -266,6 +275,7 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
           properties: { peak_bytes: { type: "integer", minimum: 0 } },
         },
         diagnostics: { type: "array", items: { $ref: "#/$defs/diagnostic" } },
+        artifactRefs: { type: "array", items: { $ref: "#/$defs/artifactRef" } },
         steps: { type: "array", items: { type: "object", additionalProperties: true } },
         artifacts: { $ref: "#/$defs/artifactMap" },
         metadata: { type: "object", additionalProperties: true },

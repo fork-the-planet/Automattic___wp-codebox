@@ -13,6 +13,7 @@ interface CliCommandRouter {
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
+  artifactsBenchmark: CliCommandHandler
   artifactsBenchResults: CliCommandHandler
   benchSummarize: CliCommandHandler
   runsStatus: CliCommandHandler
@@ -77,6 +78,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       }
       if (subcommand === "browser-metrics") {
         return router.artifactsBrowserMetrics(args)
+      }
+      if (subcommand === "benchmark") {
+        return router.artifactsBenchmark(args)
       }
       if (subcommand === "bench-results") {
         return router.artifactsBenchResults(args)

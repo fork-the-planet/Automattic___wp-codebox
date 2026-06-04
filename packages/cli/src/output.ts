@@ -255,6 +255,7 @@ export function printHelp(): void {
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
+  wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
   wp-codebox artifacts bench-results --bundle <dir> [--json]
   wp-codebox runs status --registry <dir> --run-id <id> [--json]
   wp-codebox runs artifacts --registry <dir> --run-id <id> [--json]
@@ -274,6 +275,8 @@ Options:
   --preview-public-url <url>
                     Public preview URL passed through to agent-task-run/recipe-run.
   --bundle <dir>      Artifact bundle directory for artifacts verify.
+  --scenario-id <id>  Filter benchmark artifact refs to one scenario.
+  --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.
   --artifacts <dir>   Artifact root directory. Also accepted by artifacts verify.
   --run-registry <dir>

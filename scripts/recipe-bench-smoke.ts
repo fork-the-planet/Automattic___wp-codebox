@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { dirname, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const cli = resolve(root, "packages/cli/dist/index.js")
@@ -143,10 +143,33 @@ assert.equal(configured.metrics.lifecycle_prepare_visible.samples.mean, 1)
 assert.equal(configured.metrics.cache_was_empty.samples.mean, 1)
 assert.equal(configured.metadata.kind, "configured")
 assert.equal(configured.artifacts.report.path, "workloads/report.json")
+assert.ok(configured.artifactRefs.some((ref: { path: string; source: string }) => ref.path === "workloads/report.json" && ref.source === "scenario-artifact"))
+assert.ok(configured.artifactRefs.some((ref: { path: string; source: string; metric?: string }) => ref.path === "files/bench-results.json" && ref.source === "metric-source" && ref.metric === "env_value"))
 assert.equal(configured.steps.length, 1)
 assert.equal(configured.steps[0].type, "rest-request")
 assert.equal(configured.steps[0].route, "/wp/v2/types")
 assert.equal(configured.steps[0].status, 200)
 assert.ok(output.artifacts?.directory)
+
+const benchmarkArtifact = JSON.parse(readFileSync(join(output.artifacts.directory, "files", "bench-results.json"), "utf8"))
+assert.equal(benchmarkArtifact.schema, "wp-codebox/benchmark-artifacts/v1")
+assert.equal(benchmarkArtifact.scenarios.find((entry: { scenarioId: string }) => entry.scenarioId === "configured-env").artifactRefs.length, configured.artifactRefs.length)
+
+const benchmarkArtifacts = spawnSync(process.execPath, [
+  cli,
+  "artifacts",
+  "benchmark",
+  "--bundle",
+  output.artifacts.directory,
+  "--scenario-id",
+  "configured-env",
+  "--json",
+], { cwd: root, encoding: "utf8" })
+assert.equal(benchmarkArtifacts.status, 0, benchmarkArtifacts.stderr || benchmarkArtifacts.stdout)
+const benchmarkArtifactsOutput = JSON.parse(benchmarkArtifacts.stdout)
+assert.equal(benchmarkArtifactsOutput.schema, "wp-codebox/benchmark-artifacts/v1")
+assert.equal(benchmarkArtifactsOutput.scenarioId, "configured-env")
+assert.equal(benchmarkArtifactsOutput.scenarios.length, 1)
+assert.ok(benchmarkArtifactsOutput.artifactRefs.some((ref: { path: string }) => ref.path === "workloads/report.json"))
 
 console.log("recipe bench smoke passed")
