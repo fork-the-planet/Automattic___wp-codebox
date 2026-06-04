@@ -5,7 +5,7 @@ import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserS
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http"
-import { readFile, stat, unlink } from "node:fs/promises"
+import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
 import { createServer as createNetServer } from "node:net"
@@ -24,6 +24,8 @@ interface PlaygroundCliModule {
     "site-url"?: string
   }): Promise<PlaygroundCliServer>
 }
+
+const PLAYGROUND_WORDPRESS_CACHE_DIRECTORY_ENV = "WP_CODEBOX_PLAYGROUND_WORDPRESS_CACHE_DIR"
 
 export interface PlaygroundCliStartupOptions {
   onProgress?: (event: BrowserStartupProgressEvent) => void | Promise<void>
@@ -176,6 +178,12 @@ export interface PlaygroundWordPressArchiveCacheValidation {
   version: string
   sourceUrl: string
   source: "pre-resolved" | "cache" | "inferred" | "api"
+  cache?: {
+    status: "hit" | "downloaded"
+    archivePath: string
+    lockPath: string
+    waitedMs: number
+  }
   invalidArchives: Array<{
     path: string
     size: number
@@ -188,7 +196,7 @@ export interface PlaygroundWordPressArchiveCacheValidationOptions {
   deleteInvalid?: boolean
 }
 
-export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = join(homedir(), ".wordpress-playground"), options: PlaygroundWordPressArchiveCacheValidationOptions = { deleteInvalid: true }): Promise<PlaygroundWordPressArchiveCacheValidation> {
+export async function validatePlaygroundWordPressArchiveCache(versionQuery: string | undefined, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory(), options: PlaygroundWordPressArchiveCacheValidationOptions = { deleteInvalid: true }): Promise<PlaygroundWordPressArchiveCacheValidation> {
   const release = await resolveWordPressReleaseForStartup(versionQuery)
   const version = release.version
   const sourceUrl = release.releaseUrl
@@ -238,26 +246,108 @@ interface ResolvedWordPressReleaseForStartup {
   source: PlaygroundWordPressArchiveCacheValidation["source"]
 }
 
-export async function resolvePlaygroundWordPressStartupAsset(versionQuery: string | undefined, wordpressZip?: string, cacheDirectory = join(homedir(), ".wordpress-playground")): Promise<PlaygroundWordPressStartupAsset> {
+export async function resolvePlaygroundWordPressStartupAsset(versionQuery: string | undefined, wordpressZip?: string, cacheDirectory = defaultPlaygroundWordPressArchiveCacheDirectory()): Promise<PlaygroundWordPressStartupAsset> {
   if (wordpressZip) {
     const version = startupAssetVersion(versionQuery, wordpressZip)
     const cacheValidation = await validateWordPressArchivePaths(version, wordpressZip, isHttpUrl(wordpressZip) ? [] : [wordpressZip], { deleteInvalid: false })
     return { wp: isHttpUrl(wordpressZip) ? wordpressZip : undefined, localPath: isHttpUrl(wordpressZip) ? undefined : wordpressZip, cacheValidation: { ...cacheValidation, sourceUrl: wordpressZip, source: "pre-resolved" } }
   }
 
-  const cachedVersion = exactWordPressVersion(versionQuery)
-  if (cachedVersion) {
-    const cachedArchivePath = join(cacheDirectory, `${cachedVersion}.zip`)
+  const release = await resolveWordPressReleaseForStartup(versionQuery)
+  return await withPlaygroundArchiveCacheLock(cacheDirectory, release.version, async (lock) => {
+    const cachedArchivePath = join(cacheDirectory, `${release.version}.zip`)
+    const archivePaths = [cachedArchivePath, join(cacheDirectory, `prebuilt-wp-content-for-wp-${release.version}.zip`)]
+    const cacheValidation = await validateWordPressArchivePaths(release.version, release.releaseUrl, archivePaths, { deleteInvalid: true })
     if (existsSync(cachedArchivePath)) {
-      const cacheValidation = await validateWordPressArchivePaths(cachedVersion, `cache:${cachedArchivePath}`, [cachedArchivePath, join(cacheDirectory, `prebuilt-wp-content-for-wp-${cachedVersion}.zip`)], { deleteInvalid: true })
-      if (existsSync(cachedArchivePath)) {
-        return { wp: undefined, localPath: cachedArchivePath, cacheValidation: { ...cacheValidation, source: "cache" } }
+      return {
+        wp: undefined,
+        localPath: cachedArchivePath,
+        cacheValidation: {
+          ...cacheValidation,
+          source: "cache",
+          cache: { status: "hit", archivePath: cachedArchivePath, lockPath: lock.path, waitedMs: lock.waitedMs },
+        },
       }
+    }
+
+    await downloadWordPressArchiveToCache(release.releaseUrl, cachedArchivePath)
+    const downloadedValidation = await validateWordPressArchivePaths(release.version, release.releaseUrl, [cachedArchivePath], { deleteInvalid: false })
+    const invalidDownloadedArchive = downloadedValidation.invalidArchives[0]
+    if (invalidDownloadedArchive) {
+      throw new PlaygroundStartupAssetError("wordpress-archive-cache", release.releaseUrl, versionQuery ?? "latest", new Error(`Downloaded WordPress archive is invalid: ${invalidDownloadedArchive.reason}`))
+    }
+
+    return {
+      wp: undefined,
+      localPath: cachedArchivePath,
+      cacheValidation: {
+        ...downloadedValidation,
+        invalidArchives: [...cacheValidation.invalidArchives, ...downloadedValidation.invalidArchives],
+        source: release.source,
+        cache: { status: "downloaded", archivePath: cachedArchivePath, lockPath: lock.path, waitedMs: lock.waitedMs },
+      },
+    }
+  })
+}
+
+function defaultPlaygroundWordPressArchiveCacheDirectory(): string {
+  return process.env[PLAYGROUND_WORDPRESS_CACHE_DIRECTORY_ENV] || join(homedir(), ".wordpress-playground")
+}
+
+interface PlaygroundArchiveCacheLock {
+  path: string
+  waitedMs: number
+}
+
+async function withPlaygroundArchiveCacheLock<T>(cacheDirectory: string, version: string, callback: (lock: PlaygroundArchiveCacheLock) => Promise<T>): Promise<T> {
+  await mkdir(cacheDirectory, { recursive: true })
+  const lockPath = join(cacheDirectory, `${version}.zip.lock`)
+  const startedAt = Date.now()
+
+  for (;;) {
+    try {
+      await mkdir(lockPath)
+      break
+    } catch (error) {
+      if (!errorHasCode(error, "EEXIST")) {
+        throw error
+      }
+      if (Date.now() - startedAt > 120_000) {
+        throw new PlaygroundStartupAssetError("wordpress-archive-cache-lock", lockPath, version, new Error("Timed out waiting for WordPress archive cache lock"))
+      }
+      await delay(100)
     }
   }
 
-  const cacheValidation = await validatePlaygroundWordPressArchiveCache(versionQuery, cacheDirectory)
-  return { wp: cacheValidation.sourceUrl, cacheValidation }
+  try {
+    return await callback({ path: lockPath, waitedMs: Date.now() - startedAt })
+  } finally {
+    await rm(lockPath, { recursive: true, force: true })
+  }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, ms))
+}
+
+async function downloadWordPressArchiveToCache(sourceUrl: string, archivePath: string): Promise<void> {
+  const tempPath = `${archivePath}.${process.pid}.${Date.now()}.partial`
+  try {
+    const response = await fetch(sourceUrl)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`.trim())
+    }
+    const archive = new Uint8Array(await response.arrayBuffer())
+    const reason = await invalidZipBufferReason(archive)
+    if (reason) {
+      throw new Error(`Downloaded WordPress archive is invalid: ${reason}`)
+    }
+    await writeFile(tempPath, archive, { flag: "wx" })
+    await rename(tempPath, archivePath)
+  } catch (error) {
+    await rm(tempPath, { force: true })
+    throw new PlaygroundStartupAssetError("wordpress-archive-cache", sourceUrl, basename(archivePath, ".zip"), error)
+  }
 }
 
 async function resolveWordPressReleaseForStartup(versionQuery: string | undefined): Promise<ResolvedWordPressReleaseForStartup> {
@@ -394,16 +484,28 @@ async function invalidZipReason(archivePath: string, size: number): Promise<stri
   }
 
   const header = await readFile(archivePath, { encoding: null, flag: "r" }).then((buffer) => buffer.subarray(0, 4))
+  return invalidZipHeaderReason(header)
+}
+
+async function invalidZipBufferReason(buffer: Uint8Array): Promise<string | undefined> {
+  if (buffer.byteLength < 22) {
+    return "too small to be a zip archive"
+  }
+
+  return invalidZipHeaderReason(buffer.subarray(0, 4))
+}
+
+function invalidZipHeaderReason(header: Uint8Array): string | undefined {
   if (header.length < 4) {
     return "missing zip header"
   }
 
   if (header[0] !== 0x50 || header[1] !== 0x4b) {
-    return `unexpected zip header ${header.toString("hex")}`
+    return `unexpected zip header ${Buffer.from(header).toString("hex")}`
   }
 
   if (![0x03, 0x05, 0x07].includes(header[2])) {
-    return `unexpected zip header ${header.toString("hex")}`
+    return `unexpected zip header ${Buffer.from(header).toString("hex")}`
   }
 
   return undefined
