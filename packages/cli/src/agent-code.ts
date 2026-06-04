@@ -244,7 +244,12 @@ if (!empty($sandbox_agent_bundle_import_failures)) {
 } else {
     $agent_input = ${JSON.stringify(JSON.stringify(input))};
     $runtime_task_input = $runtime_task_run && is_array($sandbox_runtime_task['input'] ?? null) ? $sandbox_runtime_task['input'] : array();
-    $agent_result = $ability->execute($runtime_task_run ? $runtime_task_input : json_decode($agent_input, true));
+    $agent_execute_callback = static function () use ($ability, $runtime_task_run, $runtime_task_input, $agent_input) {
+        return $ability->execute($runtime_task_run ? $runtime_task_input : json_decode($agent_input, true));
+    };
+    $agent_result = class_exists('DataMachine\\Abilities\\PermissionHelper')
+        ? DataMachine\Abilities\PermissionHelper::run_as_authenticated($agent_execute_callback, 1)
+        : $agent_execute_callback();
     if (is_wp_error($agent_result)) {
         $sandbox_agent_runtime = array(
             'agent_runtime' => array(
