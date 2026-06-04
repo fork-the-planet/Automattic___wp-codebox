@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
@@ -62,6 +62,7 @@ export async function runBrowserProbeCommand({
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
   const requestedViewport = viewportArg(args, "viewport")
+  const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
   const failFast = booleanArg(args, "fail-fast", false)
   const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
@@ -69,6 +70,7 @@ export async function runBrowserProbeCommand({
   const capturesConsoleForAssertions = assertions.some((assertion) => assertion.type === "no-console-errors" || assertion.type === "no-errors")
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
+  const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const targetUrl = resolveBrowserProbeUrl(urlArg, server.serverUrl)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -111,6 +113,9 @@ export async function runBrowserProbeCommand({
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (capturesBrowserMetrics) {
       await page.addInitScript(BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT)
+    }
+    if (prePageScript) {
+      await page.addInitScript(prePageScript)
     }
     viewport = await browserProbeViewport(page)
     if (capture.has("console") || capturesConsoleForAssertions) {
@@ -248,6 +253,7 @@ export async function runBrowserProbeCommand({
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
         ...(checkpoints.length > 0 ? { checkpoints: "files/browser/checkpoints.jsonl" } : {}),
@@ -286,6 +292,7 @@ export async function runBrowserProbeCommand({
       stallTimeoutMs,
       capture: [...capture].sort(),
       ...(assertionSummary.total > 0 ? { assertions: assertionSummary } : {}),
+      ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       startedAt,
       finishedAt: now(),
       files: artifact.files,
@@ -314,6 +321,13 @@ export async function runBrowserProbeCommand({
       files: artifact.files,
       summary: artifact.summary,
     }, null, 2)}\n`,
+  }
+}
+
+function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata {
+  return {
+    sha256: sha256(Buffer.from(source, "utf8")),
+    bytes: Buffer.byteLength(source, "utf8"),
   }
 }
 
