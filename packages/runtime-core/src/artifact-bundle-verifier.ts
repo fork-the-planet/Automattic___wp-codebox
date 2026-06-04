@@ -1,7 +1,7 @@
 import { lstat, readdir, readFile, realpath } from "node:fs/promises"
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
 import { artifactFileDigest, calculateArtifactContentDigest, calculateArtifactManifestFileSha256 } from "./artifact-manifest.js"
-import type { ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
+import type { ArtifactContentDigest, ArtifactFileDigest, ArtifactManifest, ArtifactManifestFile } from "./artifact-manifest.js"
 import { isPlainObject as isRecord } from "./object-utils.js"
 import { RUNTIME_EPISODE_TRACE_SCHEMA, validateRuntimeEpisodeTrace } from "./runtime-episode.js"
 import { RUNTIME_REFERENCE_MANIFEST_SCHEMA, RUNTIME_REPLAY_REFERENCE_INDEX_SCHEMA, runtimeReferenceManifestDigest, runtimeReplayReferenceIndexDigest } from "./runtime-reference.js"
@@ -38,6 +38,50 @@ export interface ArtifactBundleVerificationResult {
   valid: boolean
   violations: ArtifactBundleVerificationViolation[]
   manifest?: ArtifactManifest
+}
+
+export interface ArtifactBundleApplyChangedFile {
+  path: string
+  status?: string
+  mountIndex?: number
+  mountTarget?: string
+  relativePath?: string
+  patchPath?: string
+  [key: string]: unknown
+}
+
+export interface ArtifactBundleApplyPreflightOptions extends VerifyArtifactBundleOptions {
+  approvedFiles?: string[]
+}
+
+export interface ArtifactBundleApplyPreflightResult {
+  schema: "wp-codebox/artifact-bundle-apply-preflight/v1"
+  bundleDirectory: string
+  ready: boolean
+  verification: ArtifactBundleVerificationResult
+  violations: ArtifactBundleVerificationViolation[]
+  manifest?: ArtifactManifest
+  payload?: {
+    schema: "wp-codebox/artifact-bundle-apply-payload/v1"
+    artifactId: string
+    contentDigest: ArtifactContentDigest
+    patch: {
+      path: string
+      sha256: ArtifactFileDigest
+      body: string
+    }
+    changedFiles: {
+      path: string
+      files: ArtifactBundleApplyChangedFile[]
+    }
+    review?: {
+      path: string
+      artifactId?: string
+      summary?: string
+      riskFlags?: string[]
+    }
+    approvedFiles: string[]
+  }
 }
 
 export interface VerifyArtifactBundleOptions {
@@ -119,6 +163,133 @@ export async function verifyArtifactBundle(directory: string, options: VerifyArt
   await verifyRuntimeReplayReferenceIndexArtifacts(bundleDirectory, manifest, manifestFiles, violations)
 
   return artifactBundleVerificationResult(bundleDirectory, violations, manifest)
+}
+
+export async function preflightArtifactBundleApply(directory: string, options: ArtifactBundleApplyPreflightOptions = {}): Promise<ArtifactBundleApplyPreflightResult> {
+  const bundleDirectory = normalize(directory)
+  const verification = await verifyArtifactBundle(bundleDirectory, options)
+  const violations = [...verification.violations]
+  if (!verification.valid || !verification.manifest) {
+    return artifactBundleApplyPreflightResult(bundleDirectory, verification, violations)
+  }
+
+  const manifestFiles = new Set(verification.manifest.files.map((file) => file.path))
+  const reviewPath = manifestFiles.has("files/review.json") ? "files/review.json" : undefined
+  const review = reviewPath ? await readOptionalJson(bundleDirectory, reviewPath, violations) : undefined
+  const evidence = isRecord(review) && isRecord(review.evidence) ? review.evidence : undefined
+  const patchPath = typeof evidence?.patch === "string" ? evidence.patch : findManifestFileByKind(verification.manifest, "patch")?.path
+  const changedFilesPath = typeof evidence?.changedFiles === "string" ? evidence.changedFiles : findManifestFileByKind(verification.manifest, "changed-files")?.path
+
+  if (!patchPath) {
+    violations.push({ code: "malformed-reference", path: "files/review.json:evidence.patch", file: "files/review.json", message: "Apply preflight requires review evidence or a manifest patch file." })
+  } else {
+    validateArtifactReference(patchPath, "apply.patch", manifestFiles, violations)
+  }
+
+  if (!changedFilesPath) {
+    violations.push({ code: "malformed-reference", path: "files/review.json:evidence.changedFiles", file: "files/review.json", message: "Apply preflight requires review evidence or a manifest changed-files file." })
+  } else {
+    validateArtifactReference(changedFilesPath, "apply.changedFiles", manifestFiles, violations)
+  }
+
+  if (violations.length > 0 || !patchPath || !changedFilesPath) {
+    return artifactBundleApplyPreflightResult(bundleDirectory, verification, violations)
+  }
+
+  const [patchBody, changedFiles] = await Promise.all([
+    readFile(join(bundleDirectory, patchPath), "utf8").catch((error) => {
+      violations.push({ code: "missing-file", path: "apply.patch", file: patchPath, message: `Unable to read patch artifact: ${errorMessage(error)}` })
+      return undefined
+    }),
+    readChangedFiles(bundleDirectory, changedFilesPath, violations),
+  ])
+
+  if (patchBody === undefined || !changedFiles) {
+    return artifactBundleApplyPreflightResult(bundleDirectory, verification, violations)
+  }
+
+  const approvedFiles = normalizeApprovedFiles(options.approvedFiles ?? [])
+  const approvedFileSet = new Set(approvedFiles)
+  const missingApprovedFiles = changedFiles.files.map((file) => file.path).filter((path) => !approvedFileSet.has(path))
+  for (const file of missingApprovedFiles) {
+    violations.push({ code: "malformed-reference", path: "approvedFiles", file, message: `Changed file is not covered by approvedFiles: ${file}` })
+  }
+
+  if (violations.length > 0) {
+    return artifactBundleApplyPreflightResult(bundleDirectory, verification, violations)
+  }
+
+  return artifactBundleApplyPreflightResult(bundleDirectory, verification, violations, {
+    schema: "wp-codebox/artifact-bundle-apply-payload/v1",
+    artifactId: verification.manifest.id,
+    contentDigest: verification.manifest.contentDigest,
+    patch: {
+      path: patchPath,
+      sha256: artifactFileDigest(patchBody),
+      body: patchBody,
+    },
+    changedFiles: {
+      path: changedFilesPath,
+      files: changedFiles.files,
+    },
+    ...(reviewPath ? {
+      review: {
+        path: reviewPath,
+        ...(isRecord(review) && typeof review.artifactId === "string" ? { artifactId: review.artifactId } : {}),
+        ...(isRecord(review) && typeof review.summary === "string" ? { summary: review.summary } : {}),
+        ...(isRecord(review) && Array.isArray(review.riskFlags) ? { riskFlags: review.riskFlags.filter((flag): flag is string => typeof flag === "string") } : {}),
+      },
+    } : {}),
+    approvedFiles,
+  })
+}
+
+function artifactBundleApplyPreflightResult(bundleDirectory: string, verification: ArtifactBundleVerificationResult, violations: ArtifactBundleVerificationViolation[], payload?: ArtifactBundleApplyPreflightResult["payload"]): ArtifactBundleApplyPreflightResult {
+  return {
+    schema: "wp-codebox/artifact-bundle-apply-preflight/v1",
+    bundleDirectory,
+    ready: violations.length === 0 && payload !== undefined,
+    verification,
+    violations,
+    ...(verification.manifest ? { manifest: verification.manifest } : {}),
+    ...(payload ? { payload } : {}),
+  }
+}
+
+async function readOptionalJson(directory: string, path: string, violations: ArtifactBundleVerificationViolation[]): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(join(directory, path), "utf8"))
+  } catch (error) {
+    violations.push({ code: "malformed-reference", path, file: path, message: `Unable to read artifact JSON: ${errorMessage(error)}` })
+    return undefined
+  }
+}
+
+async function readChangedFiles(directory: string, path: string, violations: ArtifactBundleVerificationViolation[]): Promise<{ files: ArtifactBundleApplyChangedFile[] } | undefined> {
+  const value = await readOptionalJson(directory, path, violations)
+  if (!isRecord(value) || !Array.isArray(value.files)) {
+    violations.push({ code: "malformed-reference", path, file: path, message: "Changed-files artifact must include a files array." })
+    return undefined
+  }
+
+  const files: ArtifactBundleApplyChangedFile[] = []
+  for (const [index, file] of value.files.entries()) {
+    if (!isRecord(file) || typeof file.path !== "string" || file.path.trim().length === 0) {
+      violations.push({ code: "malformed-reference", path: `${path}:files[${index}]`, file: path, message: "Changed-file entries must include a non-empty path." })
+      continue
+    }
+    files.push({ ...file, path: file.path })
+  }
+
+  return { files }
+}
+
+function findManifestFileByKind(manifest: ArtifactManifest, kind: string): ArtifactManifestFile | undefined {
+  return manifest.files.find((file) => file.kind === kind)
+}
+
+function normalizeApprovedFiles(paths: string[]): string[] {
+  return [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
 }
 
 async function verifyBundleFileTopology(directory: string, path: string, fieldPath: string, violations: ArtifactBundleVerificationViolation[]): Promise<void> {
