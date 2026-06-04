@@ -5,7 +5,7 @@ import { cp, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
-import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256, verifyArtifactBundle } from "@automattic/wp-codebox-core"
+import { calculateArtifactContentDigest, calculateArtifactManifestFileSha256, preflightArtifactBundleApply, verifyArtifactBundle } from "@automattic/wp-codebox-core"
 import type { ArtifactManifest } from "@automattic/wp-codebox-core"
 
 const execFileAsync = promisify(execFile)
@@ -20,8 +20,17 @@ try {
   assert.equal(valid.valid, true)
   assert.deepEqual(valid.violations, [])
 
+  const validPreflight = await preflightArtifactBundleApply(validBundle, { approvedFiles: ["/wordpress/wp-content/plugins/example/file.txt"] })
+  assert.equal(validPreflight.ready, true)
+  assert.equal(validPreflight.payload?.patch.path, "files/patch.diff")
+  assert.equal(validPreflight.payload?.changedFiles.files[0]?.path, "/wordpress/wp-content/plugins/example/file.txt")
+  assert.equal(validPreflight.payload?.patch.body.includes("+cooked"), true)
+
   const { stdout } = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "artifacts", "verify", "--bundle", validBundle, "--json"], { cwd: root })
   assert.equal(JSON.parse(stdout).valid, true)
+
+  const applyPreflightCli = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "artifacts", "apply-preflight", "--bundle", validBundle, "--approved-file", "/wordpress/wp-content/plugins/example/file.txt", "--json"], { cwd: root })
+  assert.equal(JSON.parse(applyPreflightCli.stdout).ready, true)
 
   const artifactsOption = await execFileAsync(process.execPath, ["packages/cli/dist/index.js", "artifacts", "verify", "--artifacts", validBundle, "--json"], { cwd: root })
   assert.equal(JSON.parse(artifactsOption.stdout).valid, true)
@@ -33,6 +42,7 @@ try {
   const missingFile = await copyBundle(validBundle, join(workspace, "missing-file"))
   await rm(join(missingFile, "files/patch.diff"))
   assertViolation(await verifyArtifactBundle(missingFile), "missing-file")
+  assertPreflightViolation(await preflightArtifactBundleApply(missingFile, { approvedFiles: ["/wordpress/wp-content/plugins/example/file.txt"] }), "missing-file")
 
   const traversalPath = await copyBundle(validBundle, join(workspace, "traversal-path"))
   const traversalManifest = manifestFixture(await calculateArtifactContentDigest(traversalPath, ["files/changed-files.json", "files/patch.diff"]))
@@ -43,6 +53,11 @@ try {
   const digestMismatch = await copyBundle(validBundle, join(workspace, "digest-mismatch"))
   await writeFile(join(digestMismatch, "files/patch.diff"), "diff --git a/file.txt b/file.txt\n+tampered\n")
   assertViolation(await verifyArtifactBundle(digestMismatch), "digest-mismatch")
+  assertPreflightViolation(await preflightArtifactBundleApply(digestMismatch, { approvedFiles: ["/wordpress/wp-content/plugins/example/file.txt"] }), "digest-mismatch")
+
+  const missingApprovedFile = await preflightArtifactBundleApply(validBundle, { approvedFiles: [] })
+  assertPreflightViolation(missingApprovedFile, "malformed-reference")
+  assert.equal(missingApprovedFile.violations.some((violation) => violation.path === "approvedFiles" && violation.file === "/wordpress/wp-content/plugins/example/file.txt"), true)
 
   const fileHashMismatch = await copyBundle(validBundle, join(workspace, "file-hash-mismatch"))
   await writeFile(join(fileHashMismatch, "files/test-results.json"), "{\"tampered\":true}\n")
@@ -234,5 +249,10 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 
 function assertViolation(result: Awaited<ReturnType<typeof verifyArtifactBundle>>, code: string): void {
   assert.equal(result.valid, false)
+  assert.ok(result.violations.some((violation) => violation.code === code), `Expected ${code}, got ${result.violations.map((violation) => violation.code).join(", ")}`)
+}
+
+function assertPreflightViolation(result: Awaited<ReturnType<typeof preflightArtifactBundleApply>>, code: string): void {
+  assert.equal(result.ready, false)
   assert.ok(result.violations.some((violation) => violation.code === code), `Expected ${code}, got ${result.violations.map((violation) => violation.code).join(", ")}`)
 }

@@ -256,6 +256,7 @@ export function printHelp(): void {
   wp-codebox bench summarize (--input <recipe-run.json>|--bundle <dir>) [--json]
   wp-codebox bench compare --baseline-input <recipe-run.json> --candidate-input <recipe-run.json> [--json]
   wp-codebox artifacts verify --bundle <dir> [--json]
+  wp-codebox artifacts apply-preflight --bundle <dir> --approved-file <path> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
   wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
   wp-codebox artifacts bench-results --bundle <dir> [--json]
@@ -277,7 +278,11 @@ Options:
                     Keep preview runtimes alive after agent-task-run/recipe-run.
   --preview-public-url <url>
                     Public preview URL passed through to agent-task-run/recipe-run.
-  --bundle <dir>      Artifact bundle directory for artifacts verify.
+  --bundle <dir>      Artifact bundle directory for artifacts verify and apply-preflight.
+  --approved-file <path>
+                       Changed file approved for artifacts apply-preflight. Repeatable.
+  --approved-files <paths>
+                       Comma-separated changed files approved for artifacts apply-preflight.
   --scenario-id <id>  Filter benchmark artifact refs to one scenario.
   --extract-to <dir>  Copy listed benchmark artifact refs to a directory.
   --input <path>      Saved recipe-run JSON output for benchmark summarization.

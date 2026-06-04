@@ -12,6 +12,7 @@ interface CliCommandRouter {
   agentTaskRun: CliCommandHandler
   workspacePolicyCheck: CliCommandHandler
   artifactsVerify: CliCommandHandler
+  artifactsApplyPreflight: CliCommandHandler
   artifactsBrowserMetrics: CliCommandHandler
   artifactsBenchmark: CliCommandHandler
   artifactsBenchResults: CliCommandHandler
@@ -78,6 +79,9 @@ export async function routeCliCommand(argv: string[], router: CliCommandRouter):
       const subcommand = args.shift()
       if (subcommand === "verify") {
         return router.artifactsVerify(args)
+      }
+      if (subcommand === "apply-preflight") {
+        return router.artifactsApplyPreflight(args)
       }
       if (subcommand === "browser-metrics") {
         return router.artifactsBrowserMetrics(args)
