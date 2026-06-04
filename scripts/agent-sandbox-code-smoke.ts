@@ -66,6 +66,8 @@ async function main() {
   assert.match(code, /\\"mode\\":\\"allow\\"/, "sandbox agent should use allow-mode tool policy")
   assert.match(code, /\\"workspace_read\\"/, "sandbox agent should allow workspace read tool")
   assert.match(code, /agents_chat_runtime_principal_permission/, "sandbox chat should authorize through Agents API runtime-principal permission")
+  assert.match(code, /AgentsAPI\\AI\\WP_Agent_Execution_Principal/, "sandbox chat should emit a valid namespaced runtime principal class reference")
+  assert.doesNotMatch(code, /AgentsAPIAIWP_Agent_Execution_Principal/, "sandbox chat should not collapse namespaced runtime principal references")
   assert.match(code, /PermissionHelper::run_as_authenticated/, "sandbox chat should execute runtime abilities in an authenticated Data Machine context")
   assert.match(code, /DataMachine\\Abilities\\PermissionHelper::run_as_authenticated/, "sandbox chat should emit a valid namespaced PermissionHelper class reference")
   assert.doesNotMatch(code, /PermissionHelper::run_as_authenticated\([^\)]*,\s*1\)/, "sandbox chat should not force a user-specific Data Machine capability check")
