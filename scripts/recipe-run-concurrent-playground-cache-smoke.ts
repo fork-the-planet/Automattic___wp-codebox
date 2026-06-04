@@ -46,6 +46,8 @@ try {
 
 async function runRecipe(recipePath: string, cacheDirectory: string): Promise<{ exit: { code: number | null; signal: NodeJS.Signals | null }; stdout: string; stderr: string }> {
   const child = spawn(process.execPath, [
+    "--experimental-wasm-jspi",
+    "--experimental-wasm-stack-switching",
     "packages/cli/dist/index.js",
     "recipe-run",
     "--recipe",
