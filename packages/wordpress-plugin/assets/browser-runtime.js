@@ -1099,6 +1099,62 @@ try {
 			return result.data;
 		} );
 
+		await browserRuntimeContractPhase( phases, 'generated-runner-artifact-capture', async () => {
+			const recipeTaskPath = '/tmp/wp-codebox-contract-recipe-task.json';
+			const result = await runRecipe( client, {
+				browser: {
+					task_path: recipeTaskPath,
+				},
+				workflow: {
+					steps: [
+						{
+							command: 'wordpress.run-php',
+							args: [ `code=<?php
+$payload = array();
+if ( is_readable( '${ recipeTaskPath }' ) ) {
+	$raw_payload = json_decode( (string) file_get_contents( '${ recipeTaskPath }' ), true );
+	if ( is_array( $raw_payload ) ) {
+		$payload = $raw_payload;
+	}
+}
+$environment = wp_codebox_browser_artifact_environment( $payload );
+$artifact_bundle = wp_codebox_browser_capture_artifact_bundle( $payload );
+echo wp_json_encode( array(
+	'success' => ! empty( $environment ) && ! empty( $artifact_bundle ),
+	'data' => array(
+		'schema' => 'wp-codebox/browser-runtime-contract-generated-runner/v1',
+		'root' => $environment['root'] ?? '',
+		'artifact_schema' => $artifact_bundle['schema'] ?? '',
+		'file_count' => is_array( $artifact_bundle['files'] ?? null ) ? count( $artifact_bundle['files'] ) : 0,
+	),
+	'error' => null,
+) );` ],
+						},
+					],
+				},
+			}, {
+				artifacts: {
+					schema: 'wp-codebox/browser-runtime-contract-generated-artifact/v1',
+					root: 'contract-generated',
+					entrypoint: 'contract-generated/index.html',
+					files: [
+						{
+							path: 'contract-generated/index.html',
+							playground_path: '/wordpress/wp-content/uploads/wp-codebox/artifacts/contract-generated/index.html',
+							kind: 'html',
+							mime_type: 'text/html',
+						},
+					],
+				},
+			}, { name: 'codebox-contract-generated-runner' } );
+
+			if ( true !== result?.success ) {
+				throw new Error( result?.error?.message || 'Generated browser runner artifact capture failed.' );
+			}
+
+			return result.data;
+		} );
+
 		await browserRuntimeContractPhase( phases, 'event-diagnostics', async () => {
 			const diagnostics = browserProviderDiagnostics();
 			return {

@@ -371,14 +371,22 @@ assert.deepEqual(sameRealm(probeResult.phases.map((phase: { name: string }) => p
   "provider-bridge-echo",
   "runtime-tool-artifact-write",
   "artifact-capture",
+  "generated-runner-artifact-capture",
   "event-diagnostics",
 ])
 assert.equal(probeResult.phases.every((phase: { status: string }) => phase.status === "passed"), true)
 assert.equal(probeResult.phases.find((phase: { name: string }) => phase.name === "provider-bridge-echo")?.data.provider, "echo")
+assert.deepEqual(sameRealm(probeResult.phases.find((phase: { name: string }) => phase.name === "generated-runner-artifact-capture")?.data), {
+  schema: "wp-codebox/browser-runtime-contract-generated-runner/v1",
+  root: "contract-generated/",
+  artifact_schema: "wp-codebox/browser-runtime-contract-generated-artifact/v1",
+  file_count: 1,
+})
 assert.equal(probeResult.phases.find((phase: { name: string }) => phase.name === "event-diagnostics")?.data.bounded, true)
 assert.equal(probeClient.requests.length > 0, true)
 assert.equal(probeClient.targetWrites.includes("/tmp/wp-codebox-contract-probe.txt"), true)
 assert.equal(probeClient.targetWrites.some((path: string) => path.endsWith("/tool-output.txt")), true)
+assert.equal(probeClient.targetWrites.includes("/tmp/wp-codebox-contract-recipe-task.json"), true)
 
 console.log("Browser runtime operation smoke passed")
 
@@ -487,6 +495,25 @@ function probePhpResponse(script: string, storedFiles: Map<string, string>, targ
         files: content.length > 0 ? [{ path: "tool-output.txt", sha256: sha256(content), size: content.length }] : [],
       },
       error: content.length > 0 ? null : { code: "artifact_missing", message: "Probe artifact was not readable." },
+    })
+  }
+
+  if (script.includes("wp-codebox/browser-runtime-contract-generated-runner/v1")) {
+    assert.match(script, /WP_CODEBOX_BROWSER_PLAYGROUND_RUNNER/)
+    assert.match(script, /wp_codebox_browser_artifact_environment\( \$payload \)/)
+    assert.match(script, /wp_codebox_browser_capture_artifact_bundle\( \$payload \)/)
+    const payload = JSON.parse(storedFiles.get("/tmp/wp-codebox-contract-recipe-task.json") ?? "{}")
+    const artifact = payload.artifacts ?? {}
+    const fileCount = Array.isArray(artifact.files) ? artifact.files.length : 0
+    return JSON.stringify({
+      success: Boolean(artifact.schema && artifact.root && fileCount > 0),
+      data: {
+        schema: "wp-codebox/browser-runtime-contract-generated-runner/v1",
+        root: `${String(artifact.root ?? "").replace(/\/$/, "")}/`,
+        artifact_schema: artifact.schema ?? "",
+        file_count: fileCount,
+      },
+      error: artifact.schema ? null : { code: "artifact_contract_missing", message: "Generated runner artifact contract was not available." },
     })
   }
 
