@@ -95,6 +95,7 @@
     "recipe-run-timeout-smoke": "tsx scripts/recipe-run-timeout-smoke.ts",
     "playground-archive-cache-validation-smoke": "tsx scripts/playground-archive-cache-validation-smoke.ts",
     "playground-sqlite-alias-smoke": "tsx scripts/playground-sqlite-alias-smoke.ts",
+    "php-wasm-preflight-smoke": "tsx scripts/php-wasm-preflight-smoke.ts",
     "recipe-playground-boot-failure-smoke": "tsx scripts/recipe-playground-boot-failure-smoke.ts",
     "runtime-stack-mount-smoke": "tsx scripts/runtime-stack-mount-smoke.ts",
     "runtime-overlay-php-ai-client-smoke": "tsx scripts/runtime-overlay-php-ai-client-smoke.ts",
