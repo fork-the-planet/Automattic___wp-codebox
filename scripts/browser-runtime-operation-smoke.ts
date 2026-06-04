@@ -12,8 +12,17 @@ const context = {
 	TextEncoder,
 	TextDecoder,
   window: {} as { wpCodeboxBrowser?: any },
+  CustomEvent: class CustomEvent {
+    type: string
+    detail: unknown
+    constructor(type: string, init: { detail?: unknown } = {}) {
+      this.type = type
+      this.detail = init.detail
+    }
+  },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
 }
+context.window.dispatchEvent = () => true
 
 vm.runInNewContext(runtimeSource, context)
 
@@ -22,6 +31,7 @@ assert.ok(runtime, "browser runtime should attach window.wpCodeboxBrowser")
 assert.equal(typeof runtime.runPhpRequest, "function")
 assert.equal(typeof runtime.runRecipe, "function")
 assert.equal(typeof runtime.runBrowserSessionRecipe, "function")
+assert.equal(typeof runtime.runBrowserRuntimeContractProbe, "function")
 assert.equal(typeof runtime.browserSessionRecipe, "function")
 assert.equal(typeof runtime.runWordPressOperation, "function")
 assert.equal(typeof runtime.ensureDirectory, "function")
@@ -349,6 +359,27 @@ await assert.rejects(
   /WordPress browser operation must include a type/
 )
 
+const probeClient = createContractProbeClient()
+const probeResult = await runtime.runBrowserRuntimeContractProbe(probeClient)
+assert.equal(probeResult.schema, "wp-codebox/browser-runtime-contract-probe/v1")
+assert.equal(probeResult.success, true)
+assert.deepEqual(sameRealm(probeResult.phases.map((phase: { name: string }) => phase.name)), [
+  "runtime-bootstrap",
+  "php-execution",
+  "playground-request-handler",
+  "runner-file-write-read",
+  "provider-bridge-echo",
+  "runtime-tool-artifact-write",
+  "artifact-capture",
+  "event-diagnostics",
+])
+assert.equal(probeResult.phases.every((phase: { status: string }) => phase.status === "passed"), true)
+assert.equal(probeResult.phases.find((phase: { name: string }) => phase.name === "provider-bridge-echo")?.data.provider, "echo")
+assert.equal(probeResult.phases.find((phase: { name: string }) => phase.name === "event-diagnostics")?.data.bounded, true)
+assert.equal(probeClient.requests.length > 0, true)
+assert.equal(probeClient.targetWrites.includes("/tmp/wp-codebox-contract-probe.txt"), true)
+assert.equal(probeClient.targetWrites.some((path: string) => path.endsWith("/tool-output.txt")), true)
+
 console.log("Browser runtime operation smoke passed")
 
 function sameRealm<T>(value: T): T {
@@ -400,4 +431,77 @@ function createClient(response: unknown, supportsRun = false, supportsRequestHan
   }
 
   return client
+}
+
+function createContractProbeClient() {
+  const storedFiles = new Map<string, string>()
+  const targetWrites: string[] = []
+  const client = {
+    mkdirs: [] as string[],
+    files: [] as Array<{ path: string; contents: string }>,
+    targetWrites,
+    requests: [] as Array<{ method: string; url: string }>,
+    runs: [] as Array<{ code: string }>,
+    async mkdir(path: string) {
+      this.mkdirs.push(path)
+    },
+    async writeFile(path: string, contents: string) {
+      this.files.push({ path, contents })
+      storedFiles.set(path, contents)
+    },
+    async request(request: { method: string; url: string }) {
+      this.requests.push(request)
+      const script = this.files.find((file) => request.url.endsWith(file.path.split("/").pop() ?? ""))?.contents ?? ""
+      return probePhpResponse(script, storedFiles, targetWrites)
+    },
+    async run(options: { code: string }) {
+      this.runs.push(options)
+      return probePhpResponse(options.code, storedFiles, targetWrites)
+    },
+  }
+
+  return client
+}
+
+function probePhpResponse(script: string, storedFiles: Map<string, string>, targetWrites: string[]) {
+  if (script.includes("'phase' => 'php-execution'")) {
+    return JSON.stringify({ success: true, data: { phase: "php-execution" }, error: null })
+  }
+
+  if (script.includes("'phase' => 'playground-request-handler'")) {
+    return JSON.stringify({ success: true, data: { phase: "playground-request-handler" }, error: null })
+  }
+
+  if (script.includes("/tmp/wp-codebox-contract-probe.txt")) {
+    const content = storedFiles.get("/tmp/wp-codebox-contract-probe.txt") ?? ""
+    return JSON.stringify({ success: content.length > 0, data: { path: "/tmp/wp-codebox-contract-probe.txt", sha256: sha256(content) }, error: null })
+  }
+
+  if (script.includes("wp-codebox/browser-runtime-contract-artifact-capture/v1")) {
+    const path = "/wordpress/wp-content/uploads/wp-codebox/artifacts/contract-probe/tool-output.txt"
+    const content = storedFiles.get(path) ?? ""
+    return JSON.stringify({
+      success: content.length > 0,
+      data: {
+        schema: "wp-codebox/browser-runtime-contract-artifact-capture/v1",
+        files: content.length > 0 ? [{ path: "tool-output.txt", sha256: sha256(content), size: content.length }] : [],
+      },
+      error: content.length > 0 ? null : { code: "artifact_missing", message: "Probe artifact was not readable." },
+    })
+  }
+
+  const operation = extractBrowserOperation(script) as { type?: string; args?: Record<string, unknown> }
+  if (operation.type === "writeFile") {
+    const path = String(operation.args?.path ?? "")
+    const content = String(operation.args?.content ?? "")
+    storedFiles.set(path, content)
+    targetWrites.push(path)
+    return JSON.stringify({ success: true, data: { path, bytes: content.length }, error: null })
+  }
+
+  return JSON.stringify({ success: true, data: {}, error: null })
+}
+
+function sha256(value: string) {
+  return Buffer.from(value).toString("hex")
 }

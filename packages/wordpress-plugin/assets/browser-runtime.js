@@ -915,6 +915,213 @@ try {
 		} );
 	};
 
+	const browserRuntimeContractPhase = async ( phases, name, callback ) => {
+		const startedAt = Date.now();
+		try {
+			const data = await callback();
+			const phase = {
+				name,
+				status: 'passed',
+				duration_ms: Date.now() - startedAt,
+				...( data && typeof data === 'object' ? { data } : {} ),
+			};
+			phases.push( phase );
+			return phase;
+		} catch ( error ) {
+			const phase = {
+				name,
+				status: 'failed',
+				duration_ms: Date.now() - startedAt,
+				error: {
+					code: error?.code || 'phase_failed',
+					message: error?.message || String( error ),
+				},
+			};
+			phases.push( phase );
+			return phase;
+		}
+	};
+
+	const requireProbeSuccess = ( result, message ) => {
+		if ( ! result?.success ) {
+			throw new Error( result?.error?.message || message );
+		}
+
+		return result.data ?? null;
+	};
+
+	const withEchoBrowserProviderBridge = async ( callback ) => {
+		const previousWp = window.wp;
+		const previousApiFetch = window.wp?.apiFetch;
+		window.wp = window.wp && typeof window.wp === 'object' ? window.wp : {};
+		window.wp.apiFetch = async ( request ) => ( {
+			success: true,
+			response: {
+				schema: 'wp-codebox/browser-provider-adapter-response/v1',
+				http: {
+					status: 200,
+					body: JSON.stringify( {
+						id: 'wp-codebox-contract-probe-response',
+						status: 'completed',
+						output: [
+							{
+								type: 'message',
+								role: 'assistant',
+								content: [ { type: 'output_text', text: 'echo' } ],
+							},
+						],
+					} ),
+				},
+			},
+			audit: {
+				schema: 'wp-codebox/browser-provider-audit/v1',
+				operation: request?.data?.operation || 'responses.create',
+			},
+		} );
+
+		try {
+			return await callback();
+		} finally {
+			if ( previousWp === undefined ) {
+				delete window.wp;
+			} else {
+				window.wp = previousWp;
+				if ( previousApiFetch === undefined && window.wp && typeof window.wp === 'object' ) {
+					delete window.wp.apiFetch;
+				} else if ( window.wp && typeof window.wp === 'object' ) {
+					window.wp.apiFetch = previousApiFetch;
+				}
+			}
+		}
+	};
+
+	const runBrowserRuntimeContractProbe = async ( client, options = {} ) => {
+		const phases = [];
+		const artifactRoot = String( options.artifactRoot || '/wordpress/wp-content/uploads/wp-codebox/artifacts/contract-probe' );
+		const artifactFile = `${ artifactRoot.replace( /\/$/, '' ) }/tool-output.txt`;
+		const probeText = 'wp-codebox-browser-runtime-contract-probe';
+
+		await browserRuntimeContractPhase( phases, 'runtime-bootstrap', async () => {
+			const functions = [ 'runPhpRequest', 'runRecipe', 'runBrowserSessionRecipe', 'runWordPressOperation', 'writeFile' ];
+			const missing = functions.filter( ( name ) => typeof window.wpCodeboxBrowser?.[ name ] !== 'function' );
+			if ( missing.length > 0 ) {
+				throw new Error( `Missing browser runtime functions: ${ missing.join( ', ' ) }` );
+			}
+
+			return { schema: 'wp-codebox/browser-runtime-contract-phase/v1', functions };
+		} );
+
+		await browserRuntimeContractPhase( phases, 'php-execution', async () => {
+			const result = await runPhpRequest( client, {
+				code: "<?php echo wp_json_encode( array( 'success' => true, 'data' => array( 'phase' => 'php-execution' ), 'error' => null ) );",
+				expectJson: true,
+				name: 'codebox-contract-php-execution',
+			} );
+			if ( true !== result?.success ) {
+				throw new Error( 'PHP execution did not return success.' );
+			}
+
+			return { phase: result.data?.phase || '' };
+		} );
+
+		await browserRuntimeContractPhase( phases, 'playground-request-handler', async () => {
+			const result = await runPhpRequest( client, {
+				code: "<?php echo wp_json_encode( array( 'success' => true, 'data' => array( 'phase' => 'playground-request-handler' ), 'error' => null ) );",
+				expectJson: true,
+				forceRequest: true,
+				name: 'codebox-contract-request-handler',
+			} );
+			if ( true !== result?.success ) {
+				throw new Error( 'Playground request handler did not return success.' );
+			}
+
+			return { phase: result.data?.phase || '' };
+		} );
+
+		await browserRuntimeContractPhase( phases, 'runner-file-write-read', async () => {
+			const path = '/tmp/wp-codebox-contract-probe.txt';
+			requireProbeSuccess( await writeFile( client, { path, content: probeText }, { name: 'codebox-contract-file-write' } ), 'Runner file write failed.' );
+			const result = await runPhpRequest( client, {
+				code: `<?php $path = ${ JSON.stringify( path ) }; echo wp_json_encode( array( 'success' => is_readable( $path ), 'data' => array( 'path' => $path, 'sha256' => is_readable( $path ) ? hash( 'sha256', file_get_contents( $path ) ) : '' ), 'error' => null ) );`,
+				expectJson: true,
+				forceRequest: true,
+				name: 'codebox-contract-file-read',
+			} );
+			if ( true !== result?.success ) {
+				throw new Error( 'Runner file read failed.' );
+			}
+
+			return { path, sha256: result.data?.sha256 || '' };
+		} );
+
+		await browserRuntimeContractPhase( phases, 'provider-bridge-echo', async () => withEchoBrowserProviderBridge( async () => {
+			const result = await executeBrowserProviderProxyRequest( {
+				schema: browserProviderProxySchema,
+				id: 'wp-codebox-contract-probe-provider-request',
+				operation: 'responses.create',
+				provider: 'echo',
+				model: 'echo-probe',
+				connector: 'contract-probe',
+				request: {
+					method: 'POST',
+					uri: '/v1/responses',
+					body: JSON.stringify( { model: 'echo-probe', input: [ { role: 'user', content: 'echo' } ], tools: [] } ),
+				},
+			} );
+			if ( true !== result?.success ) {
+				throw new Error( result?.error?.message || 'Echo browser provider bridge failed.' );
+			}
+
+			const diagnostics = browserProviderDiagnostics();
+			return {
+				provider: 'echo',
+				status: result.response?.http?.status ?? null,
+				diagnostic_count: diagnostics.requests.length,
+			};
+		} ) );
+
+		await browserRuntimeContractPhase( phases, 'runtime-tool-artifact-write', async () => {
+			const data = requireProbeSuccess( await writeFile( client, { path: artifactFile, content: probeText }, { name: 'codebox-contract-artifact-write' } ), 'Artifact write failed.' );
+			return { path: data?.path || artifactFile, bytes: data?.bytes ?? null };
+		} );
+
+		await browserRuntimeContractPhase( phases, 'artifact-capture', async () => {
+			const result = await runPhpRequest( client, {
+				code: `<?php $path = ${ JSON.stringify( artifactFile ) }; $exists = is_readable( $path ); echo wp_json_encode( array( 'success' => $exists, 'data' => array( 'schema' => 'wp-codebox/browser-runtime-contract-artifact-capture/v1', 'files' => $exists ? array( array( 'path' => basename( $path ), 'sha256' => hash( 'sha256', file_get_contents( $path ) ), 'size' => filesize( $path ) ) ) : array() ), 'error' => $exists ? null : array( 'code' => 'artifact_missing', 'message' => 'Probe artifact was not readable.' ) ) );`,
+				expectJson: true,
+				forceRequest: true,
+				name: 'codebox-contract-artifact-capture',
+			} );
+			if ( true !== result?.success ) {
+				throw new Error( result?.error?.message || 'Artifact capture failed.' );
+			}
+
+			return result.data;
+		} );
+
+		await browserRuntimeContractPhase( phases, 'event-diagnostics', async () => {
+			const diagnostics = browserProviderDiagnostics();
+			return {
+				schema: diagnostics.schema,
+				provider_requests: diagnostics.requests.length,
+				bounded: diagnostics.requests.length <= 20,
+				failed_phases: phases.filter( ( phase ) => phase.status !== 'passed' ).map( ( phase ) => phase.name ),
+			};
+		} );
+
+		const failed = phases.filter( ( phase ) => phase.status !== 'passed' );
+		return {
+			schema: 'wp-codebox/browser-runtime-contract-probe/v1',
+			success: failed.length === 0,
+			status: failed.length === 0 ? 'passed' : 'failed',
+			phases,
+			errors: failed.map( ( phase ) => ( {
+				phase: phase.name,
+				...( phase.error || {} ),
+			} ) ),
+		};
+	};
+
 	window.wpCodeboxBrowser = {
 		activateTheme,
 		browserSessionRecipe,
@@ -922,6 +1129,7 @@ try {
 		installTheme,
 		normalizeOperationResult,
 		parseJsonResponse,
+		runBrowserRuntimeContractProbe,
 		runBrowserSessionRecipe,
 		runPhpRequest,
 		runRecipe,
