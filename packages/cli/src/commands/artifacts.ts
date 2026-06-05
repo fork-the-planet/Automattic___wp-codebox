@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { preflightArtifactBundleApply, verifyArtifactBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { buildTransferProbeDiagnostics, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@automattic/wp-codebox-playground"
 import { printArtifactVerifyHumanOutput } from "../output.js"
 
@@ -79,6 +79,30 @@ export async function runArtifactsBrowserMetricsCommand(args: string[]): Promise
   return 0
 }
 
+export async function runArtifactsTransferVerifyCommand(args: string[]): Promise<number> {
+  const options = parseArtifactVerifyOptions(args)
+  const output = await transferVerify(options)
+  if (!options.json) {
+    printArtifactTransferVerifyHumanOutput(output)
+    return output.valid ? 0 : 1
+  }
+
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return output.valid ? 0 : 1
+}
+
+export async function runArtifactsTransferProbesCommand(args: string[]): Promise<number> {
+  const options = parseArtifactVerifyOptions(args)
+  const output = await transferProbes(options)
+  if (!options.json) {
+    printArtifactTransferProbesHumanOutput(output)
+    return output.status === "passed" ? 0 : 1
+  }
+
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return output.status === "passed" ? 0 : 1
+}
+
 export async function runArtifactsBenchmarkCommand(args: string[]): Promise<number> {
   const options = parseBenchmarkArtifactsOptions(args)
   const output = await benchmarkArtifacts(options)
@@ -101,6 +125,14 @@ async function applyPreflight(options: ArtifactApplyPreflightOptions): Promise<A
 
 async function browserMetrics(options: ArtifactVerifyOptions): Promise<BrowserArtifactMetricsResult> {
   return browserArtifactMetrics(resolve(options.bundleDirectory))
+}
+
+async function transferVerify(options: ArtifactVerifyOptions): Promise<TransferProofBundleVerificationResult> {
+  return verifyTransferProofBundle(resolve(options.bundleDirectory))
+}
+
+async function transferProbes(options: ArtifactVerifyOptions): Promise<TransferProbeDiagnosticsResult> {
+  return buildTransferProbeDiagnostics(resolve(options.bundleDirectory))
 }
 
 async function benchmarkArtifacts(options: BenchmarkArtifactsOptions): Promise<BenchmarkArtifactsOutput> {
@@ -222,6 +254,27 @@ function printArtifactBrowserMetricsHumanOutput(output: BrowserArtifactMetricsRe
     for (const [name, artifact] of Object.entries(output.artifacts).sort(([left], [right]) => left.localeCompare(right))) {
       console.log(`  ${name}: ${artifact.path}`)
     }
+  }
+}
+
+function printArtifactTransferVerifyHumanOutput(output: TransferProofBundleVerificationResult): void {
+  console.log("WP Codebox transfer proof verification")
+  console.log(`Bundle: ${output.bundleDirectory}`)
+  console.log(`Valid: ${output.valid ? "yes" : "no"}`)
+  console.log(`Transfer violations: ${output.violations.length}`)
+  console.log(`Probe diagnostics: ${output.diagnostics.summary.errors} error(s), ${output.diagnostics.summary.warnings} warning(s)`)
+  for (const violation of output.violations) {
+    console.log(`- ${violation.code}: ${violation.message}`)
+  }
+}
+
+function printArtifactTransferProbesHumanOutput(output: TransferProbeDiagnosticsResult): void {
+  console.log("WP Codebox transfer probe diagnostics")
+  console.log(`Bundle: ${output.bundleDirectory}`)
+  console.log(`Status: ${output.status}`)
+  console.log(`Diagnostics: ${output.summary.total} (${output.summary.errors} error(s), ${output.summary.warnings} warning(s))`)
+  for (const diagnostic of output.diagnostics) {
+    console.log(`- ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`)
   }
 }
 
