@@ -42,13 +42,13 @@ export function errorMessage(error: unknown): string {
 }
 
 /**
- * Extract a human-readable failure message from the structured wordpress.core-phpunit
+ * Extract a human-readable failure message from the structured PHPUnit
  * diagnostics log (.pg-test-result.txt). The PHP runner emits STAGE_FAIL / STAGE_DIE /
- * STAGE_FATAL markers; when core's bootstrap.php die()s mid-require, the shutdown handler
- * records STAGE_DIE with whatever the bootstrap printed (e.g. the "PHPUnit 0" notice).
+ * STAGE_FATAL markers; when a bootstrap/install script die()s mid-require, the shutdown
+ * handler records STAGE_DIE with whatever the script printed.
  * Returns undefined when the log contains no recognizable failure marker (#314).
  */
-export function extractCorePhpunitFailureMessage(log: string): string | undefined {
+export function extractPhpunitFailureMessage(log: string): string | undefined {
   if (!log.trim()) {
     return undefined
   }
