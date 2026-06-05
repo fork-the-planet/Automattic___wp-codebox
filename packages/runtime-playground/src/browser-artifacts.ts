@@ -5,6 +5,9 @@ import type { Request } from "playwright"
 export interface BrowserProbeArtifact {
   requestedUrl: string
   url: string
+  localPreviewOrigin?: string
+  requestedPreviewOrigin?: string
+  effectivePreviewOrigin?: string
   prePageScript?: BrowserProbeScriptMetadata
   files: {
     actions?: string
@@ -41,9 +44,27 @@ export interface BrowserProbeArtifact {
     networkEvents: number
     performance?: BrowserProbePerformanceSummary
     progress?: BrowserProbeProgressSummary
+    context?: BrowserProbeContextDetails
     replayability: BrowserProbeReplayability
     screenshot: boolean
     scriptResult?: unknown
+    viewport: BrowserProbeViewport | null
+  }
+}
+
+export interface BrowserProbeContextDetails {
+  requested: {
+    device?: string
+    locale?: string
+    viewport?: {
+      width: number
+      height: number
+    }
+  }
+  effective: {
+    device?: string
+    locale?: string
+    timezone?: string
     viewport: BrowserProbeViewport | null
   }
 }
@@ -265,6 +286,9 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
     probes: probes.map((probe) => ({
       url: probe.url,
       requestedUrl: probe.requestedUrl,
+      localPreviewOrigin: probe.localPreviewOrigin,
+      requestedPreviewOrigin: probe.requestedPreviewOrigin,
+      effectivePreviewOrigin: probe.effectivePreviewOrigin,
       finalUrl: probe.summary.finalUrl,
       viewport: probe.summary.viewport,
       replayability: probe.summary.replayability,

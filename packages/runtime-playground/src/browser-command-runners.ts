@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
-import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserProbeArtifact, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeMemoryArtifact, BrowserProbeNetworkRecord, BrowserProbePerformanceArtifact, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
@@ -30,11 +30,13 @@ export function isBrowserCommandArtifactError(error: unknown): error is BrowserC
 export async function runBrowserProbeCommand({
   artifactRoot,
   command = "wordpress.browser-probe",
+  runtimeSpec,
   server,
   spec,
 }: {
   artifactRoot: string
   command?: string
+  runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -62,6 +64,7 @@ export async function runBrowserProbeCommand({
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
   const requestedViewport = viewportArg(args, "viewport")
+  const requestedContext = browserProbeContextRequest(args, requestedViewport)
   const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
   const failFast = booleanArg(args, "fail-fast", false)
@@ -71,7 +74,8 @@ export async function runBrowserProbeCommand({
   const capturesErrorsForAssertions = assertions.some((assertion) => assertion.type === "no-page-errors" || assertion.type === "no-errors")
   const capturesBrowserMetrics = capture.has("performance") || capture.has("memory")
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
-  const targetUrl = resolveBrowserProbeUrl(urlArg, server.serverUrl)
+  const previewOrigins = browserProbePreviewOrigins(runtimeSpec, server.serverUrl)
+  const targetUrl = resolveBrowserProbeUrl(urlArg, previewOrigins.effectivePreviewOrigin)
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
 
@@ -91,7 +95,11 @@ export async function runBrowserProbeCommand({
   const summaryPath = join(browserDirectory, "summary.json")
   const startedAt = now()
   const progress = createBrowserProbeProgressTracker(startedAt, stallTimeoutMs)
-  const { chromium } = await import("playwright")
+  const { chromium, devices } = await import("playwright")
+  const deviceProfile = requestedContext.device ? devices[requestedContext.device] : undefined
+  if (requestedContext.device && !deviceProfile) {
+    throw new Error(`wordpress.browser-probe unknown Playwright device profile: ${requestedContext.device}`)
+  }
   const browser = await chromium.launch()
   let finalUrl = targetUrl
   let htmlSha256: string | undefined
@@ -101,12 +109,20 @@ export async function runBrowserProbeCommand({
   let memoryArtifact: BrowserProbeMemoryArtifact | undefined
   let performanceArtifact: BrowserProbePerformanceArtifact | undefined
   let page: import("playwright").Page | null = null
+  let context: import("playwright").BrowserContext | null = null
+  let contextDetails: BrowserProbeContextDetails | undefined
   let assertionResults: import("./browser-artifacts.js").BrowserStepAssertion[] = []
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
 
   try {
-    page = await browser.newPage()
+    context = requestedContext.device || requestedContext.locale
+      ? await browser.newContext({
+        ...(deviceProfile ?? {}),
+        ...(requestedContext.locale ? { locale: requestedContext.locale } : {}),
+      })
+      : null
+    page = context ? await context.newPage() : await browser.newPage()
     if (requestedViewport) {
       await page.setViewportSize(requestedViewport)
     }
@@ -118,6 +134,7 @@ export async function runBrowserProbeCommand({
       await page.addInitScript(prePageScript)
     }
     viewport = await browserProbeViewport(page)
+    contextDetails = await browserProbeContextDetails(page, requestedContext, viewport)
     if (capture.has("console") || capturesConsoleForAssertions) {
       page.on("console", (message) => {
         progress.mark("console")
@@ -253,6 +270,7 @@ export async function runBrowserProbeCommand({
     artifact = {
       requestedUrl: targetUrl,
       url: targetUrl,
+      ...previewOrigins,
       ...(prePageScriptMetadata ? { prePageScript: prePageScriptMetadata } : {}),
       files: {
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
@@ -276,6 +294,7 @@ export async function runBrowserProbeCommand({
         networkEvents: network.length,
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
+        context: contextDetails,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
         ...(typeof scriptResult !== "undefined" ? { scriptResult } : {}),
@@ -285,6 +304,7 @@ export async function runBrowserProbeCommand({
     await writeFile(summaryPath, `${JSON.stringify({
       schema: "wp-codebox/browser-probe/v1",
       requestedUrl: targetUrl,
+      ...previewOrigins,
       finalUrl,
       waitFor,
       durationMs,
@@ -300,6 +320,7 @@ export async function runBrowserProbeCommand({
         ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
         ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
       },
+      context: contextDetails,
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
@@ -317,6 +338,7 @@ export async function runBrowserProbeCommand({
     output: `${JSON.stringify({
       command,
       requestedUrl: targetUrl,
+      ...previewOrigins,
       finalUrl: artifact.summary.finalUrl ?? targetUrl,
       files: artifact.files,
       summary: artifact.summary,
@@ -331,8 +353,36 @@ function browserProbeScriptMetadata(source: string): BrowserProbeScriptMetadata 
   }
 }
 
+function browserProbeContextRequest(args: string[], viewport: { width: number; height: number } | undefined): BrowserProbeContextDetails["requested"] {
+  const device = argValue(args, "device")?.trim()
+  const locale = argValue(args, "locale")?.trim()
+  return {
+    ...(device ? { device } : {}),
+    ...(locale ? { locale } : {}),
+    ...(viewport ? { viewport } : {}),
+  }
+}
+
+async function browserProbeContextDetails(page: import("playwright").Page, requested: BrowserProbeContextDetails["requested"], viewport: BrowserProbeViewport | null): Promise<BrowserProbeContextDetails> {
+  const effective = await page.evaluate(() => ({
+    locale: navigator.language || undefined,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
+  })).catch(() => ({ locale: undefined, timezone: undefined }))
+
+  return {
+    requested,
+    effective: {
+      ...(requested.device ? { device: requested.device } : {}),
+      ...(effective.locale ? { locale: effective.locale } : {}),
+      ...(effective.timezone ? { timezone: effective.timezone } : {}),
+      viewport,
+    },
+  }
+}
+
 export async function runHtmlCaptureCommand(input: {
   artifactRoot: string
+  runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
 }): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
@@ -1251,6 +1301,14 @@ echo wp_json_encode( $cookies );
 
 function now(): string {
   return new Date().toISOString()
+}
+
+function browserProbePreviewOrigins(runtimeSpec: RuntimeCreateSpec, localPreviewOrigin: string): { localPreviewOrigin: string; requestedPreviewOrigin?: string; effectivePreviewOrigin: string } {
+  return {
+    localPreviewOrigin,
+    requestedPreviewOrigin: runtimeSpec.preview?.publicUrl,
+    effectivePreviewOrigin: runtimeSpec.preview?.publicUrl ?? localPreviewOrigin,
+  }
 }
 
 function resolveBrowserProbeUrl(pathOrUrl: string, baseUrl: string): string {
