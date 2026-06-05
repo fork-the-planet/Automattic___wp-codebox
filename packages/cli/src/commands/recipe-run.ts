@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntimeRunId, defaultRunRegistryDirectory, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimeInfo, type RuntimePreviewSpec, type RuntimeRunRecord, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -671,6 +671,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       blueprint: recipeBlueprintWithBootActivePlugins(recipe.runtime?.blueprint, extraPlugins),
       assets: resolveRecipeRuntimeAssets(recipe, recipeDirectory),
     }
+    const effectivePreview = effectiveRecipePreview(recipe.runtime?.preview, options)
     const runtimeCreateSpec = {
       backend: recipe.runtime?.backend ?? "wordpress-playground",
       environment: runtimeEnvironment,
@@ -680,9 +681,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: {
         ...runtimeMetadata(configuredArtifactsDirectory, recipe.runtime?.wp ?? DEFAULT_WORDPRESS_VERSION),
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
-        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, backendPackage, options.previewPublicUrl, options.previewPort, options.previewBind),
+        ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, stagedFiles, overlays, backendPackage, effectivePreview),
       },
-      preview: previewSpec(options.previewPublicUrl, options.previewPort, options.previewBind),
+      preview: previewSpec(effectivePreview.publicUrl, effectivePreview.port, effectivePreview.bind, effectivePreview.siteUrl),
     }
     try {
       const startupStartedAtMs = Date.now()
@@ -2014,7 +2015,16 @@ function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]):
   return { command: step.command, args: step.args ?? [] }
 }
 
-function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, previewPublicUrl: string | undefined, previewPort: number | undefined, previewBind: string | undefined): Record<string, unknown> {
+function effectiveRecipePreview(recipePreview: RuntimePreviewSpec | undefined, options: RecipeRunOptions): RuntimePreviewSpec {
+  return stripUndefined({
+    publicUrl: options.previewPublicUrl ?? recipePreview?.publicUrl,
+    siteUrl: recipePreview?.siteUrl,
+    port: options.previewPort ?? recipePreview?.port,
+    bind: options.previewBind ?? recipePreview?.bind,
+  })
+}
+
+function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspaceMounts: PreparedWorkspaceMount[], extraPlugins: PreparedExtraPlugin[], stagedFiles: PreparedStagedFile[], overlays: PreparedRuntimeOverlay[], backendPackage: PreparedRuntimeBackendPackage | undefined, preview: RuntimePreviewSpec): Record<string, unknown> {
   const extraPluginMetadata = extraPlugins.map((plugin) => ({
     source: plugin.source,
     slug: plugin.slug,
@@ -2054,9 +2064,12 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     task: {
       kind: "recipe-run",
       recipePath,
-      previewPublicUrl,
-      previewPort,
-      previewBind,
+      preview: stripUndefined({
+        requested: recipe.runtime?.preview,
+        effective: preview,
+        source: previewMetadataSource(recipe.runtime?.preview, preview),
+        cliOverrides: previewCliOverrides(recipe.runtime?.preview, preview),
+      }),
       workflow,
       probes: recipe.probes ?? [],
       inputs: {
@@ -2097,6 +2110,23 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     })),
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
   }
+}
+
+function previewCliOverrides(recipePreview: RuntimePreviewSpec | undefined, effectivePreview: RuntimePreviewSpec): RuntimePreviewSpec | undefined {
+  const overrides = stripUndefined({
+    publicUrl: recipePreview?.publicUrl !== effectivePreview.publicUrl ? effectivePreview.publicUrl : undefined,
+    port: recipePreview?.port !== effectivePreview.port ? effectivePreview.port : undefined,
+    bind: recipePreview?.bind !== effectivePreview.bind ? effectivePreview.bind : undefined,
+  })
+  return Object.keys(overrides).length > 0 ? overrides : undefined
+}
+
+function previewMetadataSource(recipePreview: RuntimePreviewSpec | undefined, effectivePreview: RuntimePreviewSpec): string | undefined {
+  if (Object.keys(effectivePreview).length === 0) {
+    return undefined
+  }
+
+  return recipePreview ? "recipe-runtime-preview" : "cli-preview-options"
 }
 
 function recipeRunStagedFile(stagedFile: PreparedStagedFile): RecipeRunStagedFile {
