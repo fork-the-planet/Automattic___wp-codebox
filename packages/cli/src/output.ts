@@ -258,6 +258,8 @@ export function printHelp(): void {
   wp-codebox artifacts verify --bundle <dir> [--json]
   wp-codebox artifacts apply-preflight --bundle <dir> --approved-file <path> [--json]
   wp-codebox artifacts browser-metrics --bundle <dir> [--json]
+  wp-codebox artifacts transfer-verify --bundle <dir> [--json]
+  wp-codebox artifacts transfer-probes --bundle <dir> [--json]
   wp-codebox artifacts benchmark --bundle <dir> [--scenario-id <id>] [--extract-to <dir>] [--json]
   wp-codebox artifacts bench-results --bundle <dir> [--json]
   wp-codebox artifacts bench-compare --baseline-bundle <dir> --candidate-bundle <dir> [--json]
@@ -278,7 +280,7 @@ Options:
                     Keep preview runtimes alive after agent-task-run/recipe-run.
   --preview-public-url <url>
                     Public preview URL passed through to agent-task-run/recipe-run.
-  --bundle <dir>      Artifact bundle directory for artifacts verify and apply-preflight.
+  --bundle <dir>      Artifact bundle directory for artifact verification/probe commands.
   --approved-file <path>
                        Changed file approved for artifacts apply-preflight. Repeatable.
   --approved-files <paths>

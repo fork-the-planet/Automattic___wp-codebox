@@ -1,5 +1,5 @@
 import { routeCliCommand } from "./command-router.js"
-import { runArtifactsApplyPreflightCommand, runArtifactsBenchmarkCommand, runArtifactsBrowserMetricsCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
+import { runArtifactsApplyPreflightCommand, runArtifactsBenchmarkCommand, runArtifactsBrowserMetricsCommand, runArtifactsTransferProbesCommand, runArtifactsTransferVerifyCommand, runArtifactsVerifyCommand } from "./commands/artifacts.js"
 import { runAgentTaskRunCommand } from "./commands/agent-task-run.js"
 import { runArtifactsBenchCompareCommand, runArtifactsBenchResultsCommand, runBenchCompareCommand, runBenchMatrixCommand, runBenchSummarizeCommand } from "./commands/benchmark.js"
 import { runCommandsCommand, runRecipeSchemaCommand } from "./commands/discovery.js"
@@ -24,6 +24,8 @@ export async function runCli(args: string[]): Promise<number> {
     artifactsVerify: runArtifactsVerifyCommand,
     artifactsApplyPreflight: runArtifactsApplyPreflightCommand,
     artifactsBrowserMetrics: runArtifactsBrowserMetricsCommand,
+    artifactsTransferVerify: runArtifactsTransferVerifyCommand,
+    artifactsTransferProbes: runArtifactsTransferProbesCommand,
     artifactsBenchmark: runArtifactsBenchmarkCommand,
     artifactsBenchResults: runArtifactsBenchResultsCommand,
     benchMatrix: runBenchMatrixCommand,
