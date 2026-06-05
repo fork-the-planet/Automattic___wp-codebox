@@ -5,10 +5,18 @@ export interface PhpunitRunCodeOptions {
   phpunitXml: string
   selectedTestFile: string
   changedTestFiles: unknown[]
+  phpunitArgs: string[]
   env: Record<string, unknown>
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
+  bootstrapFiles: string[]
   multisite: boolean
+  /**
+   * Sandbox-internal, writable path for the structured diagnostics log. Defaults
+   * to a /tmp path so diagnostics survive read-only plugin mounts and a mid-install
+   * die() or exit().
+   */
+  resultFile?: string
 }
 
 export interface CorePhpunitRunCodeOptions {
@@ -29,6 +37,7 @@ export interface CorePhpunitRunCodeOptions {
 }
 
 export const CORE_PHPUNIT_RESULT_FILE = "/tmp/wp-codebox-core-phpunit-result.txt"
+export const PLUGIN_PHPUNIT_RESULT_FILE = "/tmp/wp-codebox-phpunit-result.txt"
 
 export function phpunitRunCode(options: PhpunitRunCodeOptions): string {
   return `error_reporting(E_ALL);
@@ -37,16 +46,21 @@ ini_set('display_startup_errors', '1');
 
 $plugin_slug = ${JSON.stringify(options.pluginSlug)};
 $plugin_path = '/wordpress/wp-content/plugins/' . $plugin_slug;
-$result_file = $plugin_path . '/.pg-test-result.txt';
+$result_file = ${JSON.stringify(options.resultFile ?? PLUGIN_PHPUNIT_RESULT_FILE)};
 $current_stage = 'preboot';
+$pg_stage_output_buffering = false;
 $autoload_file = ${JSON.stringify(options.autoloadFile)};
 $tests_dir = ${JSON.stringify(options.testsDir)};
 $selected_test_file = ${JSON.stringify(options.selectedTestFile)};
 $changed_test_files_raw = ${JSON.stringify(JSON.stringify(options.changedTestFiles))};
+$phpunit_args_raw = json_decode(${JSON.stringify(JSON.stringify(options.phpunitArgs))}, true);
 $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\\n"))};
+$bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
 $multisite = ${JSON.stringify(options.multisite)};
+
+@file_put_contents($result_file, '');
 
 function pg_log($msg) {
     global $result_file;
@@ -102,7 +116,20 @@ function pg_install_diagnostics_handlers() {
         return false;
     });
     register_shutdown_function(function () {
-        global $current_stage;
+        global $current_stage, $pg_stage_output_buffering;
+        if (!empty($pg_stage_output_buffering)) {
+            $buffered = '';
+            while (ob_get_level() > 0) {
+                $chunk = ob_get_clean();
+                if ($chunk !== false) {
+                    $buffered = $chunk . $buffered;
+                }
+            }
+            $buffered = trim($buffered);
+            if ($buffered !== '') {
+                pg_log('STAGE_DIE:' . $current_stage . ':' . $buffered);
+            }
+        }
         $error = error_get_last();
         if ($error && in_array($error['type'], array(E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR), true)) {
             pg_log('STAGE_FATAL:' . $current_stage . ':' . $error['message'] . ' at ' . $error['file'] . ':' . $error['line']);
@@ -280,7 +307,7 @@ CONFIG;
 }
 
 function pg_run_install_stage(array $cfg) {
-    global $argv;
+    global $argv, $pg_stage_output_buffering;
     pg_stage_begin('install');
     try {
         $tests_dir = $cfg['tests_dir'];
@@ -288,12 +315,16 @@ function pg_run_install_stage(array $cfg) {
         $ms_tests = !empty($cfg['multisite']) ? 'run_ms_tests' : 'no_ms_tests';
         $argv = array('install.php', $config_path, $ms_tests, 'no_core_tests');
         $_SERVER['argv'] = $argv;
+        $pg_stage_output_buffering = true;
+        ob_start();
         require_once $tests_dir . '/includes/install.php';
         while (ob_get_level() > 0) {
             @ob_end_clean();
         }
+        $pg_stage_output_buffering = false;
         pg_stage_ok('install');
     } catch (Throwable $e) {
+        $pg_stage_output_buffering = false;
         pg_stage_fail('install', $e);
         exit(1);
     }
@@ -541,6 +572,31 @@ try {
     exit(1);
 }
 
+pg_stage_begin('load_bootstrap_files');
+try {
+    if (is_array($bootstrap_files)) {
+        foreach ($bootstrap_files as $bootstrap_file) {
+            if (!is_string($bootstrap_file) || $bootstrap_file === '' || strpos($bootstrap_file, '..') !== false) {
+                pg_log('NOTICE:skipping invalid bootstrap file entry: ' . var_export($bootstrap_file, true));
+                continue;
+            }
+            $bootstrap_path = $plugin_path . '/' . ltrim($bootstrap_file, '/');
+            $bootstrap_real = realpath($bootstrap_path);
+            $plugin_real = realpath($plugin_path);
+            if ($bootstrap_real === false || $plugin_real === false || strpos($bootstrap_real, rtrim($plugin_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0 || !is_file($bootstrap_real)) {
+                pg_log('NOTICE:bootstrap file not found under plugin path: ' . $bootstrap_file);
+                continue;
+            }
+            pg_log('BOOTSTRAP_FILE:' . $bootstrap_file);
+            require_once $bootstrap_real;
+        }
+    }
+    pg_stage_ok('load_bootstrap_files');
+} catch (Throwable $e) {
+    pg_stage_fail('load_bootstrap_files', $e);
+    exit(1);
+}
+
 function wp_codebox_phpunit_parse_config($xml_path, $test_dir_default) {
     $directories = array($test_dir_default);
     $suffixes = array('Test.php');
@@ -667,10 +723,16 @@ try {
     if ($selected_test_file !== '') {
         $selected_abs = $plugin_path . '/' . ltrim($selected_test_file, '/');
         if (!in_array($selected_abs, $test_files, true)) {
-            pg_log('NO_TEST_FILES');
-            pg_log('NOTICE:requested PHPUnit test file not discovered: ' . $selected_test_file);
-            pg_stage_ok('discover_tests');
-            exit(1);
+            $selected_real = realpath($selected_abs);
+            $tests_real = realpath($test_dir);
+            if ($selected_real === false || $tests_real === false || strpos($selected_real, rtrim($tests_real, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0 || !is_file($selected_real)) {
+                pg_log('NO_TEST_FILES');
+                pg_log('NOTICE:requested PHPUnit test file not found under tests/: ' . $selected_test_file);
+                pg_stage_ok('discover_tests');
+                exit(1);
+            }
+            pg_log('NOTICE:using explicitly requested PHPUnit test file outside discovery set: ' . $selected_test_file);
+            $selected_abs = $selected_real;
         }
         $test_files = array($selected_abs);
     }
@@ -756,7 +818,15 @@ function wp_codebox_phpunit_print_test_list($test) {
 pg_stage_begin('run_tests');
 pg_log('RUNNING ' . count($test_files) . ' TEST FILES');
 try {
-    $phpunit_args = wp_codebox_phpunit_args($argv ?? array());
+    $phpunit_argv = array('phpunit');
+    if (is_array($phpunit_args_raw)) {
+        foreach ($phpunit_args_raw as $arg) {
+            if (is_scalar($arg)) {
+                $phpunit_argv[] = (string) $arg;
+            }
+        }
+    }
+    $phpunit_args = wp_codebox_phpunit_args($phpunit_argv);
     if (!empty($phpunit_args['listTests'])) {
         wp_codebox_phpunit_print_test_list($suite);
         pg_log('ALL TESTS PASSED');

@@ -18,6 +18,7 @@ import {
   normalizePluginCheckOutput,
   normalizeThemeCheckOutput,
   phpunitRunCode,
+  PLUGIN_PHPUNIT_RESULT_FILE,
   positiveIntegerArg,
   restRequestInputFromArgs,
   restRequestPhpCode,
@@ -26,7 +27,7 @@ import {
 import { bootstrapAbilityPhpCode, bootstrapPhpCode, phpCodeFromArgs } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
-import { persistCorePhpunitResult, persistVfsDiagnosticFile, readCorePhpunitDiagnostic } from "./runtime-diagnostics.js"
+import { persistCorePhpunitResult, persistPluginPhpunitResult, persistVfsDiagnosticFileToHost, readCorePhpunitDiagnostic, readPluginPhpunitDiagnostic } from "./runtime-diagnostics.js"
 import type { RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import type { ExecutionSpec, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
@@ -373,11 +374,13 @@ export async function runBenchCommand({
 }
 
 export async function runPhpunitCommand({
+  artifactRoot,
   mounts,
   runPlaygroundCommand,
   server,
   spec,
 }: {
+  artifactRoot: string
   mounts: MountSpec[]
   runPlaygroundCommand: RunPlaygroundCommand
   server: PlaygroundCliServer
@@ -386,6 +389,7 @@ export async function runPhpunitCommand({
   const args = spec.args ?? []
   const explicitCode = argValue(args, "code") || argValue(args, "code-file")
   const pluginSlug = argValue(args, "plugin-slug")?.trim() || ""
+  const resultFile = PLUGIN_PHPUNIT_RESULT_FILE
   const code = explicitCode ? await phpCodeFromArgs(args, "wordpress.phpunit") : normalizePhpCode(phpunitRunCode({
     pluginSlug,
     autoloadFile: argValue(args, "autoload-file")?.trim() || "/wp-codebox-vendor/autoload.php",
@@ -393,16 +397,32 @@ export async function runPhpunitCommand({
     phpunitXml: argValue(args, "phpunit-xml")?.trim() || `/wordpress/wp-content/plugins/${pluginSlug}/phpunit.xml.dist`,
     selectedTestFile: argValue(args, "test-file")?.trim() || "",
     changedTestFiles: jsonArrayArg(args, "changed-tests-json"),
+    phpunitArgs: jsonArrayArg(args, "phpunit-args-json").filter((value): value is string => typeof value === "string"),
     env: jsonObjectArg(args, "env-json"),
     wpConfigDefines: jsonObjectArg(args, "wp-config-defines-json"),
     dependencyMounts: commaListArg(args, "dependency-mounts"),
+    bootstrapFiles: jsonArrayArg(args, "bootstrap-files-json").filter((value): value is string => typeof value === "string"),
     multisite: booleanArg(args, "multisite"),
+    resultFile,
   }))
   if (!explicitCode && !pluginSlug) {
     throw new Error("wordpress.phpunit requires plugin-slug=<slug> when code/code-file is not provided")
   }
-  const response = await runPlaygroundCommand("wordpress.phpunit", server, { code })
-  await persistVfsDiagnosticFile(server, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
+  let response: PlaygroundRunResponse
+  try {
+    response = await runPlaygroundCommand("wordpress.phpunit", server, { code })
+  } catch (error) {
+    await persistPluginPhpunitResult(server, resultFile, artifactRoot)
+    await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
+    const structured = await readPluginPhpunitDiagnostic(server, resultFile)
+    if (structured) {
+      throw new Error(`wordpress.phpunit could not run: ${structured}`)
+    }
+    throw error
+  }
+
+  await persistPluginPhpunitResult(server, resultFile, artifactRoot)
+  await persistVfsDiagnosticFileToHost(server, resultFile, `/wordpress/wp-content/plugins/${pluginSlug}/.pg-test-result.txt`, mounts)
   assertPlaygroundResponseOk("wordpress.phpunit", response)
 
   return response.text
