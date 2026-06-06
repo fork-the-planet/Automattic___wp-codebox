@@ -6,14 +6,14 @@ import { spawnSync } from "node:child_process"
 import { normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
-interface AgentTaskRunOptions {
+export interface AgentTaskRunOptions {
   inputPath: string
   json: boolean
   previewHoldSeconds: string
   previewPublicUrl: string
 }
 
-interface AgentTaskRunInput {
+export interface AgentTaskRunInput {
   goal?: string
   task?: string
   agent?: string
@@ -75,7 +75,7 @@ export async function runAgentTaskRunCommand(args: string[]): Promise<number> {
   return output.success ? 0 : 1
 }
 
-async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptions): Promise<AgentTaskRunOutput> {
+export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskRunOptions): Promise<AgentTaskRunOutput> {
   const taskInput = normalizeTaskInput(input)
   const task = taskInput.goal
   const wpVersion = stringValue(input.wp) || "trunk"

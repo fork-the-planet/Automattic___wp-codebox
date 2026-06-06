@@ -7,6 +7,7 @@ import { RuntimeRunRegistry, artifactBundleRunRef, artifactManifestFile, createB
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
+import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
 import { parsePreviewBind, parsePreviewHoldSeconds, parsePreviewPort, parsePreviewPublicUrl } from "../preview-options.js"
 import { dryRunRecipe, pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex, recipeDryRunSiteSeeds, siteSeedScopesAreBounded, type RecipeDryRunOutput, type RecipeDryRunSiteSeed, type RecipeDryRunStagedFile } from "../recipe-dry-run.js"
@@ -1040,7 +1041,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const workflowSteps = recipeWorkflowSteps(recipe)
     await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
       for (const workflowStep of workflowSteps) {
-        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace)))
+        executions.push(await awaitRecipe(`workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`, executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options)))
         interruption?.throwIfInterrupted()
       }
     })
@@ -1758,8 +1759,28 @@ function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: Recip
   }
 }
 
-async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>): Promise<RecipeExecutionResult> {
+async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions): Promise<RecipeExecutionResult> {
   try {
+    if (workflowStep.step.command === "wp-codebox.agent-fanout") {
+      const startedAt = new Date().toISOString()
+      const result = await executeAgentFanoutFromArgs(workflowStep.step.args ?? [], {
+        artifactRoot: artifactRoot || recipeDirectory,
+        recipeDirectory,
+        previewHoldSeconds: options?.previewHoldSeconds === undefined ? "" : String(options.previewHoldSeconds),
+        previewPublicUrl: options?.previewPublicUrl,
+      })
+      const finishedAt = new Date().toISOString()
+      return withRecipeExecutionPhase({
+        id: `agent-fanout-${workflowStep.index}`,
+        command: workflowStep.step.command,
+        args: workflowStep.step.args ?? [],
+        exitCode: result.success ? 0 : 1,
+        stdout: `${JSON.stringify(result, null, 2)}\n`,
+        stderr: "",
+        startedAt,
+        finishedAt,
+      }, workflowStep.phase, workflowStep.index, workflowStep.step.command)
+    }
     const execution = await runtime.execute(await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace))
     return withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, workflowStep.step.command)
   } catch (error) {

@@ -257,6 +257,9 @@ private static function compact_browser_task_contract_dto( array $contract ): ar
 		if ( is_array( $phase['contract'] ?? null ) ) {
 			$phase_dto['contract'] = self::compact_browser_materializer_contract_dto( $phase['contract'] );
 		}
+		if ( is_array( $phase['result'] ?? null ) ) {
+			$phase_dto['result'] = self::compact_browser_dto_value( $phase['result'] );
+		}
 
 		$phases[] = array_filter( $phase_dto, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 	}
@@ -526,6 +529,23 @@ private static function browser_task_contract_phases( array $input, array $sessi
 			'metadata' => is_array( $phase['metadata'] ?? null ) ? self::compact_browser_dto_value( $phase['metadata'] ) : array(),
 		);
 
+		$fanout_request = self::browser_task_phase_fanout_request( $phase );
+		if ( is_array( $fanout_request ) ) {
+			if ( empty( $fanout_request['sandbox_session_id'] ) && '' !== (string) ( $session_envelope['id'] ?? '' ) ) {
+				$fanout_request['sandbox_session_id'] = (string) $session_envelope['id'];
+			}
+
+			$result = self::run_agent_task_fanout( $fanout_request );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+
+			$phase_descriptor['status'] = true === ( $result['success'] ?? false ) ? 'completed' : 'failed';
+			$phase_descriptor['result'] = $result;
+			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
+			continue;
+		}
+
 		if ( 'materializer' !== $kind ) {
 			$phases[] = array_filter( $phase_descriptor, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 			continue;
@@ -549,6 +569,18 @@ private static function browser_task_contract_phases( array $input, array $sessi
 	}
 
 	return $phases;
+}
+
+/** @param array<string,mixed> $phase Browser task phase. @return array<string,mixed>|null */
+private static function browser_task_phase_fanout_request( array $phase ): ?array {
+	$candidates = array( $phase['request'] ?? null, $phase['input'] ?? null );
+	foreach ( $candidates as $candidate ) {
+		if ( is_array( $candidate ) && 'wp-codebox/agent-fanout-request/v1' === (string) ( $candidate['schema'] ?? '' ) ) {
+			return $candidate;
+		}
+	}
+
+	return null;
 }
 
 /**
