@@ -57,7 +57,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   const fanoutRoot = join(options.artifactRoot, "fanout")
   const workersRoot = join(fanoutRoot, "workers")
   const aggregateRoot = join(fanoutRoot, "aggregate")
-  const aggregateFinalRoot = join(aggregateRoot, "final")
+  const aggregateFinalRoot = join(options.artifactRoot, "aggregate", "final")
   const eventsPath = join(fanoutRoot, "events.jsonl")
   const planPath = join(fanoutRoot, "plan.json")
   const resultPath = join(fanoutRoot, "result.json")
@@ -153,7 +153,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
       error: worker.error,
     })),
   }, {
-    finalArtifactRefs: [{ path: "fanout/aggregate/final/result.json", kind: "agent-fanout-aggregate", namespace: "aggregate/final" }],
+    finalArtifactRefs: [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }],
   })
   await writeJson(join(aggregateRoot, "result.json"), aggregate)
   await writeJson(join(aggregateFinalRoot, "result.json"), aggregate)
@@ -183,7 +183,7 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
       result: "fanout/result.json",
       workers: "fanout/workers",
       aggregate: "fanout/aggregate/result.json",
-      final: "fanout/aggregate/final/result.json",
+      final: "aggregate/final/result.json",
     },
     workers: workerResults,
     aggregate,

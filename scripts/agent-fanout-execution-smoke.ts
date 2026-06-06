@@ -41,7 +41,7 @@ assert.deepEqual(seenWorkers.sort(), ["copy", "design"])
 assert.equal(result.session.children.length, 2)
 assert.equal(result.workers.every((worker) => worker.status === "succeeded"), true)
 assert.equal(result.aggregate.status, "succeeded")
-assert.deepEqual(result.aggregate.finalArtifactRefs, [{ path: "fanout/aggregate/final/result.json", kind: "agent-fanout-aggregate", namespace: "aggregate/final" }])
+assert.deepEqual(result.aggregate.finalArtifactRefs, [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }])
 
 const events = (await readFile(result.events_path, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>)
 assert.equal(events.every((event) => event.schema === FANOUT_EVENT_SCHEMA), true)
