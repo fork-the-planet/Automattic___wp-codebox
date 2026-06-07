@@ -462,4 +462,308 @@ private static function trusted_orchestrator_authorization_schema( string $scope
 private static function task_input_schema(): array {
 	return WP_Codebox_Task_Input_Contract::schema();
 }
+
+/** @return array<string,mixed> */
+private static function string_property_schema( string $description = '' ): array {
+	$schema = array( 'type' => 'string' );
+	if ( '' !== $description ) {
+		$schema['description'] = $description;
+	}
+
+	return $schema;
+}
+
+/** @return array<string,mixed> */
+private static function object_property_schema( string $description = '' ): array {
+	$schema = array( 'type' => 'object' );
+	if ( '' !== $description ) {
+		$schema['description'] = $description;
+	}
+
+	return $schema;
+}
+
+/** @return array<string,mixed> */
+private static function string_array_property_schema( string $description = '' ): array {
+	$schema = array(
+		'type'  => 'array',
+		'items' => array( 'type' => 'string' ),
+	);
+	if ( '' !== $description ) {
+		$schema['description'] = $description;
+	}
+
+	return $schema;
+}
+
+/** @return array<string,mixed> */
+private static function object_array_property_schema( string $description = '' ): array {
+	$schema = array(
+		'type'  => 'array',
+		'items' => array( 'type' => 'object' ),
+	);
+	if ( '' !== $description ) {
+		$schema['description'] = $description;
+	}
+
+	return $schema;
+}
+
+/** @return array<string,mixed> */
+private static function legacy_task_property_schema(): array {
+	return self::string_property_schema( 'Legacy task description. Prefer goal for new product callers.' );
+}
+
+/** @return array<string,mixed> */
+private static function approved_files_schema( string $description ): array {
+	return self::string_array_property_schema( $description );
+}
+
+/** @return array<string,mixed> */
+private static function artifact_apply_input_properties( string $approved_files_description, string $approver_description, string $apply_target_description ): array {
+	return array(
+		'approved_files' => self::approved_files_schema( $approved_files_description ),
+		'approver'       => self::string_property_schema( $approver_description ),
+		'apply_target'   => self::object_property_schema( $apply_target_description ),
+	);
+}
+
+/**
+ * Shared host-side sandbox runner input fields used by task, batch, and fanout abilities.
+ *
+ * @param array<string,mixed> $task_input_schema Task input schema.
+ * @param array<string,mixed> $mount_schema Mount schema.
+ * @param array<string,mixed> $site_seed_schema Site seed schema.
+ * @param array<string,mixed> $inherit_schema Inheritance schema.
+ * @param array<string,mixed> $session_input Session input schema.
+ * @param array<string,mixed> $preview_schema Preview input schema.
+ * @param array<string,mixed> $options Composition options.
+ * @return array<string,mixed>
+ */
+private static function host_agent_task_input_properties( array $task_input_schema, array $mount_schema, array $site_seed_schema, array $inherit_schema, array $session_input, array $preview_schema, array $options = array() ): array {
+	$detailed = ! empty( $options['detailed'] );
+
+	$properties = array(
+		'agent'                  => self::string_property_schema( $detailed ? 'Sandbox agent slug to invoke through agents/chat. Defaults through wp_codebox_default_agent.' : '' ),
+		'mode'                   => self::string_property_schema( $detailed ? 'Agent execution mode. Defaults to sandbox.' : '' ),
+		'provider'               => self::string_property_schema( $detailed ? 'AI provider id to seed into the sandbox agent config.' : '' ),
+		'model'                  => self::string_property_schema( $detailed ? 'AI model id to seed into the sandbox agent config.' : '' ),
+		'provider_plugin_paths'  => self::string_array_property_schema( $detailed ? 'AI provider plugin directories to mount and activate inside the sandbox.' : '' ),
+		'agent_bundles'          => self::agent_bundle_schema(),
+		'runtime_task'           => self::object_property_schema( $detailed ? 'Generic runtime task request. WP Codebox forwards input to the requested sandbox-local ability after importing agent_bundles.' : '' ),
+		'parent_request'         => self::object_property_schema( $detailed ? 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.' : '' ),
+		'mounts'                 => $mount_schema,
+		'workspaces'             => self::object_array_property_schema( $detailed ? 'Recipe workspace entries to seed as policy-checked writable repositories.' : '' ),
+		'runtime_stack_mounts'   => self::object_array_property_schema( $detailed ? 'Runtime stack mounts to pass through to recipe.runtime.stack.mounts.' : '' ),
+		'runtime_overlays'       => self::object_array_property_schema( $detailed ? 'Runtime overlays to pass through to recipe.runtime.overlays.' : '' ),
+		'inherit'                => $inherit_schema,
+		'sandbox_session_id'     => $session_input['sandbox_session_id'],
+		'orchestrator'           => $session_input['orchestrator'],
+		'secret_env'             => self::string_array_property_schema( $detailed ? 'Explicit parent environment variable names to expose inside the sandbox. Prefer connector-scoped inheritance credentials for product flows. Values are read from the parent process and are not accepted in this payload.' : '' ),
+		'max_turns'              => $detailed ? array(
+			'type'        => 'integer',
+			'description' => 'Maximum agent loop turns for this sandbox task.',
+		) : array( 'type' => 'integer' ),
+		'preview_hold_seconds'   => $preview_schema['preview_hold_seconds'],
+		'preview_port'           => $preview_schema['preview_port'],
+		'preview_bind'           => $preview_schema['preview_bind'],
+		'preview_public_url'     => $preview_schema['preview_public_url'],
+		'wp'                     => self::string_property_schema( $detailed ? 'WordPress version passed to Playground. Defaults to trunk.' : '' ),
+		'artifacts_path'         => self::string_property_schema( $detailed ? 'Directory where WP Codebox should write artifact bundles.' : '' ),
+		'wp_codebox_bin'         => self::string_property_schema( $detailed ? 'WP Codebox CLI binary or path. JS dist files are run through node.' : '' ),
+		'agents_api_path'        => self::string_property_schema(),
+		'data_machine_path'      => self::string_property_schema(),
+		'data_machine_code_path' => self::string_property_schema(),
+	);
+
+	if ( ! empty( $options['task_fields'] ) ) {
+		$properties = array(
+			'goal'                => $task_input_schema['properties']['goal'],
+			'task'                => self::legacy_task_property_schema(),
+			'target'              => $task_input_schema['properties']['target'],
+			'allowed_tools'       => $task_input_schema['properties']['allowed_tools'],
+			'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
+			'expected_artifacts'  => $task_input_schema['properties']['expected_artifacts'],
+			'policy'              => $task_input_schema['properties']['policy'],
+			'context'             => $task_input_schema['properties']['context'],
+		) + $properties;
+	}
+
+	if ( ! empty( $options['site_seeds'] ) ) {
+		$properties['site_seeds'] = $site_seed_schema;
+	}
+
+	if ( ! empty( $options['session_id'] ) ) {
+		$properties['session_id'] = self::string_property_schema( 'Existing sandbox conversation session id.' );
+	}
+
+	if ( ! empty( $options['task_timeout_seconds'] ) ) {
+		$properties['task_timeout_seconds'] = array(
+			'type'        => 'integer',
+			'description' => $detailed ? 'Maximum wall-clock seconds for this sandbox task. Zero or omitted disables the host-side timeout.' : '',
+		);
+		if ( '' === $properties['task_timeout_seconds']['description'] ) {
+			unset( $properties['task_timeout_seconds']['description'] );
+		}
+	}
+
+	return $properties;
+}
+
+/**
+ * Shared browser Playground task/session input fields.
+ *
+ * @param array<string,mixed> $task_input_schema Task input schema.
+ * @param array<string,mixed> $inherit_schema Inheritance schema.
+ * @param array<string,mixed> $session_input Session input schema.
+ * @param bool                $detailed Whether to include field descriptions for the public session creator.
+ * @return array<string,mixed>
+ */
+private static function browser_task_input_properties( array $task_input_schema, array $inherit_schema, array $session_input, bool $detailed = false ): array {
+	return array(
+		'goal'                    => $task_input_schema['properties']['goal'],
+		'task'                    => self::legacy_task_property_schema(),
+		'target'                  => $task_input_schema['properties']['target'],
+		'allowed_tools'           => $task_input_schema['properties']['allowed_tools'],
+		'sandbox_tool_policy'     => $task_input_schema['properties']['sandbox_tool_policy'],
+		'expected_artifacts'      => $task_input_schema['properties']['expected_artifacts'],
+		'policy'                  => $task_input_schema['properties']['policy'],
+		'context'                 => $task_input_schema['properties']['context'],
+		'agent'                   => self::string_property_schema( $detailed ? 'Sandbox agent slug to invoke through agents/chat inside the browser Playground.' : '' ),
+		'provider'                => self::string_property_schema( $detailed ? 'AI provider id to seed into the browser Playground agent invocation.' : '' ),
+		'model'                   => self::string_property_schema( $detailed ? 'AI model id to seed into the browser Playground agent invocation.' : '' ),
+		'mode'                    => self::string_property_schema( $detailed ? 'Agent execution mode. Defaults to sandbox.' : '' ),
+		'provider_plugin_paths'   => self::string_array_property_schema( $detailed ? 'AI provider plugin directories the browser sandbox should have available before code execution.' : '' ),
+		'agent_bundles'           => self::agent_bundle_schema(),
+		'inherit'                 => $inherit_schema,
+		'secret_env'              => self::string_array_property_schema( $detailed ? 'Parent environment variable names expected to be available to the browser sandbox. Values are never accepted in this payload.' : '' ),
+		'sandbox_session_id'      => $session_input['sandbox_session_id'],
+		'orchestrator'            => $session_input['orchestrator'],
+		'authorization'           => self::browser_session_authorization_schema(),
+		'playground'              => $detailed ? self::browser_playground_input_schema() : self::object_property_schema(),
+		'browser_runner'          => $detailed ? self::browser_runner_input_schema() : self::object_property_schema(),
+		'browser_plugins'         => $detailed ? self::browser_plugins_input_schema() : array( 'type' => 'array' ),
+		'runtime'                 => $detailed ? self::browser_runtime_input_schema() : self::object_property_schema(),
+		'blueprint'               => self::object_property_schema( $detailed ? 'Optional WordPress Playground blueprint for the browser to compile and run.' : '' ),
+		'site_blueprint_artifact' => $detailed ? self::site_blueprint_artifact_input_schema() : self::object_property_schema(),
+		'artifact_files'          => $detailed ? self::artifact_files_input_schema() : array( 'type' => 'array' ),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_playground_input_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
+		'properties'  => array(
+			'client_module_url' => array( 'type' => 'string' ),
+			'remote_url'        => array( 'type' => 'string' ),
+			'cors_proxy_url'    => array( 'type' => 'string' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_runner_input_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Optional PHP-WASM runner paths and generic sandbox-local invocation settings for executing the task inside the browser Playground site.',
+		'properties'  => array(
+			'task_path'     => array( 'type' => 'string' ),
+			'result_path'   => array( 'type' => 'string' ),
+			'capture_paths' => array(
+				'type'        => 'array',
+				'description' => 'Sandbox-local files or reports the generated browser runner should include in its normalized result after invocation.',
+				'items'       => array(
+					'type'       => 'object',
+					'required'   => array( 'path' ),
+					'properties' => array(
+						'path'      => array( 'type' => 'string' ),
+						'name'      => array( 'type' => 'string' ),
+						'kind'      => array( 'type' => 'string' ),
+						'mime_type' => array( 'type' => 'string' ),
+						'max_bytes' => array( 'type' => 'integer' ),
+					),
+				),
+			),
+			'invocation'    => array(
+				'type'        => 'object',
+				'description' => 'Generic sandbox-local invocation. Callers can inject MU plugins that register the named ability or hook task; WP Codebox only invokes it and captures normal artifacts.',
+				'properties'  => array(
+					'type'  => array( 'type' => 'string', 'enum' => array( 'ability', 'task' ) ),
+					'name'  => array( 'type' => 'string' ),
+					'hook'  => array( 'type' => 'string' ),
+					'input' => array( 'type' => 'object' ),
+				),
+			),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_plugins_input_schema(): array {
+	return array(
+		'type'        => 'array',
+		'description' => 'Optional plugin zip URLs the browser Playground should install and activate before running the recipe.',
+		'items'       => array(
+			'type'       => 'object',
+			'properties' => array(
+				'slug'     => array( 'type' => 'string' ),
+				'url'      => array( 'type' => 'string' ),
+				'activate' => array( 'type' => 'boolean' ),
+				'sha256'   => array( 'type' => 'string' ),
+			),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_runtime_input_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Structured browser Playground runtime dependencies compiled by WP Codebox into the session blueprint.',
+		'properties'  => array(
+			'components' => array( 'type' => 'array' ),
+			'plugins'    => array( 'type' => 'array' ),
+			'mu_plugins' => array( 'type' => 'array' ),
+			'themes'     => array( 'type' => 'array' ),
+			'bootstrap'  => array( 'type' => 'array' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function site_blueprint_artifact_input_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Caller-owned pulled-site Playground blueprint artifact to compile into the browser sandbox before Codebox runs.',
+		'properties'  => array(
+			'schema'     => array( 'type' => 'string' ),
+			'id'         => array( 'type' => 'string' ),
+			'blueprint'  => array( 'type' => 'object' ),
+			'provenance' => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function artifact_files_input_schema(): array {
+	return array(
+		'type'        => 'array',
+		'description' => 'Optional text or base64 artifact files the browser should write into Playground.',
+		'items'       => array(
+			'type'       => 'object',
+			'required'   => array( 'path' ),
+			'properties' => array(
+				'path'           => array( 'type' => 'string' ),
+				'content'        => array( 'type' => 'string' ),
+				'content_base64' => array( 'type' => 'string' ),
+				'encoding'       => array( 'type' => 'string' ),
+				'mime_type'      => array( 'type' => 'string' ),
+				'kind'           => array( 'type' => 'string' ),
+				'description'    => array( 'type' => 'string' ),
+			),
+		),
+	);
+}
 }

@@ -124,6 +124,45 @@ final class WP_Codebox_Abilities {
 			$preview_schema    = self::preview_input_schema();
 			$outcome_schema    = self::remediation_outcome_schema();
 			$completion_outcome_schema = self::completion_outcome_schema();
+			$host_agent_task_properties = self::host_agent_task_input_properties(
+				$task_input_schema,
+				$mount_schema,
+				$site_seed_schema,
+				$inherit_schema,
+				$session_input,
+				$preview_schema,
+				array(
+					'detailed'             => true,
+					'task_fields'          => true,
+					'site_seeds'           => true,
+					'session_id'           => true,
+					'task_timeout_seconds' => true,
+				)
+			);
+			$host_agent_batch_properties = self::host_agent_task_input_properties(
+				$task_input_schema,
+				$mount_schema,
+				$site_seed_schema,
+				$inherit_schema,
+				$session_input,
+				$preview_schema
+			);
+			$host_agent_fanout_properties = self::host_agent_task_input_properties(
+				$task_input_schema,
+				$mount_schema,
+				$site_seed_schema,
+				$inherit_schema,
+				$session_input,
+				$preview_schema,
+				array( 'task_timeout_seconds' => true )
+			);
+			$browser_session_properties = self::browser_task_input_properties( $task_input_schema, $inherit_schema, $session_input, true );
+			$browser_contract_properties = self::browser_task_input_properties( $task_input_schema, $inherit_schema, $session_input );
+			$artifact_apply_properties = self::artifact_apply_input_properties(
+				'Explicit sandbox file paths approved by the parent-site reviewer.',
+				'Parent-site approver principal for audit records.',
+				'Optional parent-control-plane target metadata consumed by the apply adapter.'
+			);
 			$artifact_id_schema = array(
 				'artifact_id'    => array(
 					'type'        => 'string',
@@ -147,105 +186,7 @@ final class WP_Codebox_Abilities {
 							array( 'type' => 'object', 'required' => array( 'goal' ) ),
 							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
-						'properties' => array(
-							'goal'                   => $task_input_schema['properties']['goal'],
-							'task'                   => array(
-								'type'        => 'string',
-								'description' => 'Legacy task description. Prefer goal for new product callers.',
-							),
-							'target'                 => $task_input_schema['properties']['target'],
-							'allowed_tools'          => $task_input_schema['properties']['allowed_tools'],
-							'sandbox_tool_policy'    => $task_input_schema['properties']['sandbox_tool_policy'],
-							'expected_artifacts'     => $task_input_schema['properties']['expected_artifacts'],
-							'policy'                 => $task_input_schema['properties']['policy'],
-							'context'                => $task_input_schema['properties']['context'],
-							'agent'                  => array(
-								'type'        => 'string',
-								'description' => 'Sandbox agent slug to invoke through agents/chat. Defaults through wp_codebox_default_agent.',
-							),
-							'mode'                   => array(
-								'type'        => 'string',
-								'description' => 'Agent execution mode. Defaults to sandbox.',
-							),
-							'provider'               => array(
-								'type'        => 'string',
-								'description' => 'AI provider id to seed into the sandbox agent config.',
-							),
-							'model'                  => array(
-								'type'        => 'string',
-								'description' => 'AI model id to seed into the sandbox agent config.',
-							),
-							'provider_plugin_paths'  => array(
-								'type'        => 'array',
-								'description' => 'AI provider plugin directories to mount and activate inside the sandbox.',
-								'items'       => array( 'type' => 'string' ),
-							),
-							'agent_bundles'          => self::agent_bundle_schema(),
-							'runtime_task'           => array(
-								'type'        => 'object',
-								'description' => 'Generic runtime task request. WP Codebox forwards input to the requested sandbox-local ability after importing agent_bundles.',
-							),
-							'parent_request'         => array(
-								'type'        => 'object',
-								'description' => 'External orchestrator task request, such as homeboy/wp-codebox-task-request/v1, normalized into the WP Codebox runner contract.',
-							),
-							'mounts'                 => $mount_schema,
-							'workspaces'             => array(
-								'type'        => 'array',
-								'description' => 'Recipe workspace entries to seed as policy-checked writable repositories.',
-								'items'       => array( 'type' => 'object' ),
-							),
-							'runtime_stack_mounts'   => array(
-								'type'        => 'array',
-								'description' => 'Runtime stack mounts to pass through to recipe.runtime.stack.mounts.',
-								'items'       => array( 'type' => 'object' ),
-							),
-							'runtime_overlays'       => array(
-								'type'        => 'array',
-								'description' => 'Runtime overlays to pass through to recipe.runtime.overlays.',
-								'items'       => array( 'type' => 'object' ),
-							),
-							'site_seeds'             => $site_seed_schema,
-							'inherit'                => $inherit_schema,
-							'sandbox_session_id'     => $session_input['sandbox_session_id'],
-							'orchestrator'           => $session_input['orchestrator'],
-							'secret_env'             => array(
-								'type'        => 'array',
-								'description' => 'Explicit parent environment variable names to expose inside the sandbox. Prefer connector-scoped inheritance credentials for product flows. Values are read from the parent process and are not accepted in this payload.',
-								'items'       => array( 'type' => 'string' ),
-							),
-							'session_id'             => array(
-								'type'        => 'string',
-								'description' => 'Existing sandbox conversation session id.',
-							),
-							'max_turns'              => array(
-								'type'        => 'integer',
-								'description' => 'Maximum agent loop turns for this sandbox task.',
-							),
-							'task_timeout_seconds'   => array(
-								'type'        => 'integer',
-								'description' => 'Maximum wall-clock seconds for this sandbox task. Zero or omitted disables the host-side timeout.',
-							),
-							'preview_hold_seconds'   => $preview_schema['preview_hold_seconds'],
-							'preview_port'           => $preview_schema['preview_port'],
-							'preview_bind'           => $preview_schema['preview_bind'],
-							'preview_public_url'     => $preview_schema['preview_public_url'],
-							'wp'                     => array(
-								'type'        => 'string',
-								'description' => 'WordPress version passed to Playground. Defaults to trunk.',
-							),
-							'artifacts_path'         => array(
-								'type'        => 'string',
-								'description' => 'Directory where WP Codebox should write artifact bundles.',
-							),
-							'wp_codebox_bin'    => array(
-								'type'        => 'string',
-								'description' => 'WP Codebox CLI binary or path. JS dist files are run through node.',
-							),
-							'agents_api_path'        => array( 'type' => 'string' ),
-							'data_machine_path'      => array( 'type' => 'string' ),
-							'data_machine_code_path' => array( 'type' => 'string' ),
-						),
+						'properties' => $host_agent_task_properties,
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -294,49 +235,7 @@ final class WP_Codebox_Abilities {
 									),
 								),
 							),
-							'agent'                  => array( 'type' => 'string' ),
-							'mode'                   => array( 'type' => 'string' ),
-							'provider'               => array( 'type' => 'string' ),
-							'model'                  => array( 'type' => 'string' ),
-							'provider_plugin_paths'  => array(
-								'type'  => 'array',
-								'items' => array( 'type' => 'string' ),
-							),
-							'agent_bundles'          => self::agent_bundle_schema(),
-							'runtime_task'           => array( 'type' => 'object' ),
-							'parent_request'         => array( 'type' => 'object' ),
-							'mounts'                 => $mount_schema,
-							'workspaces'             => array(
-								'type'  => 'array',
-								'items' => array( 'type' => 'object' ),
-							),
-							'runtime_stack_mounts'   => array(
-								'type'  => 'array',
-								'items' => array( 'type' => 'object' ),
-							),
-							'runtime_overlays'       => array(
-								'type'  => 'array',
-								'items' => array( 'type' => 'object' ),
-							),
-							'inherit'                => $inherit_schema,
-							'sandbox_session_id'     => $session_input['sandbox_session_id'],
-							'orchestrator'           => $session_input['orchestrator'],
-							'secret_env'             => array(
-								'type'  => 'array',
-								'items' => array( 'type' => 'string' ),
-							),
-							'max_turns'              => array( 'type' => 'integer' ),
-							'preview_hold_seconds'   => $preview_schema['preview_hold_seconds'],
-							'preview_port'           => $preview_schema['preview_port'],
-							'preview_bind'           => $preview_schema['preview_bind'],
-							'preview_public_url'     => $preview_schema['preview_public_url'],
-							'wp'                     => array( 'type' => 'string' ),
-							'artifacts_path'         => array( 'type' => 'string' ),
-							'wp_codebox_bin'    => array( 'type' => 'string' ),
-							'agents_api_path'        => array( 'type' => 'string' ),
-							'data_machine_path'      => array( 'type' => 'string' ),
-							'data_machine_code_path' => array( 'type' => 'string' ),
-						),
+						) + $host_agent_batch_properties,
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -421,35 +320,7 @@ final class WP_Codebox_Abilities {
 								'type'        => 'integer',
 								'description' => 'Maximum number of workers to run at once. Defaults to 1 and is capped by the host runtime.',
 							),
-							'agent'                 => array( 'type' => 'string' ),
-							'mode'                  => array( 'type' => 'string' ),
-							'provider'              => array( 'type' => 'string' ),
-							'model'                 => array( 'type' => 'string' ),
-							'provider_plugin_paths' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-							'agent_bundles'         => self::agent_bundle_schema(),
-							'runtime_task'          => array( 'type' => 'object' ),
-							'parent_request'        => array( 'type' => 'object' ),
-							'mounts'                => $mount_schema,
-							'workspaces'            => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
-							'runtime_stack_mounts'  => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
-							'runtime_overlays'      => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
-							'inherit'               => $inherit_schema,
-							'sandbox_session_id'    => $session_input['sandbox_session_id'],
-							'orchestrator'          => $session_input['orchestrator'],
-							'secret_env'            => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-							'max_turns'             => array( 'type' => 'integer' ),
-							'task_timeout_seconds'  => array( 'type' => 'integer' ),
-							'preview_hold_seconds'  => $preview_schema['preview_hold_seconds'],
-							'preview_port'          => $preview_schema['preview_port'],
-							'preview_bind'          => $preview_schema['preview_bind'],
-							'preview_public_url'    => $preview_schema['preview_public_url'],
-							'wp'                    => array( 'type' => 'string' ),
-							'artifacts_path'        => array( 'type' => 'string' ),
-							'wp_codebox_bin'        => array( 'type' => 'string' ),
-							'agents_api_path'       => array( 'type' => 'string' ),
-							'data_machine_path'     => array( 'type' => 'string' ),
-							'data_machine_code_path' => array( 'type' => 'string' ),
-						),
+						) + $host_agent_fanout_properties,
 					),
 					'output_schema'       => array(
 						'type'       => 'object',
@@ -544,147 +415,7 @@ final class WP_Codebox_Abilities {
 							array( 'type' => 'object', 'required' => array( 'goal' ) ),
 							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
-						'properties' => array(
-							'goal'               => $task_input_schema['properties']['goal'],
-							'task'               => array(
-								'type'        => 'string',
-								'description' => 'Legacy task description. Prefer goal for new product callers.',
-							),
-							'target'             => $task_input_schema['properties']['target'],
-							'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
-							'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
-							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
-							'policy'             => $task_input_schema['properties']['policy'],
-							'context'            => $task_input_schema['properties']['context'],
-							'agent'              => array(
-								'type'        => 'string',
-								'description' => 'Sandbox agent slug to invoke through agents/chat inside the browser Playground.',
-							),
-							'provider'           => array(
-								'type'        => 'string',
-								'description' => 'AI provider id to seed into the browser Playground agent invocation.',
-							),
-							'model'              => array(
-								'type'        => 'string',
-								'description' => 'AI model id to seed into the browser Playground agent invocation.',
-							),
-							'mode'               => array(
-								'type'        => 'string',
-								'description' => 'Agent execution mode. Defaults to sandbox.',
-							),
-							'provider_plugin_paths' => array(
-								'type'        => 'array',
-								'description' => 'AI provider plugin directories the browser sandbox should have available before code execution.',
-								'items'       => array( 'type' => 'string' ),
-							),
-							'agent_bundles'      => self::agent_bundle_schema(),
-							'inherit'            => $inherit_schema,
-							'secret_env'         => array(
-								'type'        => 'array',
-								'description' => 'Parent environment variable names expected to be available to the browser sandbox. Values are never accepted in this payload.',
-								'items'       => array( 'type' => 'string' ),
-							),
-							'sandbox_session_id' => $session_input['sandbox_session_id'],
-							'orchestrator'       => $session_input['orchestrator'],
-							'authorization'      => self::browser_session_authorization_schema(),
-							'playground'         => array(
-								'type'        => 'object',
-								'description' => 'Optional browser Playground client and artifact preview configuration overrides.',
-								'properties'  => array(
-									'client_module_url' => array( 'type' => 'string' ),
-									'remote_url'        => array( 'type' => 'string' ),
-									'cors_proxy_url'    => array( 'type' => 'string' ),
-								),
-							),
-							'browser_runner'     => array(
-								'type'        => 'object',
-								'description' => 'Optional PHP-WASM runner paths and generic sandbox-local invocation settings for executing the task inside the browser Playground site.',
-								'properties'  => array(
-									'task_path'   => array( 'type' => 'string' ),
-									'result_path' => array( 'type' => 'string' ),
-									'capture_paths' => array(
-										'type'        => 'array',
-										'description' => 'Sandbox-local files or reports the generated browser runner should include in its normalized result after invocation.',
-										'items'       => array(
-											'type'       => 'object',
-											'required'   => array( 'path' ),
-											'properties' => array(
-												'path'       => array( 'type' => 'string' ),
-												'name'       => array( 'type' => 'string' ),
-												'kind'       => array( 'type' => 'string' ),
-												'mime_type'  => array( 'type' => 'string' ),
-												'max_bytes'  => array( 'type' => 'integer' ),
-											),
-										),
-									),
-									'invocation'  => array(
-										'type'        => 'object',
-										'description' => 'Generic sandbox-local invocation. Callers can inject MU plugins that register the named ability or hook task; WP Codebox only invokes it and captures normal artifacts.',
-										'properties'  => array(
-											'type'              => array( 'type' => 'string', 'enum' => array( 'ability', 'task' ) ),
-											'name'              => array( 'type' => 'string' ),
-											'hook'              => array( 'type' => 'string' ),
-											'input'             => array( 'type' => 'object' ),
-										),
-									),
-								),
-							),
-							'browser_plugins'    => array(
-								'type'        => 'array',
-								'description' => 'Optional plugin zip URLs the browser Playground should install and activate before running the recipe.',
-								'items'       => array(
-									'type'       => 'object',
-									'properties' => array(
-										'slug'     => array( 'type' => 'string' ),
-										'url'      => array( 'type' => 'string' ),
-										'activate' => array( 'type' => 'boolean' ),
-										'sha256'   => array( 'type' => 'string' ),
-									),
-								),
-							),
-							'runtime'            => array(
-								'type'        => 'object',
-								'description' => 'Structured browser Playground runtime dependencies compiled by WP Codebox into the session blueprint.',
-								'properties'  => array(
-									'components' => array( 'type' => 'array' ),
-									'plugins'    => array( 'type' => 'array' ),
-									'mu_plugins' => array( 'type' => 'array' ),
-									'themes'     => array( 'type' => 'array' ),
-									'bootstrap'  => array( 'type' => 'array' ),
-								),
-							),
-							'blueprint'          => array(
-								'type'        => 'object',
-								'description' => 'Optional WordPress Playground blueprint for the browser to compile and run.',
-							),
-							'site_blueprint_artifact' => array(
-								'type'        => 'object',
-								'description' => 'Caller-owned pulled-site Playground blueprint artifact to compile into the browser sandbox before Codebox runs.',
-								'properties'  => array(
-									'schema'     => array( 'type' => 'string' ),
-									'id'         => array( 'type' => 'string' ),
-									'blueprint'  => array( 'type' => 'object' ),
-									'provenance' => array( 'type' => 'object' ),
-								),
-							),
-							'artifact_files'     => array(
-								'type'        => 'array',
-								'description' => 'Optional text or base64 artifact files the browser should write into Playground.',
-								'items'       => array(
-									'type'       => 'object',
-									'required'   => array( 'path' ),
-									'properties' => array(
-										'path'        => array( 'type' => 'string' ),
-										'content'     => array( 'type' => 'string' ),
-										'content_base64' => array( 'type' => 'string' ),
-										'encoding'    => array( 'type' => 'string' ),
-										'mime_type'   => array( 'type' => 'string' ),
-										'kind'        => array( 'type' => 'string' ),
-										'description' => array( 'type' => 'string' ),
-									),
-								),
-							),
-						),
+						'properties' => $browser_session_properties,
 					),
 					'output_schema'       => $browser_session_schema,
 					'execute_callback'    => array( self::class, 'create_browser_playground_session' ),
@@ -705,37 +436,7 @@ final class WP_Codebox_Abilities {
 							array( 'type' => 'object', 'required' => array( 'goal' ) ),
 							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
-						'properties' => array(
-							'goal'               => $task_input_schema['properties']['goal'],
-							'task'               => array(
-								'type'        => 'string',
-								'description' => 'Legacy task description. Prefer goal for new product callers.',
-							),
-							'target'             => $task_input_schema['properties']['target'],
-							'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
-							'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
-							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
-							'policy'             => $task_input_schema['properties']['policy'],
-							'context'            => $task_input_schema['properties']['context'],
-							'agent'              => array( 'type' => 'string' ),
-							'provider'           => array( 'type' => 'string' ),
-							'model'              => array( 'type' => 'string' ),
-							'mode'               => array( 'type' => 'string' ),
-							'provider_plugin_paths' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-							'agent_bundles'      => self::agent_bundle_schema(),
-							'inherit'            => $inherit_schema,
-							'secret_env'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-							'sandbox_session_id' => $session_input['sandbox_session_id'],
-							'orchestrator'       => $session_input['orchestrator'],
-							'authorization'      => self::browser_session_authorization_schema(),
-							'playground'         => array( 'type' => 'object' ),
-							'browser_runner'     => array( 'type' => 'object' ),
-							'browser_plugins'    => array( 'type' => 'array' ),
-							'runtime'            => array( 'type' => 'object' ),
-							'blueprint'          => array( 'type' => 'object' ),
-							'site_blueprint_artifact' => array( 'type' => 'object' ),
-							'artifact_files'     => array( 'type' => 'array' ),
-						),
+						'properties' => $browser_contract_properties,
 					),
 					'output_schema'       => self::browser_materializer_contract_schema(),
 					'execute_callback'    => array( self::class, 'create_browser_materializer_contract' ),
@@ -756,36 +457,7 @@ final class WP_Codebox_Abilities {
 							array( 'type' => 'object', 'required' => array( 'goal' ) ),
 							array( 'type' => 'object', 'required' => array( 'task' ) ),
 						),
-						'properties' => array(
-							'goal'               => $task_input_schema['properties']['goal'],
-							'task'               => array(
-								'type'        => 'string',
-								'description' => 'Legacy task description. Prefer goal for new product callers.',
-							),
-							'target'             => $task_input_schema['properties']['target'],
-							'allowed_tools'      => $task_input_schema['properties']['allowed_tools'],
-							'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
-							'expected_artifacts' => $task_input_schema['properties']['expected_artifacts'],
-							'policy'             => $task_input_schema['properties']['policy'],
-							'context'            => $task_input_schema['properties']['context'],
-							'agent'              => array( 'type' => 'string' ),
-							'provider'           => array( 'type' => 'string' ),
-							'model'              => array( 'type' => 'string' ),
-							'mode'               => array( 'type' => 'string' ),
-							'provider_plugin_paths' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-							'agent_bundles'      => self::agent_bundle_schema(),
-							'inherit'            => $inherit_schema,
-							'secret_env'         => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
-							'sandbox_session_id' => $session_input['sandbox_session_id'],
-							'orchestrator'       => $session_input['orchestrator'],
-							'authorization'      => self::browser_session_authorization_schema(),
-							'playground'         => array( 'type' => 'object' ),
-							'browser_runner'     => array( 'type' => 'object' ),
-							'browser_plugins'    => array( 'type' => 'array' ),
-							'runtime'            => array( 'type' => 'object' ),
-							'blueprint'          => array( 'type' => 'object' ),
-							'site_blueprint_artifact' => array( 'type' => 'object' ),
-							'artifact_files'     => array( 'type' => 'array' ),
+						'properties' => $browser_contract_properties + array(
 							'phases'             => array(
 								'type'        => 'array',
 								'description' => 'Optional named browser task phases. Generic phases may carry wp-codebox/agent-fanout-request/v1 or wp-codebox/host-delegation-request/v1 in request/input for WP Codebox execution; materializer phases may override any primary session input through input.',
@@ -1089,30 +761,22 @@ final class WP_Codebox_Abilities {
 						'required'   => array( 'artifact_id', 'action' ),
 						'properties' => array_merge(
 							$artifact_id_schema,
+							self::artifact_apply_input_properties(
+								'Explicit sandbox file paths approved by the reviewer. Required for approve decisions.',
+								'Parent-site reviewer principal for decision and audit records.',
+								'Optional parent-control-plane target metadata passed through to approval adapters.'
+							),
 							array(
 								'action'         => array(
 									'type'        => 'string',
 									'description' => 'Review decision action.',
 									'enum'        => array( 'approve', 'reject', 'request-changes' ),
 								),
-								'approved_files' => array(
-									'type'        => 'array',
-									'description' => 'Explicit sandbox file paths approved by the reviewer. Required for approve decisions.',
-									'items'       => array( 'type' => 'string' ),
-								),
-								'approver'       => array(
-									'type'        => 'string',
-									'description' => 'Parent-site reviewer principal for decision and audit records.',
-								),
 								'reason'         => array(
 									'type'        => 'string',
 									'description' => 'Optional reviewer note for reject or request-changes decisions.',
 								),
 								'decided_at'     => array( 'type' => 'string' ),
-								'apply_target'   => array(
-									'type'        => 'object',
-									'description' => 'Optional parent-control-plane target metadata passed through to approval adapters.',
-								),
 								'context'        => array(
 									'type'        => 'object',
 									'description' => 'Opaque caller-owned context preserved on the normalized decision.',
@@ -1138,20 +802,10 @@ final class WP_Codebox_Abilities {
 						'required'   => array( 'artifact_id', 'approved_files' ),
 						'properties' => array_merge(
 							$artifact_id_schema,
-							array(
-								'approved_files' => array(
-									'type'        => 'array',
-									'description' => 'Explicit sandbox file paths approved by the parent-site reviewer. Preflight requires every changed file to be approved.',
-									'items'       => array( 'type' => 'string' ),
-								),
-								'approver'       => array(
-									'type'        => 'string',
-									'description' => 'Parent-site approver principal preserved in the returned payload.',
-								),
-								'apply_target'   => array(
-									'type'        => 'object',
-									'description' => 'Optional parent-control-plane target metadata preserved in the returned payload.',
-								),
+							self::artifact_apply_input_properties(
+								'Explicit sandbox file paths approved by the parent-site reviewer. Preflight requires every changed file to be approved.',
+								'Parent-site approver principal preserved in the returned payload.',
+								'Optional parent-control-plane target metadata preserved in the returned payload.'
 							)
 						),
 					),
@@ -1173,21 +827,7 @@ final class WP_Codebox_Abilities {
 						'required'   => array( 'artifact_id', 'approved_files' ),
 						'properties' => array_merge(
 							$artifact_id_schema,
-							array(
-								'approved_files' => array(
-									'type'        => 'array',
-									'description' => 'Explicit sandbox file paths approved by the parent-site reviewer.',
-									'items'       => array( 'type' => 'string' ),
-								),
-								'approver'       => array(
-									'type'        => 'string',
-									'description' => 'Parent-site approver principal for audit records.',
-								),
-								'apply_target'   => array(
-									'type'        => 'object',
-									'description' => 'Optional parent-control-plane target metadata consumed by the apply adapter.',
-								),
-							)
+							$artifact_apply_properties
 						),
 					),
 					'output_schema'       => array( 'type' => 'object' ),
@@ -1208,20 +848,8 @@ final class WP_Codebox_Abilities {
 						'required'   => array( 'artifact_id', 'approved_files' ),
 						'properties' => array_merge(
 							$artifact_id_schema,
+							$artifact_apply_properties,
 							array(
-								'approved_files' => array(
-									'type'        => 'array',
-									'description' => 'Explicit sandbox file paths approved by the parent-site reviewer.',
-									'items'       => array( 'type' => 'string' ),
-								),
-								'approver'       => array(
-									'type'        => 'string',
-									'description' => 'Parent-site approver principal for audit records.',
-								),
-								'apply_target'   => array(
-									'type'        => 'object',
-									'description' => 'Optional parent-control-plane target metadata consumed by the apply adapter.',
-								),
 								'summary'        => array(
 									'type'        => 'string',
 									'description' => 'Optional human-readable pending-action summary.',
