@@ -56,6 +56,7 @@
     "durable-artifact-preview-smoke": "tsx scripts/durable-artifact-preview-smoke.ts",
     "external-adapter-contract-smoke": "tsx scripts/external-adapter-contract-smoke.ts",
     "command-registry-smoke": "tsx scripts/command-registry-smoke.ts",
+    "command-args-smoke": "tsx scripts/command-args-smoke.ts",
     "host-tool-registry-smoke": "tsx scripts/host-tool-registry-smoke.ts",
     "host-command-tool-smoke": "tsx scripts/host-command-tool-smoke.ts",
     "sandbox-tool-policy-smoke": "tsx scripts/sandbox-tool-policy-smoke.ts",
