@@ -3,7 +3,7 @@ import { join } from "node:path"
 import type { ArtifactManifest } from "@automattic/wp-codebox-core"
 import type { ConsoleMessage, Request, Response } from "playwright"
 import type {
-  BrowserProbeArtifact,
+  BrowserArtifact,
   BrowserProbeCheckpointRecord,
   BrowserProbeErrorRecord,
   BrowserProbeMemoryArtifact,
@@ -175,7 +175,7 @@ export function browserProbeBenchMetrics(memoryArtifact?: BrowserProbeMemoryArti
   }
 }
 
-export function promoteBrowserMetricsToBenchResults(raw: string, probes: BrowserProbeArtifact[]): string {
+export function promoteBrowserMetricsToBenchResults(raw: string, probes: BrowserArtifact[]): string {
   const metrics = combinedBrowserBenchMetrics(probes)
   if (!metrics) {
     return raw
@@ -317,7 +317,7 @@ function isMissingFileError(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT"
 }
 
-function combinedBrowserBenchMetrics(probes: BrowserProbeArtifact[]): Record<string, number> | undefined {
+function combinedBrowserBenchMetrics(probes: BrowserArtifact[]): Record<string, number> | undefined {
   const metricSets = probes.map((probe) => probe.summary.metrics).filter((metrics): metrics is Record<string, number> => isRecord(metrics))
   if (metricSets.length === 0) {
     return undefined

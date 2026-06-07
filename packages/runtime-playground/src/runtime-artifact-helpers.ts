@@ -17,7 +17,7 @@ import type {
 } from "@automattic/wp-codebox-core"
 import { ArtifactBundleBuilder } from "./artifact-bundle-builder.js"
 import type { ArtifactRedactor } from "./artifacts.js"
-import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserProbeArtifact } from "./browser-artifacts.js"
+import { browserManifestFiles as browserArtifactManifestFiles, browserRedactionPaths, browserReviewSummary as browserArtifactReviewSummary, type BrowserArtifact } from "./browser-artifacts.js"
 import { pluginCheckManifestFiles, redactPluginCheckArtifacts, redactThemeCheckArtifacts, themeCheckManifestFiles, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
 import { captureMountDiffs, captureMountedFiles } from "./mounted-artifact-capture.js"
 
@@ -39,7 +39,7 @@ export async function collectPlaygroundArtifacts({
   themeChecks,
 }: {
   artifactRoot: string
-  browserProbes: BrowserProbeArtifact[]
+  browserProbes: BrowserArtifact[]
   commands: ExecutionResult[]
   createdAt: string
   events: LifecycleEvent[]
@@ -109,7 +109,7 @@ function observationManifestFiles(artifactRoot: string, observations: Observatio
   )
 }
 
-async function redactBrowserArtifacts(artifactRoot: string, browserProbes: BrowserProbeArtifact[], redactor: ArtifactRedactor): Promise<void> {
+async function redactBrowserArtifacts(artifactRoot: string, browserProbes: BrowserArtifact[], redactor: ArtifactRedactor): Promise<void> {
   for (const probe of browserProbes) {
     for (const path of browserRedactionPaths(probe)) {
       const absolutePath = join(artifactRoot, path)

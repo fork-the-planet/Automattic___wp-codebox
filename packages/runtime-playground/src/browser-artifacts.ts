@@ -2,7 +2,12 @@ import { join } from "node:path"
 import { artifactManifestFile, type ArtifactManifestFile, type ArtifactReviewBrowserSummary } from "@automattic/wp-codebox-core"
 import type { Request } from "playwright"
 
-export interface BrowserProbeArtifact {
+export type BrowserArtifact = BrowserProbeArtifact | BrowserActionsArtifact | BrowserEditorOpenArtifact | BrowserEditorActionsArtifact | BrowserScenarioArtifact | BrowserVisualCompareArtifact
+
+export type BrowserArtifactType = BrowserArtifact["artifactType"]
+
+export interface BrowserArtifactBase {
+  artifactType: "probe" | "actions" | "editor-open" | "editor-actions" | "scenario" | "visual-compare"
   requestedUrl: string
   url: string
   preview: BrowserProbePreviewRouting
@@ -11,78 +16,115 @@ export interface BrowserProbeArtifact {
   requestedPreviewOrigin?: string
   effectivePreviewOrigin?: string
   prePageScript?: BrowserProbeScriptMetadata
-  files: {
-    actions?: string
-    editorState?: string
-    steps?: string
-    checkpoints?: string
-    console?: string
-    errors?: string
-    html?: string
-    lifecycle?: string
-    memory?: string
-    network?: string
-    performance?: string
-    review?: string
-    screenshot?: string
-    domSnapshots?: string[]
-    sourceScreenshot?: string
-    candidateScreenshot?: string
-    diffScreenshot?: string
-    visualDiff?: string
-    visualExplanation?: string
-    summary: string
+  files: BrowserArtifactFiles
+  summary: BrowserArtifactSummary
+}
+
+export interface BrowserProbeArtifact extends BrowserArtifactBase {
+  artifactType: "probe"
+  files: BrowserArtifactFiles & { summary: string }
+}
+
+export interface BrowserActionsArtifact extends BrowserArtifactBase {
+  artifactType: "actions"
+  files: BrowserArtifactFiles & { summary: string }
+  summary: BrowserArtifactSummary & { actions: number; steps: number }
+}
+
+export interface BrowserEditorOpenArtifact extends BrowserArtifactBase {
+  artifactType: "editor-open"
+  files: BrowserArtifactFiles & { summary: string }
+}
+
+export interface BrowserEditorActionsArtifact extends BrowserArtifactBase {
+  artifactType: "editor-actions"
+  files: BrowserArtifactFiles & { summary: string }
+  summary: BrowserArtifactSummary & { actions: number; steps: number }
+}
+
+export interface BrowserScenarioArtifact extends BrowserArtifactBase {
+  artifactType: "scenario"
+  files: BrowserArtifactFiles & { summary: string }
+}
+
+export interface BrowserVisualCompareArtifact extends BrowserArtifactBase {
+  artifactType: "visual-compare"
+  files: BrowserArtifactFiles & { summary: string; sourceScreenshot: string; candidateScreenshot: string; diffScreenshot: string; visualDiff: string }
+  summary: BrowserArtifactSummary & { visualCompare: NonNullable<BrowserArtifactSummary["visualCompare"]> }
+}
+
+export interface BrowserArtifactFiles {
+  actions?: string
+  editorState?: string
+  steps?: string
+  checkpoints?: string
+  console?: string
+  errors?: string
+  html?: string
+  lifecycle?: string
+  memory?: string
+  network?: string
+  performance?: string
+  review?: string
+  screenshot?: string
+  domSnapshots?: string[]
+  sourceScreenshot?: string
+  candidateScreenshot?: string
+  diffScreenshot?: string
+  visualDiff?: string
+  visualExplanation?: string
+  summary: string
+}
+
+export interface BrowserArtifactSummary {
+  actions?: number
+  editor?: {
+    kind: string
+    postId?: number
+    postType?: string
+    title?: string
+    blockCount?: number
+    storesAvailable: boolean
   }
-  summary: {
-    actions?: number
-    editor?: {
-      kind: string
-      postId?: number
-      postType?: string
-      title?: string
-      blockCount?: number
-      storesAvailable: boolean
-    }
-    editorCanvas?: BrowserEditorCanvasProbeSummary
-    steps?: number
-    assertions?: BrowserAssertionsSummary
-    consoleMessages: number
-    errors: number
-    finalUrl: string
-    windowLocationOrigin?: string
-    htmlSnapshot: boolean
-    domSnapshots?: Array<{
-      screenshot: string
-      snapshot: string
-      step?: { index: number; name?: string; kind: string }
-      elementCount: number
-      capturedElements: number
-      truncated: boolean
-    }>
-    networkPolicy?: BrowserProbeNetworkPolicySummary
-    lifecycle?: BrowserProbeLifecycleSummary
-    memory?: BrowserProbeMemorySummary
-    metrics?: Record<string, number>
-    networkEvents: number
-    performance?: BrowserProbePerformanceSummary
-    progress?: BrowserProbeProgressSummary
-    review?: BrowserProbeReviewSummary
-    context?: BrowserProbeContextDetails
-    auth?: BrowserProbeAuthSummary
-    capabilities?: BrowserProbeCapabilityDiagnostics
-    replayability: BrowserProbeReplayability
-    screenshot: boolean
-    visualCompare?: {
-      status: string
-      mismatchRatio?: number
-      mismatchPixels?: number
-      totalPixels?: number
-      dimensionMismatch?: boolean
-      explanation?: string
-    }
-    scriptResult?: unknown
-    viewport: BrowserProbeViewport | null
+  editorCanvas?: BrowserEditorCanvasProbeSummary
+  steps?: number
+  assertions?: BrowserAssertionsSummary
+  consoleMessages: number
+  errors: number
+  finalUrl: string
+  windowLocationOrigin?: string
+  htmlSnapshot: boolean
+  domSnapshots?: Array<{
+    screenshot: string
+    snapshot: string
+    step?: { index: number; name?: string; kind: string }
+    elementCount: number
+    capturedElements: number
+    truncated: boolean
+  }>
+  networkPolicy?: BrowserProbeNetworkPolicySummary
+  lifecycle?: BrowserProbeLifecycleSummary
+  memory?: BrowserProbeMemorySummary
+  metrics?: Record<string, number>
+  networkEvents: number
+  performance?: BrowserProbePerformanceSummary
+  progress?: BrowserProbeProgressSummary
+  review?: BrowserProbeReviewSummary
+  context?: BrowserProbeContextDetails
+  auth?: BrowserProbeAuthSummary
+  capabilities?: BrowserProbeCapabilityDiagnostics
+  replayability: BrowserProbeReplayability
+  screenshot: boolean
+  visualCompare?: {
+    status: string
+    mismatchRatio?: number
+    mismatchPixels?: number
+    totalPixels?: number
+    dimensionMismatch?: boolean
+    explanation?: string
   }
+  scriptResult?: unknown
+  viewport: BrowserProbeViewport | null
 }
 
 export interface BrowserProbeAuthSummary {
@@ -643,7 +685,7 @@ export interface BrowserProbeNetworkSizes {
   responseHeadersSize: number
 }
 
-export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactReviewBrowserSummary | undefined {
+export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewBrowserSummary | undefined {
   if (probes.length === 0) {
     return undefined
   }
@@ -692,79 +734,65 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
   }
 }
 
-export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeArtifact[]): ArtifactManifestFile[] {
+export function browserManifestFiles(artifactRoot: string, probes: BrowserArtifact[]): ArtifactManifestFile[] {
   if (probes.length === 0) {
     return []
   }
 
-  const files = new Map<string, { kind: string; contentType: string }>()
+  const files = new Map<string, BrowserArtifactFileManifestEntry>()
   for (const probe of probes) {
-    if (probe.files.steps) {
-      files.set(probe.files.steps, { kind: "browser-steps", contentType: "application/x-ndjson" })
+    for (const file of browserArtifactFileEntries(probe)) {
+      files.set(file.path, file.manifest)
     }
-    if (probe.files.actions) {
-      files.set(probe.files.actions, { kind: "browser-actions", contentType: "application/x-ndjson" })
-    }
-    if (probe.files.editorState) {
-      files.set(probe.files.editorState, { kind: "browser-editor-state", contentType: "application/json" })
-    }
-    if (probe.files.console) {
-      files.set(probe.files.console, { kind: "browser-console", contentType: "application/x-ndjson" })
-    }
-    if (probe.files.checkpoints) {
-      files.set(probe.files.checkpoints, { kind: "browser-checkpoints", contentType: "application/x-ndjson" })
-    }
-    if (probe.files.errors) {
-      files.set(probe.files.errors, { kind: "browser-errors", contentType: "application/x-ndjson" })
-    }
-    if (probe.files.html) {
-      files.set(probe.files.html, { kind: "browser-html-snapshot", contentType: "text/html; charset=utf-8" })
-    }
-    if (probe.files.lifecycle) {
-      files.set(probe.files.lifecycle, { kind: "browser-lifecycle", contentType: "application/json" })
-    }
-    if (probe.files.memory) {
-      files.set(probe.files.memory, { kind: "browser-memory", contentType: "application/json" })
-    }
-    if (probe.files.network) {
-      files.set(probe.files.network, { kind: "browser-network", contentType: "application/x-ndjson" })
-    }
-    if (probe.files.performance) {
-      files.set(probe.files.performance, { kind: "browser-performance", contentType: "application/json" })
-    }
-    if (probe.files.review) {
-      files.set(probe.files.review, { kind: "browser-review", contentType: "application/json" })
-    }
-    if (probe.files.screenshot) {
-      files.set(probe.files.screenshot, { kind: "browser-screenshot", contentType: "image/png" })
-    }
-    if (probe.files.domSnapshots) {
-      for (const domSnapshot of probe.files.domSnapshots) {
-        files.set(domSnapshot, { kind: "browser-dom-snapshot", contentType: "application/json" })
-      }
-    }
-    if (probe.files.sourceScreenshot) {
-      files.set(probe.files.sourceScreenshot, { kind: "browser-visual-source-screenshot", contentType: "image/png" })
-    }
-    if (probe.files.candidateScreenshot) {
-      files.set(probe.files.candidateScreenshot, { kind: "browser-visual-candidate-screenshot", contentType: "image/png" })
-    }
-    if (probe.files.diffScreenshot) {
-      files.set(probe.files.diffScreenshot, { kind: "browser-visual-diff-screenshot", contentType: "image/png" })
-    }
-    if (probe.files.visualDiff) {
-      files.set(probe.files.visualDiff, { kind: "browser-visual-diff", contentType: "application/json" })
-    }
-    if (probe.files.visualExplanation) {
-      files.set(probe.files.visualExplanation, { kind: "browser-visual-explanation", contentType: "application/json" })
-    }
-    files.set(probe.files.summary, { kind: "browser-summary", contentType: "application/json" })
   }
 
   return [...files.entries()].map(([path, entry]) => artifactManifestFile(join(artifactRoot, path), entry.kind, entry.contentType))
 }
 
-export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.review, ...(probe.files.domSnapshots ?? []), probe.files.visualDiff, probe.files.visualExplanation, probe.files.summary]
-    .filter((path): path is string => typeof path === "string" && path.length > 0)
+export function browserRedactionPaths(probe: BrowserArtifact): string[] {
+  return browserArtifactFileEntries(probe)
+    .filter((file) => file.manifest.redact)
+    .map((file) => file.path)
+}
+
+interface BrowserArtifactFileManifestEntry {
+  kind: string
+  contentType: string
+  redact: boolean
+}
+
+const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, BrowserArtifactFileManifestEntry> = {
+  actions: { kind: "browser-actions", contentType: "application/x-ndjson", redact: true },
+  editorState: { kind: "browser-editor-state", contentType: "application/json", redact: true },
+  steps: { kind: "browser-steps", contentType: "application/x-ndjson", redact: true },
+  checkpoints: { kind: "browser-checkpoints", contentType: "application/x-ndjson", redact: true },
+  console: { kind: "browser-console", contentType: "application/x-ndjson", redact: true },
+  errors: { kind: "browser-errors", contentType: "application/x-ndjson", redact: true },
+  html: { kind: "browser-html-snapshot", contentType: "text/html; charset=utf-8", redact: true },
+  lifecycle: { kind: "browser-lifecycle", contentType: "application/json", redact: true },
+  memory: { kind: "browser-memory", contentType: "application/json", redact: true },
+  network: { kind: "browser-network", contentType: "application/x-ndjson", redact: true },
+  performance: { kind: "browser-performance", contentType: "application/json", redact: true },
+  review: { kind: "browser-review", contentType: "application/json", redact: true },
+  screenshot: { kind: "browser-screenshot", contentType: "image/png", redact: false },
+  domSnapshots: { kind: "browser-dom-snapshot", contentType: "application/json", redact: true },
+  sourceScreenshot: { kind: "browser-visual-source-screenshot", contentType: "image/png", redact: false },
+  candidateScreenshot: { kind: "browser-visual-candidate-screenshot", contentType: "image/png", redact: false },
+  diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
+  visualDiff: { kind: "browser-visual-diff", contentType: "application/json", redact: true },
+  visualExplanation: { kind: "browser-visual-explanation", contentType: "application/json", redact: true },
+  summary: { kind: "browser-summary", contentType: "application/json", redact: true },
+}
+
+function browserArtifactFileEntries(probe: BrowserArtifact): Array<{ path: string; manifest: BrowserArtifactFileManifestEntry }> {
+  const entries: Array<{ path: string; manifest: BrowserArtifactFileManifestEntry }> = []
+  for (const [key, manifest] of Object.entries(BROWSER_ARTIFACT_FILE_MANIFEST) as Array<[keyof BrowserArtifactFiles, BrowserArtifactFileManifestEntry]>) {
+    const value = probe.files[key]
+    if (Array.isArray(value)) {
+      entries.push(...value.map((path) => ({ path, manifest })))
+    } else if (typeof value === "string" && value.length > 0) {
+      entries.push({ path: value, manifest })
+    }
+  }
+  return entries
 }

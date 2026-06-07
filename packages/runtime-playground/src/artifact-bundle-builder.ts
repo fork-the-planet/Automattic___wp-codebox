@@ -30,7 +30,7 @@ import {
   type RuntimeInfo,
   type Snapshot,
 } from "@automattic/wp-codebox-core"
-import type { BrowserProbeArtifact } from "./browser-artifacts.js"
+import type { BrowserArtifact } from "./browser-artifacts.js"
 import {
   ArtifactRedactor,
   artifactContentDigest,
@@ -60,7 +60,7 @@ export interface ArtifactBundleBuilderSource {
   info(): Promise<RuntimeInfo>
   previewInfo(createdAt: string, previewHoldSeconds?: number): Promise<ArtifactPreview | undefined>
   browserReviewSummary(): ArtifactReviewBrowserSummary | undefined
-  browserArtifacts(): BrowserProbeArtifact[]
+  browserArtifacts(): BrowserArtifact[]
   captureMountedFiles(filesDirectory: string, redactor: ArtifactRedactor): Promise<CapturedMountFiles>
   captureMountDiffs(filesDirectory: string, redactor: ArtifactRedactor): Promise<MountDiffsResult>
   redactBrowserArtifacts(redactor: ArtifactRedactor): Promise<void>
@@ -684,7 +684,7 @@ async function buildDurableArtifactPreview({
 }: {
   artifactRoot: string
   createdAt: string
-  probes: BrowserProbeArtifact[]
+  probes: BrowserArtifact[]
   redactor: ArtifactRedactor
 }): Promise<DurableArtifactPreviewBuildResult | undefined> {
   const bundle = findBrowserArtifactBundleWithFiles(probes)
@@ -763,7 +763,7 @@ async function buildDurableArtifactPreview({
   return { preview, manifestFiles }
 }
 
-function findBrowserArtifactBundleWithFiles(probes: BrowserProbeArtifact[]): BrowserArtifactBundleWithFiles | undefined {
+function findBrowserArtifactBundleWithFiles(probes: BrowserArtifact[]): BrowserArtifactBundleWithFiles | undefined {
   for (const [index, probe] of probes.entries()) {
     const scriptResult = asRecord(probe.summary.scriptResult)
     const candidate = asRecord(scriptResult?.artifact_bundle) ?? asRecord(scriptResult?.artifactBundle) ?? scriptResult

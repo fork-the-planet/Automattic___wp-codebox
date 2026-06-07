@@ -5,7 +5,7 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
@@ -142,7 +142,7 @@ const BROWSER_PROBE_THROTTLE_PROFILES: Record<string, BrowserProbeThrottleProfil
 }
 
 export class BrowserCommandArtifactError extends Error {
-  constructor(message: string, readonly artifact: BrowserProbeArtifact) {
+  constructor(message: string, readonly artifact: BrowserArtifact) {
     super(message)
     this.name = "BrowserCommandArtifactError"
   }
@@ -583,6 +583,7 @@ async function runSingleBrowserProbeCommand({
     await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
 
     artifact = {
+      artifactType: "probe",
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
@@ -1050,7 +1051,7 @@ export async function runHtmlCaptureCommand(input: {
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = [...(input.spec.args ?? [])]
   if (!args.some((arg) => arg.startsWith("capture="))) {
     args.push("capture=html,console,errors,network")
@@ -1073,7 +1074,7 @@ export async function runEditorCanvasProbeCommand({
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const urlArg = argValue(args, "url")?.trim()
   if (!urlArg) {
@@ -1108,7 +1109,7 @@ export async function runEditorCanvasProbeCommand({
   const { chromium } = await import("playwright")
   const browser = await chromium.launch(process.env.WP_CODEBOX_BROWSER_CHANNEL ? { channel: process.env.WP_CODEBOX_BROWSER_CHANNEL } : undefined)
   const errors: BrowserProbeErrorRecord[] = []
-  let artifact: BrowserProbeArtifact | undefined
+  let artifact: BrowserArtifact | undefined
   let finalUrl = targetUrl
   let windowLocationOrigin: string | undefined
   let viewport: BrowserProbeViewport | null = null
@@ -1158,6 +1159,7 @@ export async function runEditorCanvasProbeCommand({
 
     const summary = probe.summary
     artifact = {
+      artifactType: "probe",
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
@@ -1216,6 +1218,7 @@ export async function runEditorCanvasProbeCommand({
         selectorSummary: emptyEditorCanvasSelectorSummary(selectorGroups),
       }
       artifact = {
+        artifactType: "probe",
         requestedUrl: targetUrl,
         url: targetUrl,
         preview,
@@ -1518,7 +1521,7 @@ export async function runBrowserActionsCommand({
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const steps = await browserInteractionStepsFromArgs(args)
   const initialUrl = argValue(args, "url")?.trim()
@@ -1594,7 +1597,7 @@ export async function runBrowserActionsCommand({
   let viewport: BrowserProbeViewport | null = null
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
-  let artifact: BrowserProbeArtifact | undefined
+  let artifact: BrowserArtifact | undefined
 
   try {
     const page = await browser.newPage()
@@ -1726,6 +1729,7 @@ export async function runBrowserActionsCommand({
 
     const assertions = browserAssertionsSummary(stepRecords)
     artifact = {
+      artifactType: "actions",
       requestedUrl,
       url: requestedUrl,
       preview,
@@ -1886,7 +1890,7 @@ export async function runBrowserScenarioCommand({
   runPlaygroundCommand?: (command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }) => Promise<PlaygroundRunResponse>
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const scenario = await browserScenarioFromArgs(args)
   const url = scenario.url?.trim() || argValue(args, "url")?.trim()
@@ -1931,7 +1935,7 @@ export async function runBrowserScenarioCommand({
     try {
       probeResult = await runBrowserProbeCommand({ artifactRoot, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-probe", args: probeArgs } })
     } catch (error) {
-      if (isBrowserCommandArtifactError(error)) {
+      if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "probe") {
         probeResult = { artifact: error.artifact, output: "" }
       }
       pendingError = error instanceof Error ? error : new Error(String(error))
@@ -1955,7 +1959,7 @@ export async function runBrowserScenarioCommand({
     try {
       actionsResult = await runBrowserActionsCommand({ artifactRoot, runtimeSpec, runPlaygroundCommand, server, spec: { ...spec, command: "wordpress.browser-actions", args: actionsArgs } })
     } catch (error) {
-      if (isBrowserCommandArtifactError(error)) {
+      if (isBrowserCommandArtifactError(error) && error.artifact.artifactType === "actions") {
         actionsResult = { artifact: error.artifact, output: "" }
       }
       pendingError = error instanceof Error ? error : new Error(String(error))
@@ -1998,8 +2002,9 @@ export async function runBrowserScenarioCommand({
   }
   await writeFile(scenarioSummaryPath, `${JSON.stringify(scenarioSummary, null, 2)}\n`)
 
-  const artifact: BrowserProbeArtifact = {
+  const artifact: BrowserArtifact = {
     ...primaryArtifact,
+    artifactType: "scenario",
     files: {
       ...primaryArtifact.files,
       summary: "files/browser/scenario-summary.json",
@@ -2138,7 +2143,7 @@ export async function runEditorOpenCommand({
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const target = editorOpenTargetFromArgs(args)
   const capture = new Set(commaListArg(args, "capture"))
@@ -2181,7 +2186,7 @@ export async function runEditorOpenCommand({
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
   let pendingError: Error | undefined
-  let artifact: BrowserProbeArtifact | undefined
+  let artifact: BrowserArtifact | undefined
 
   try {
     const page = await browser.newPage()
@@ -2249,6 +2254,7 @@ export async function runEditorOpenCommand({
 
     const editorSummary = editorState ? summarizeEditorState(target, editorState) : undefined
     artifact = {
+      artifactType: "editor-open",
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
@@ -2326,7 +2332,7 @@ export async function runEditorActionsCommand({
   runtimeSpec: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const target = editorOpenTargetFromArgs(args)
   const actionSteps = await editorActionStepsFromArgs(args)
@@ -2373,7 +2379,7 @@ export async function runEditorActionsCommand({
   let viewport: BrowserProbeViewport | null = null
   let editorState: EditorStateSnapshot | undefined
   let pendingError: Error | undefined
-  let artifact: BrowserProbeArtifact | undefined
+  let artifact: BrowserArtifact | undefined
 
   try {
     const page = await browser.newPage()
@@ -2464,6 +2470,7 @@ export async function runEditorActionsCommand({
 
     const editorSummary = editorState ? summarizeEditorState(target, editorState) : undefined
     artifact = {
+      artifactType: "editor-actions",
       requestedUrl: targetUrl,
       url: targetUrl,
       preview,
@@ -2544,7 +2551,7 @@ export async function runVisualCompareCommand({
   runtimeSpec?: RuntimeCreateSpec
   server: PlaygroundCliServer
   spec: ExecutionSpec
-}): Promise<{ artifact: BrowserProbeArtifact; output: string }> {
+}): Promise<{ artifact: BrowserArtifact; output: string }> {
   const args = spec.args ?? []
   const sourceUrl = argValue(args, "source-url")?.trim()
   const candidateUrl = argValue(args, "candidate-url")?.trim()
@@ -2682,7 +2689,8 @@ export async function runVisualCompareCommand({
   }
   await writeFile(summaryPath, summaryJson)
 
-  const artifact: BrowserProbeArtifact = {
+  const artifact: BrowserArtifact = {
+    artifactType: "visual-compare",
     requestedUrl: sourceTargetUrl ?? sourceScreenshot ?? sourceLabel,
     url: candidateTargetUrl ?? candidateScreenshot ?? candidateLabel,
     preview,
@@ -3260,7 +3268,7 @@ async function captureEditorState(page: import("playwright").Page, target: Retur
   }
 }
 
-function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs>, state: EditorStateSnapshot): NonNullable<BrowserProbeArtifact["summary"]["editor"]> {
+function summarizeEditorState(target: ReturnType<typeof editorOpenTargetFromArgs>, state: EditorStateSnapshot): NonNullable<BrowserArtifactSummary["editor"]> {
   return {
     kind: target.kind,
     ...(typeof state.post?.id === "number" ? { postId: state.post.id } : {}),
