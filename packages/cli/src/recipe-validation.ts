@@ -1092,7 +1092,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     const capture = recipeStepArgValue(step.args ?? [], "capture")
     if (capture) {
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["steps", "actions", "console", "errors", "html", "network", "screenshot"].includes(item)) {
+        if (!["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"].includes(item)) {
           addIssue("invalid-capture", `${path}.args`, `wordpress.browser-actions capture does not support: ${item}`)
         }
       }
@@ -1152,7 +1152,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     const capture = recipeStepArgValue(step.args ?? [], "capture")
     if (capture) {
       for (const item of capture.split(",").map((value) => value.trim()).filter(Boolean)) {
-        if (!["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot"].includes(item)) {
+        if (!["steps", "actions", "console", "errors", "html", "network", "performance", "memory", "screenshot", "dom-snapshot"].includes(item)) {
           addIssue("invalid-capture", `${path}.args`, `wordpress.browser-scenario capture does not support: ${item}`)
         }
       }

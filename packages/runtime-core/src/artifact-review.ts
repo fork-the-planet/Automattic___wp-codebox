@@ -115,12 +115,14 @@ export interface ArtifactReviewBrowserSummary {
     performance?: string
     review?: string
     screenshot?: string
+    domSnapshots?: string[]
     visualCompare?: {
       status: string
       mismatchRatio?: number
       mismatchPixels?: number
       totalPixels?: number
       dimensionMismatch?: boolean
+      explanation?: string
     }
     console?: string
     errorsFile?: string
