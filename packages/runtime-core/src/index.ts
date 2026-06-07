@@ -146,6 +146,13 @@ export interface ArtifactReviewBrowserSummary {
     memory?: string
     performance?: string
     screenshot?: string
+    visualCompare?: {
+      status: string
+      mismatchRatio?: number
+      mismatchPixels?: number
+      totalPixels?: number
+      dimensionMismatch?: boolean
+    }
     console?: string
     errorsFile?: string
     actions?: string

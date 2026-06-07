@@ -23,6 +23,10 @@ export interface BrowserProbeArtifact {
     network?: string
     performance?: string
     screenshot?: string
+    sourceScreenshot?: string
+    candidateScreenshot?: string
+    diffScreenshot?: string
+    visualDiff?: string
     summary: string
   }
   summary: {
@@ -53,6 +57,13 @@ export interface BrowserProbeArtifact {
     capabilities?: BrowserProbeCapabilityDiagnostics
     replayability: BrowserProbeReplayability
     screenshot: boolean
+    visualCompare?: {
+      status: string
+      mismatchRatio?: number
+      mismatchPixels?: number
+      totalPixels?: number
+      dimensionMismatch?: boolean
+    }
     scriptResult?: unknown
     viewport: BrowserProbeViewport | null
   }
@@ -522,6 +533,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       stepCount: probe.summary.steps,
       ...(probe.summary.assertions ? { assertions: { total: probe.summary.assertions.total, passed: probe.summary.assertions.passed, failed: probe.summary.assertions.failed } } : {}),
       performance: probe.files.performance,
+      visualCompare: probe.summary.visualCompare,
       summaryFile: probe.files.summary,
     })),
   }
@@ -570,6 +582,18 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     if (probe.files.screenshot) {
       files.set(probe.files.screenshot, { kind: "browser-screenshot", contentType: "image/png" })
     }
+    if (probe.files.sourceScreenshot) {
+      files.set(probe.files.sourceScreenshot, { kind: "browser-visual-source-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.candidateScreenshot) {
+      files.set(probe.files.candidateScreenshot, { kind: "browser-visual-candidate-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.diffScreenshot) {
+      files.set(probe.files.diffScreenshot, { kind: "browser-visual-diff-screenshot", contentType: "image/png" })
+    }
+    if (probe.files.visualDiff) {
+      files.set(probe.files.visualDiff, { kind: "browser-visual-diff", contentType: "application/json" })
+    }
     files.set(probe.files.summary, { kind: "browser-summary", contentType: "application/json" })
   }
 
@@ -577,6 +601,6 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.summary]
+  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.visualDiff, probe.files.summary]
     .filter((path): path is string => typeof path === "string" && path.length > 0)
 }
