@@ -56,7 +56,7 @@ await writeFile(recipePath, `${JSON.stringify({
             { kind: "screenshot", name: "after-apply" },
           ])}`,
           "viewport=390x844",
-          "capture=steps,console,errors,html,network,screenshot",
+          "capture=steps,console,errors,html,network,screenshot,dom-snapshot",
         ],
       },
     ],
@@ -83,6 +83,7 @@ const consolePath = join(artifactDirectory, "files", "browser", "console.jsonl")
 const htmlPath = join(artifactDirectory, "files", "browser", "snapshot.html")
 const summaryPath = join(artifactDirectory, "files", "browser", "action-summary.json")
 const namedScreenshotPath = join(artifactDirectory, "files", "browser", "screenshot-after-apply.png")
+const namedDomSnapshotPath = join(artifactDirectory, "files", "browser", "dom-snapshot-after-apply.json")
 const manifestPath = join(artifactDirectory, "manifest.json")
 const reviewPath = join(artifactDirectory, "files", "review.json")
 
@@ -91,6 +92,7 @@ assert.equal(existsSync(consolePath), true, "console.jsonl should be captured")
 assert.equal(existsSync(htmlPath), true, "snapshot.html should be captured")
 assert.equal(existsSync(summaryPath), true, "action-summary.json should be captured")
 assert.equal(existsSync(namedScreenshotPath), true, "named screenshot should be captured")
+assert.equal(existsSync(namedDomSnapshotPath), true, "named screenshot DOM snapshot should be captured")
 
 const stepsLog = await readFile(stepsPath, "utf8")
 const consoleLog = await readFile(consolePath, "utf8")
@@ -107,15 +109,16 @@ assert.match(htmlSnapshot, /Hello Runtime/)
 const summary = JSON.parse(await readFile(summaryPath, "utf8")) as {
   schema: string
   finalUrl: string
-  files: { steps?: string; html?: string; screenshot?: string; summary: string }
+  files: { steps?: string; html?: string; screenshot?: string; domSnapshots?: string[]; summary: string }
   viewport: { width: number; height: number; userAgent: string }
   assertions?: { total: number; passed: number; failed: number; results: Array<{ kind: string; passed: boolean }> }
-  summary: { steps: number; actions: number; replayability: string; htmlSnapshot: boolean; assertions?: { total: number; passed: number; failed: number } }
+  summary: { steps: number; actions: number; replayability: string; htmlSnapshot: boolean; domSnapshots?: Array<{ screenshot: string; snapshot: string; step?: { name?: string }; capturedElements: number; truncated: boolean }>; assertions?: { total: number; passed: number; failed: number } }
 }
 assert.equal(summary.schema, "wp-codebox/browser-actions/v1")
 assert.equal(summary.finalUrl.endsWith("/"), true, "summary should include final URL")
 assert.equal(summary.files.steps, "files/browser/steps.jsonl")
 assert.equal(summary.files.html, "files/browser/snapshot.html")
+assert.ok(summary.files.domSnapshots?.includes("files/browser/dom-snapshot-after-apply.json"), "summary files should include the named screenshot DOM snapshot")
 assert.equal(summary.files.summary, "files/browser/action-summary.json")
 assert.equal(summary.viewport.width, 390, "summary should record requested viewport width")
 assert.equal(summary.viewport.height, 844, "summary should record requested viewport height")
@@ -123,6 +126,13 @@ assert.ok(summary.viewport.userAgent.length > 0, "summary should include user ag
 assert.equal(summary.summary.steps, 8)
 assert.equal(summary.summary.replayability, "artifact-backed")
 assert.equal(summary.summary.htmlSnapshot, true)
+assert.ok(summary.summary.domSnapshots?.some((snapshot) => snapshot.screenshot === "files/browser/screenshot-after-apply.png" && snapshot.step?.name === "after-apply" && snapshot.capturedElements > 0), "summary should describe the named screenshot DOM snapshot")
+
+const namedDomSnapshot = JSON.parse(await readFile(namedDomSnapshotPath, "utf8")) as { schema: string; screenshot: string; step?: { name?: string }; summary: { capturedElements: number; truncated: boolean } }
+assert.equal(namedDomSnapshot.schema, "wp-codebox/browser-dom-snapshot/v1")
+assert.equal(namedDomSnapshot.screenshot, "files/browser/screenshot-after-apply.png")
+assert.equal(namedDomSnapshot.step?.name, "after-apply")
+assert.ok(namedDomSnapshot.summary.capturedElements > 0, "DOM snapshot should include visible element context")
 
 // Machine-readable assertions: an expect + an evaluate(assert), both passing.
 assert.ok(summary.assertions, "summary should include an assertions block")
@@ -136,6 +146,7 @@ assert.equal(summary.summary.assertions?.passed, 2)
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files: Array<{ path: string; kind: string }> }
 assert.ok(manifest.files.some((file) => file.path === "files/browser/steps.jsonl" && file.kind === "browser-steps"))
+assert.ok(manifest.files.some((file) => file.path === "files/browser/dom-snapshot-after-apply.json" && file.kind === "browser-dom-snapshot"))
 assert.ok(manifest.files.some((file) => file.path === "files/browser/action-summary.json" && file.kind === "browser-summary"))
 
 const review = JSON.parse(await readFile(reviewPath, "utf8")) as { browser?: { probes?: Array<{ steps?: string; stepCount?: number; html?: string; summaryFile?: string; viewport?: { width: number; height: number }; assertions?: { total: number; passed: number; failed: number } }> } }

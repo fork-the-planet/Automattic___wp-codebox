@@ -4,7 +4,7 @@ import { dirname, join, relative } from "node:path"
 import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
-import { browserInteractionStepsFromArgs, durationStringMs } from "./browser-actions.js"
+import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
 import type { BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkPolicySummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewMode, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
@@ -48,6 +48,19 @@ interface VisualCompareDomSnapshot {
   elementCount: number
   capturedElements: VisualCompareDomElementSnapshot[]
   truncated: boolean
+}
+
+interface VisualCompareDomSnapshotArtifact {
+  schema: "wp-codebox/browser-dom-snapshot/v1"
+  command: "wordpress.browser-actions" | "wordpress.visual-compare"
+  screenshot: string
+  step?: { index: number; name?: string; kind: string }
+  finalUrl: string
+  viewport: BrowserProbeViewport | null
+  capturedAt: string
+  limits: { maxElements: number }
+  summary: { elementCount: number; capturedElements: number; truncated: boolean }
+  snapshot: VisualCompareDomSnapshot
 }
 
 interface VisualCompareElementDelta {
@@ -1532,6 +1545,7 @@ export async function runBrowserActionsCommand({
     capture.add("network")
     capture.add("html")
     capture.add("screenshot")
+    capture.add("dom-snapshot")
   }
   // Back-compat: "actions" remains an alias for the per-step timeline capture.
   if (capture.has("actions")) {
@@ -1540,8 +1554,8 @@ export async function runBrowserActionsCommand({
   }
 
   for (const item of capture) {
-    if (!["steps", "console", "errors", "html", "network", "screenshot"].includes(item)) {
-      throw new Error(`wordpress.browser-actions capture supports steps, console, errors, html, network, screenshot: ${item}`)
+    if (!["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"].includes(item)) {
+      throw new Error(`wordpress.browser-actions capture supports steps, console, errors, html, network, screenshot, dom-snapshot: ${item}`)
     }
   }
 
@@ -1549,6 +1563,7 @@ export async function runBrowserActionsCommand({
   const totalTimeoutMs = durationArg(args, "timeout", BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS)
   const requestedViewport = viewportArg(args, "viewport")
   const authRequest = browserAuthRequest(args)
+  const maxDomSnapshotElements = positiveIntegerArg(args, "max-dom-snapshot-elements", 160)
 
   const browserDirectory = join(artifactRoot, "files", "browser")
   await mkdir(browserDirectory, { recursive: true })
@@ -1564,6 +1579,7 @@ export async function runBrowserActionsCommand({
   const htmlPath = join(browserDirectory, "snapshot.html")
   const networkPath = join(browserDirectory, "network.jsonl")
   const screenshotPath = join(browserDirectory, "screenshot.png")
+  const domSnapshotPath = join(browserDirectory, "dom-snapshot.json")
   const summaryPath = join(browserDirectory, "action-summary.json")
   const startedAt = now()
   const startedAtMs = Date.now()
@@ -1574,6 +1590,7 @@ export async function runBrowserActionsCommand({
   let finalUrl = requestedUrl
   let htmlSha256: string | undefined
   let screenshotSha256: string | undefined
+  const domSnapshots: Array<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> = []
   let viewport: BrowserProbeViewport | null = null
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
@@ -1625,6 +1642,17 @@ export async function runBrowserActionsCommand({
         if (outcome.screenshot && capture.has("screenshot") && outcome.screenshotIsDefault) {
           screenshotSha256 = await fileSha256(screenshotPath)
         }
+        if (outcome.screenshot && capture.has("dom-snapshot")) {
+          domSnapshots.push(await captureBrowserActionDomSnapshot({
+            browserDirectory,
+            finalUrl,
+            maxElements: maxDomSnapshotElements,
+            page,
+            screenshotRef: outcome.screenshot,
+            step: { index, kind: step.kind, ...(typeof step.name === "string" ? { name: step.name } : {}) },
+            viewport,
+          }))
+        }
         // A failed expect/evaluate assertion is a clean step failure: no silent partial success.
         if (outcome.assertion && !outcome.assertion.passed) {
           stepRecords.push(browserStepRecord(index, step, "failed", recordStartedAt, recordStartedAtMs, finalUrl, outcome))
@@ -1659,6 +1687,17 @@ export async function runBrowserActionsCommand({
       try {
         await page.screenshot({ path: screenshotPath, fullPage: true })
         screenshotSha256 = await fileSha256(screenshotPath)
+        if (capture.has("dom-snapshot")) {
+          domSnapshots.push(await captureBrowserActionDomSnapshot({
+            outputPath: domSnapshotPath,
+            finalUrl,
+            maxElements: maxDomSnapshotElements,
+            page,
+            screenshotRef: "files/browser/screenshot.png",
+            snapshotRef: "files/browser/dom-snapshot.json",
+            viewport,
+          }))
+        }
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
@@ -1697,6 +1736,7 @@ export async function runBrowserActionsCommand({
         ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
         ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
+        ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         summary: "files/browser/action-summary.json",
       },
       summary: {
@@ -1707,6 +1747,7 @@ export async function runBrowserActionsCommand({
         errors: errors.length,
         finalUrl,
         htmlSnapshot: capture.has("html"),
+        ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         networkEvents: network.length,
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -1731,6 +1772,9 @@ export async function runBrowserActionsCommand({
         ...(htmlSha256 ? { html: { algorithm: "sha256", value: htmlSha256 } } : {}),
         ...(screenshotSha256 ? { screenshot: { algorithm: "sha256", value: screenshotSha256 } } : {}),
       },
+      limits: {
+        maxDomSnapshotElements,
+      },
       viewport,
       summary: artifact.summary,
     }, null, 2)}\n`)
@@ -1751,6 +1795,58 @@ export async function runBrowserActionsCommand({
       summary: artifact.summary,
       steps: stepRecords,
     }, null, 2)}\n`,
+  }
+}
+
+async function captureBrowserActionDomSnapshot({
+  browserDirectory,
+  finalUrl,
+  maxElements,
+  outputPath,
+  page,
+  screenshotRef,
+  snapshotRef,
+  step,
+  viewport,
+}: {
+  browserDirectory?: string
+  finalUrl: string
+  maxElements: number
+  outputPath?: string
+  page: Page
+  screenshotRef: string
+  snapshotRef?: string
+  step?: { index: number; name?: string; kind: string }
+  viewport: BrowserProbeViewport | null
+}): Promise<{ screenshot: string; snapshot: string; step?: { index: number; name?: string; kind: string }; elementCount: number; capturedElements: number; truncated: boolean }> {
+  const sanitizedName = step?.name ? sanitizeScreenshotName(step.name) : undefined
+  const relativeSnapshotRef = snapshotRef ?? `files/browser/dom-snapshot-${sanitizedName || `step-${step?.index ?? 0}`}.json`
+  const snapshotPath = outputPath ?? join(browserDirectory ?? dirname(relativeSnapshotRef), relativeSnapshotRef.replace(/^files\/browser\//, ""))
+  const snapshot = await captureVisualCompareDomSnapshot(page, maxElements)
+  const artifact: VisualCompareDomSnapshotArtifact = {
+    schema: "wp-codebox/browser-dom-snapshot/v1",
+    command: "wordpress.browser-actions",
+    screenshot: screenshotRef,
+    ...(step ? { step } : {}),
+    finalUrl,
+    viewport,
+    capturedAt: now(),
+    limits: { maxElements },
+    summary: {
+      elementCount: snapshot.elementCount,
+      capturedElements: snapshot.capturedElements.length,
+      truncated: snapshot.truncated,
+    },
+    snapshot,
+  }
+  await writeFile(snapshotPath, `${JSON.stringify(artifact, null, 2)}\n`)
+  return {
+    screenshot: screenshotRef,
+    snapshot: relativeSnapshotRef,
+    ...(step ? { step } : {}),
+    elementCount: snapshot.elementCount,
+    capturedElements: snapshot.capturedElements.length,
+    truncated: snapshot.truncated,
   }
 }
 
@@ -1952,7 +2048,7 @@ async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioI
 function browserScenarioCaptures(scenario: BrowserScenarioInput, args: string[]): string[] {
   const raw = scenario.captures ?? scenario.capture ?? commaListArg(args, "capture")
   const captures = Array.isArray(raw) ? raw.map(String).filter(Boolean) : []
-  return captures.length > 0 ? captures : ["steps", "console", "errors", "html", "network", "screenshot"]
+  return captures.length > 0 ? captures : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
 }
 
 function browserScenarioProbeCaptures(captures: string[], actionsWillRun: boolean): string[] {
@@ -1962,9 +2058,9 @@ function browserScenarioProbeCaptures(captures: string[], actionsWillRun: boolea
 }
 
 function browserScenarioActionCaptures(captures: string[]): string[] {
-  const supported = new Set(["steps", "actions", "console", "errors", "html", "network", "screenshot"])
+  const supported = new Set(["steps", "actions", "console", "errors", "html", "network", "screenshot", "dom-snapshot"])
   const selected = captures.filter((capture) => supported.has(capture))
-  return selected.length > 0 ? selected : ["steps", "console", "errors", "html", "network", "screenshot"]
+  return selected.length > 0 ? selected : ["steps", "console", "errors", "html", "network", "screenshot", "dom-snapshot"]
 }
 
 function browserScenarioSteps(scenario: BrowserScenarioInput, args: string[]): Array<Record<string, unknown>> {
@@ -2454,6 +2550,8 @@ export async function runVisualCompareCommand({
   const candidateUrl = argValue(args, "candidate-url")?.trim()
   const sourceScreenshot = argValue(args, "source-screenshot")?.trim()
   const candidateScreenshot = argValue(args, "candidate-screenshot")?.trim()
+  const sourceDomSnapshotRef = argValue(args, "source-dom-snapshot")?.trim()
+  const candidateDomSnapshotRef = argValue(args, "candidate-dom-snapshot")?.trim()
   const sourceLabel = argValue(args, "source-label")?.trim() || "source"
   const candidateLabel = argValue(args, "candidate-label")?.trim() || "candidate"
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
@@ -2471,6 +2569,9 @@ export async function runVisualCompareCommand({
   }
   if (Boolean(sourceUrl) !== Boolean(candidateUrl) || Boolean(sourceScreenshot) !== Boolean(candidateScreenshot)) {
     throw new Error("wordpress.visual-compare requires source-url and candidate-url, or source-screenshot and candidate-screenshot")
+  }
+  if (Boolean(sourceDomSnapshotRef) !== Boolean(candidateDomSnapshotRef)) {
+    throw new Error("wordpress.visual-compare requires both source-dom-snapshot and candidate-dom-snapshot when DOM snapshots are provided")
   }
   if (!sourceUrl && !sourceScreenshot) {
     throw new Error("wordpress.visual-compare requires source-url/candidate-url or source-screenshot/candidate-screenshot")
@@ -2512,6 +2613,15 @@ export async function runVisualCompareCommand({
   } else if (sourceScreenshot && candidateScreenshot) {
     await writeFile(sourcePath, await readFile(await resolveVisualCompareScreenshotPath(sourceScreenshot, artifactRoot)))
     await writeFile(candidatePath, await readFile(await resolveVisualCompareScreenshotPath(candidateScreenshot, artifactRoot)))
+    if (sourceDomSnapshotRef && candidateDomSnapshotRef) {
+      const sourceArtifact = await readVisualCompareDomSnapshotArtifact(sourceDomSnapshotRef, artifactRoot)
+      const candidateArtifact = await readVisualCompareDomSnapshotArtifact(candidateDomSnapshotRef, artifactRoot)
+      sourceDomSnapshot = sourceArtifact.snapshot
+      candidateDomSnapshot = candidateArtifact.snapshot
+      finalSourceUrl = sourceArtifact.finalUrl || sourceArtifact.snapshot.url
+      finalCandidateUrl = candidateArtifact.finalUrl || candidateArtifact.snapshot.url
+      viewport = candidateArtifact.viewport ?? sourceArtifact.viewport ?? viewport
+    }
   }
 
   const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
@@ -2541,16 +2651,18 @@ export async function runVisualCompareCommand({
       label: sourceLabel,
       ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
       ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
+      ...(sourceDomSnapshotRef ? { domSnapshot: sourceDomSnapshotRef } : {}),
     },
     candidate: {
       label: candidateLabel,
       ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
       ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
+      ...(candidateDomSnapshotRef ? { domSnapshot: candidateDomSnapshotRef } : {}),
     },
     options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates },
     limitations: explanation
       ? explanation.limitations
-      : ["visual explanations require source-url and candidate-url targets so WP Codebox can capture DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
+      : ["visual explanations require source-url/candidate-url targets or source-dom-snapshot/candidate-dom-snapshot sidecars so WP Codebox can include DOM and computed style context; screenshot-only comparisons include pixel evidence only"],
     preview,
     viewport,
     startedAt,
@@ -2603,6 +2715,17 @@ export async function runVisualCompareCommand({
 }
 
 async function resolveVisualCompareScreenshotPath(requestedPath: string, artifactRoot: string): Promise<string> {
+  return resolveVisualCompareArtifactPath(requestedPath, artifactRoot, "Visual compare screenshot")
+}
+
+async function readVisualCompareDomSnapshotArtifact(requestedPath: string, artifactRoot: string): Promise<VisualCompareDomSnapshotArtifact> {
+  const path = await resolveVisualCompareArtifactPath(requestedPath, artifactRoot, "Visual compare DOM snapshot")
+  const parsed = JSON.parse(await readFile(path, "utf8")) as unknown
+  const artifact = normalizeVisualCompareDomSnapshotArtifact(parsed, requestedPath)
+  return artifact
+}
+
+async function resolveVisualCompareArtifactPath(requestedPath: string, artifactRoot: string, label: string): Promise<string> {
   try {
     await access(requestedPath)
     return requestedPath
@@ -2617,8 +2740,27 @@ async function resolveVisualCompareScreenshotPath(requestedPath: string, artifac
       return runtimePath
     }
 
-    throw new Error(`Visual compare screenshot not found: ${requestedPath}`)
+    throw new Error(`${label} not found: ${requestedPath}`)
   }
+}
+
+function normalizeVisualCompareDomSnapshotArtifact(input: unknown, requestedPath: string): VisualCompareDomSnapshotArtifact {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`Visual compare DOM snapshot must be a JSON object: ${requestedPath}`)
+  }
+  const record = input as Partial<VisualCompareDomSnapshotArtifact> & { snapshot?: unknown }
+  if (record.schema !== "wp-codebox/browser-dom-snapshot/v1") {
+    throw new Error(`Visual compare DOM snapshot has unsupported schema: ${requestedPath}`)
+  }
+  const snapshot = record.snapshot
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new Error(`Visual compare DOM snapshot is missing snapshot object: ${requestedPath}`)
+  }
+  const typedSnapshot = snapshot as Partial<VisualCompareDomSnapshot>
+  if (!Array.isArray(typedSnapshot.capturedElements)) {
+    throw new Error(`Visual compare DOM snapshot capturedElements must be an array: ${requestedPath}`)
+  }
+  return record as VisualCompareDomSnapshotArtifact
 }
 
 async function captureVisualCompareUrl(page: Page, targetUrl: string, outputPath: string, waitFor: string, durationMs: number, fullPage: boolean, maxExplanationCandidates: number): Promise<{ finalUrl: string; domSnapshot: VisualCompareDomSnapshot }> {
@@ -2779,7 +2921,7 @@ function createVisualCompareExplanation({
 
   const maxElements = limits.maxElements
   const limitations = [
-    "visual explanations are heuristic evidence generated from URL target DOM snapshots and computed styles; pixel screenshots remain the source of visual truth",
+    "visual explanations are heuristic evidence generated from DOM snapshots and computed styles; pixel screenshots remain the source of visual truth",
     "elements are matched by deterministic CSS-like paths, so large structural moves can appear as added and removed elements",
   ]
   if (source.truncated || candidate.truncated || changed.length > maxElements || added.length > maxElements || removed.length > maxElements) {

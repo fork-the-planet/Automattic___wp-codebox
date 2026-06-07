@@ -25,6 +25,7 @@ export interface BrowserProbeArtifact {
     performance?: string
     review?: string
     screenshot?: string
+    domSnapshots?: string[]
     sourceScreenshot?: string
     candidateScreenshot?: string
     diffScreenshot?: string
@@ -50,6 +51,14 @@ export interface BrowserProbeArtifact {
     finalUrl: string
     windowLocationOrigin?: string
     htmlSnapshot: boolean
+    domSnapshots?: Array<{
+      screenshot: string
+      snapshot: string
+      step?: { index: number; name?: string; kind: string }
+      elementCount: number
+      capturedElements: number
+      truncated: boolean
+    }>
     networkPolicy?: BrowserProbeNetworkPolicySummary
     lifecycle?: BrowserProbeLifecycleSummary
     memory?: BrowserProbeMemorySummary
@@ -652,6 +661,7 @@ export function browserReviewSummary(probes: BrowserProbeArtifact[]): ArtifactRe
       network: probe.files.network,
       networkEvents: probe.summary.networkEvents,
       screenshot: probe.files.screenshot,
+      domSnapshots: probe.files.domSnapshots,
       console: probe.files.console,
       checkpoints: probe.files.checkpoints,
       errorsFile: probe.files.errors,
@@ -716,6 +726,11 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
     if (probe.files.screenshot) {
       files.set(probe.files.screenshot, { kind: "browser-screenshot", contentType: "image/png" })
     }
+    if (probe.files.domSnapshots) {
+      for (const domSnapshot of probe.files.domSnapshots) {
+        files.set(domSnapshot, { kind: "browser-dom-snapshot", contentType: "application/json" })
+      }
+    }
     if (probe.files.sourceScreenshot) {
       files.set(probe.files.sourceScreenshot, { kind: "browser-visual-source-screenshot", contentType: "image/png" })
     }
@@ -738,6 +753,6 @@ export function browserManifestFiles(artifactRoot: string, probes: BrowserProbeA
 }
 
 export function browserRedactionPaths(probe: BrowserProbeArtifact): string[] {
-  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.review, probe.files.visualDiff, probe.files.visualExplanation, probe.files.summary]
+  return [probe.files.steps, probe.files.actions, probe.files.editorState, probe.files.checkpoints, probe.files.console, probe.files.errors, probe.files.html, probe.files.lifecycle, probe.files.memory, probe.files.network, probe.files.performance, probe.files.review, ...(probe.files.domSnapshots ?? []), probe.files.visualDiff, probe.files.visualExplanation, probe.files.summary]
     .filter((path): path is string => typeof path === "string" && path.length > 0)
 }
