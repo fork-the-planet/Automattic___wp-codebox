@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { dirname, extname, join, posix } from "node:path"
 import type { ArtifactManifestFile } from "@automattic/wp-codebox-core"
-import type { BrowserProbeArtifact } from "./browser-artifacts.js"
+import type { BrowserArtifact } from "./browser-artifacts.js"
 import type { CapturedMountFiles } from "./artifacts.js"
 
 export interface RuntimeReferenceIndex {
@@ -52,7 +52,7 @@ interface RuntimeReferenceIndexInput {
   createdAt: string
   manifestFiles: ArtifactManifestFile[]
   capturedMounts: CapturedMountFiles
-  browserProbes: BrowserProbeArtifact[]
+  browserProbes: BrowserArtifact[]
 }
 
 interface ScannableArtifactFile {
@@ -75,7 +75,7 @@ export async function buildRuntimeReferenceIndex({ artifactRoot, createdAt, mani
   const artifactPaths = new Set(manifestFiles.map((file) => normalizeArtifactPath(file.path)))
   const capturedByArtifactPath = new Map(capturedMounts.files.map((file) => [normalizeArtifactPath(file.artifactPath), file]))
   const capturedByRuntimePath = new Map(capturedMounts.files.map((file) => [normalizeRuntimePath(file.target), file]))
-  const browserHtmlByPath = new Map<string, BrowserProbeArtifact>()
+  const browserHtmlByPath = new Map<string, BrowserArtifact>()
   for (const probe of browserProbes) {
     if (probe.files.html) {
       browserHtmlByPath.set(normalizeArtifactPath(probe.files.html), probe)
@@ -126,7 +126,7 @@ export async function buildRuntimeReferenceIndex({ artifactRoot, createdAt, mani
   }
 }
 
-function scannableArtifactFile(file: ArtifactManifestFile, capturedByArtifactPath: Map<string, CapturedMountFiles["files"][number]>, browserHtmlByPath: Map<string, BrowserProbeArtifact>): ScannableArtifactFile | undefined {
+function scannableArtifactFile(file: ArtifactManifestFile, capturedByArtifactPath: Map<string, CapturedMountFiles["files"][number]>, browserHtmlByPath: Map<string, BrowserArtifact>): ScannableArtifactFile | undefined {
   const path = normalizeArtifactPath(file.path)
   const extension = extname(path).toLowerCase()
   if (!LOCAL_REFERENCE_EXTENSIONS.has(extension)) {

@@ -1,4 +1,4 @@
-import type { BrowserProbeArtifact } from "./browser-artifacts.js"
+import type { BrowserArtifact } from "./browser-artifacts.js"
 import { promoteBrowserMetricsToBenchResults } from "./browser-metrics.js"
 import { writePluginCheckArtifacts, writeThemeCheckArtifacts, type PluginCheckArtifact, type ThemeCheckArtifact } from "./check-artifacts.js"
 import {
@@ -335,7 +335,7 @@ export async function runBenchCommand({
   server,
   spec,
 }: {
-  browserProbes: BrowserProbeArtifact[]
+  browserProbes: BrowserArtifact[]
   createRuntimeWpCliBridge: CreateRuntimeWpCliBridge
   runPlaygroundCommand: RunPlaygroundCommand
   runtimeSpec: RuntimeCreateSpec
