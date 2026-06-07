@@ -1,5 +1,6 @@
 import { createHostToolTransportError, executeHostTool, getCommandDefinition, type HostToolRegistry, type JsonValue, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core"
 import type { ExecutionSpec } from "@automattic/wp-codebox-core"
+import { argValue } from "./command-args.js"
 
 interface PlaygroundCommandRuntime {
   inspectMountedInputs(): Promise<string>
@@ -92,9 +93,4 @@ function hostToolInput(args: string[]): JsonValue {
     }
   }
   return input
-}
-
-function argValue(args: string[], name: string): string | undefined {
-  const prefix = `${name}=`
-  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
 }

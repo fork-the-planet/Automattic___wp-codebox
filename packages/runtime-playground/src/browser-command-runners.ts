@@ -10,7 +10,7 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserConsoleMessage, serializeBrowserError, serializeBrowserFinishedRequest, serializeBrowserRequestFailure } from "./browser-metrics.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
-import { argValue, cleanWpCliOutput, commaListArg, jsonArrayArg } from "./commands.js"
+import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
 import { bootstrapPhpCode } from "./php-bootstrap.js"
 import { assertPlaygroundResponseOk, type PlaygroundRunResponse } from "./playground-command-errors.js"
@@ -222,7 +222,7 @@ async function runSingleBrowserProbeCommand({
   const prePageScript = argValue(args, "pre-page-script")
   const script = argValue(args, "script")
   const authRequest = browserAuthRequest(args)
-  const failFast = booleanArg(args, "fail-fast", false)
+  const failFast = strictBooleanArg(args, "fail-fast", false)
   const stallTimeoutMs = durationArg(args, "stall-timeout", 0)
   const lifecycleSelectors = commaListArg(args, "observe")
   const routedHosts = commaListArg(args, "route-host")
@@ -1023,7 +1023,7 @@ export async function runEditorCanvasProbeCommand({
   }
 
   const capture = new Set(commaListArg(args, "capture"))
-  if (booleanArg(args, "screenshot", false)) {
+  if (strictBooleanArg(args, "screenshot", false)) {
     capture.add("screenshot")
   }
   for (const item of capture) {
@@ -2414,9 +2414,9 @@ export async function runVisualCompareCommand({
   const waitFor = argValue(args, "wait-for")?.trim() || "domcontentloaded"
   const durationMs = durationArg(args, "duration", 0)
   const requestedViewport = viewportArg(args, "viewport")
-  const fullPage = booleanArg(args, "full-page", true)
+  const fullPage = strictBooleanArg(args, "full-page", true)
   const threshold = numberArg(args, "threshold", 0.1)
-  const includeAA = booleanArg(args, "include-aa", false)
+  const includeAA = strictBooleanArg(args, "include-aa", false)
   const maxRegions = positiveIntegerArg(args, "max-regions", 8)
 
   if (threshold < 0 || threshold > 1) {
@@ -3022,7 +3022,7 @@ function browserProbeNetworkPolicy(args: string[], routeHosts: string[], preview
     blockHosts,
     routeHosts: routedHosts,
     firstPartyHosts,
-    recordExternal: booleanArg(args, "record-external", false),
+    recordExternal: strictBooleanArg(args, "record-external", false),
     stats: new Map(),
   }
 }
@@ -3382,20 +3382,6 @@ async function browserProbeTerminalFailure(page: import("playwright").Page): Pro
   }).catch(() => undefined)
 }
 
-function booleanArg(args: string[], name: string, fallback: boolean): boolean {
-  const raw = argValue(args, name)?.trim().toLowerCase()
-  if (!raw) {
-    return fallback
-  }
-  if (["1", "true", "yes", "on"].includes(raw)) {
-    return true
-  }
-  if (["0", "false", "no", "off"].includes(raw)) {
-    return false
-  }
-  throw new Error(`${name} must be true or false`)
-}
-
 function numberArg(args: string[], name: string, fallback: number): number {
   const raw = argValue(args, name)?.trim()
   if (!raw) {
@@ -3418,39 +3404,4 @@ function positiveIntegerArg(args: string[], name: string, fallback: number): num
     throw new Error(`${name} must be a positive integer`)
   }
   return parsed
-}
-
-function durationArg(args: string[], name: string, fallbackMs: number): number {
-  const raw = argValue(args, name)?.trim()
-  if (!raw) {
-    return fallbackMs
-  }
-
-  const match = raw.match(/^(\d+(?:\.\d+)?)(ms|s)$/)
-  if (!match) {
-    throw new Error(`${name} must be a duration like 500ms or 2s`)
-  }
-
-  const value = Number.parseFloat(match[1])
-  return Math.max(0, Math.round(match[2] === "ms" ? value : value * 1000))
-}
-
-function viewportArg(args: string[], name: string): { width: number; height: number } | undefined {
-  const raw = argValue(args, name)?.trim()
-  if (!raw) {
-    return undefined
-  }
-
-  const match = raw.match(/^(\d+)x(\d+)$/i)
-  if (!match) {
-    throw new Error(`${name} must use <width>x<height>, for example 390x844: ${raw}`)
-  }
-
-  const width = Number.parseInt(match[1] ?? "", 10)
-  const height = Number.parseInt(match[2] ?? "", 10)
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    throw new Error(`${name} width and height must be positive integers: ${raw}`)
-  }
-
-  return { width, height }
 }
