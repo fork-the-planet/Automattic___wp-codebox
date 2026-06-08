@@ -55,7 +55,7 @@ try {
     () => prepareRecipeExtraPlugins({
       schema: "wp-codebox/workspace-recipe/v1",
       inputs: {
-        extraPlugins: [
+        extra_plugins: [
           {
             source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
             pluginFile: "bbpress/bbpress.php",
@@ -74,7 +74,7 @@ try {
     () => prepareRecipeExtraPlugins({
       schema: "wp-codebox/workspace-recipe/v1",
       inputs: {
-        extraPlugins: [
+        extra_plugins: [
           {
             source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
             pluginFile: "bbpress/bbpress.php",

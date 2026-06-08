@@ -78,7 +78,7 @@ try {
     assert.equal(browser.step?.action.kind, "browser")
     assert.equal(browser.step?.execution.command, "wordpress.browser-actions")
     assert.deepEqual(browser.step?.execution.args, [
-      'actions-json=[{"type":"navigate","url":"/"}]',
+      'steps-json=[{"kind":"navigate","url":"/"}]',
       "capture=actions,errors",
     ])
 

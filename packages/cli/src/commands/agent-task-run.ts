@@ -185,7 +185,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
     inputs: stripUndefined({
       mounts: Array.isArray(input.mounts) ? input.mounts : [],
       workspaces: Array.isArray(input.workspaces) ? input.workspaces : [],
-      extraPlugins: [
+      extra_plugins: [
         ...componentPlugins(input.component_contracts, artifacts),
         ...providerPlugins,
       ].filter(Boolean),

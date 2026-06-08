@@ -32,7 +32,7 @@ add_action('template_redirect', function () {
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./browser-painted-readiness-fixture",
         pluginFile: "browser-painted-readiness-fixture/browser-painted-readiness-fixture.php",

@@ -321,8 +321,8 @@ private static function browser_plugins( array $input ): array|WP_Error {
 	return self::normalize_browser_plugins( $plugins, 'browser_plugins' );
 }
 
-/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $legacy_plugins Legacy browser_plugins specs. @return array<string,mixed>|WP_Error */
-private static function browser_runtime_dependencies( array $input, array $legacy_plugins ): array|WP_Error {
+/** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $browser_plugins Browser plugin specs. @return array<string,mixed>|WP_Error */
+private static function browser_runtime_dependencies( array $input, array $browser_plugins ): array|WP_Error {
 	$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
 	$runtime_plugin_specs = self::browser_runtime_plugin_specs( array_merge( self::browser_provider_plugin_specs( $input ), is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array() ) );
 	if ( is_wp_error( $runtime_plugin_specs ) ) {
@@ -350,12 +350,12 @@ private static function browser_runtime_dependencies( array $input, array $legac
 	}
 
 	$declared_components = is_array( $runtime['components'] ?? null ) ? $runtime['components'] : array();
-	$component_plugins   = self::browser_component_plugins( $input, array_merge( $legacy_plugins, $runtime_plugins ), $declared_components );
+	$component_plugins   = self::browser_component_plugins( $input, array_merge( $browser_plugins, $runtime_plugins ), $declared_components );
 	if ( is_wp_error( $component_plugins ) ) {
 		return $component_plugins;
 	}
 
-	$plugins = self::dedupe_browser_plugins( array_merge( $legacy_plugins, $runtime_plugins, $component_plugins ) );
+	$plugins = self::dedupe_browser_plugins( array_merge( $browser_plugins, $runtime_plugins, $component_plugins ) );
 	$prepared = self::browser_prepared_runtime_contract( $runtime, $plugins, $mu_plugins, $themes, $bootstrap, $input );
 	if ( is_wp_error( $prepared ) ) {
 		return $prepared;
@@ -370,7 +370,7 @@ private static function browser_runtime_dependencies( array $input, array $legac
 		'bootstrap'              => $bootstrap,
 		'prepared_runtime'       => $prepared,
 		'component_plugins'      => count( $component_plugins ),
-		'legacy_browser_plugins' => count( $legacy_plugins ),
+		'browser_plugins'        => count( $browser_plugins ),
 		'summary'                => array(
 			'plugins'    => count( $plugins ),
 			'mu_plugins' => count( $mu_plugins ),

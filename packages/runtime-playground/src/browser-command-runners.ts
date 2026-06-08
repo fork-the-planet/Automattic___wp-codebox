@@ -1526,7 +1526,7 @@ export async function runBrowserActionsCommand({
   const steps = await browserInteractionStepsFromArgs(args)
   const initialUrl = argValue(args, "url")?.trim()
   if (steps.length === 0 && !initialUrl) {
-    throw new Error("wordpress.browser-actions requires steps-json=<array> (or actions-json=<array>) or url=<path-or-url>")
+    throw new Error("wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>")
   }
 
   if (initialUrl && steps[0]?.kind !== "navigate") {

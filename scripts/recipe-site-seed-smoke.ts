@@ -117,7 +117,7 @@ writeFileSync(recipePath, `${JSON.stringify({
         mode: "readonly",
       },
     ],
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./test-seed-importer",
         slug: "test-seed-importer",

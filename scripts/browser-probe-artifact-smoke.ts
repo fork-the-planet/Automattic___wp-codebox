@@ -27,7 +27,7 @@ const prePageScript = 'window.__wpCodeboxPrePageMarker = "before-app-scripts"; w
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./browser-error-fixture",
         pluginFile: "browser-error-fixture/browser-error-fixture.php",

@@ -13,7 +13,7 @@ const externalRecipePath = resolve(workspace, "external-recipe.json")
 const externalDisabledRecipePath = resolve(workspace, "external-disabled-recipe.json")
 const externalUntrustedHostRecipePath = resolve(workspace, "external-untrusted-host-recipe.json")
 const externalStrictDigestRecipePath = resolve(workspace, "external-strict-digest-recipe.json")
-const legacyExtraPluginsRecipePath = resolve(workspace, "legacy-extra-plugins-recipe.json")
+const unsupportedExtraPluginsRecipePath = resolve(workspace, "unsupported-extra-plugins-recipe.json")
 const distributionRecipePath = resolve(workspace, "distribution-recipe.json")
 const invalidDistributionRecipePath = resolve(workspace, "invalid-distribution-recipe.json")
 const invalidSiteSeedRecipePath = resolve(workspace, "invalid-site-seed-recipe.json")
@@ -51,7 +51,7 @@ writeFileSync(recipePath, `${JSON.stringify({
         },
       },
     ],
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "../../examples/simple-plugin",
         slug: "simple-plugin",
@@ -157,7 +157,7 @@ const externalRecipe = {
     wp: "7.0",
   },
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
         pluginFile: "bbpress/bbpress.php",
@@ -183,7 +183,7 @@ const externalRecipe = {
 
 writeFileSync(externalRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
 writeFileSync(externalDisabledRecipePath, `${JSON.stringify(externalRecipe, null, 2)}\n`)
-writeFileSync(legacyExtraPluginsRecipePath, `${JSON.stringify({
+writeFileSync(unsupportedExtraPluginsRecipePath, `${JSON.stringify({
   ...externalRecipe,
   inputs: {
     extraPlugins: [
@@ -199,7 +199,7 @@ writeFileSync(legacyExtraPluginsRecipePath, `${JSON.stringify({
 writeFileSync(externalUntrustedHostRecipePath, `${JSON.stringify({
   ...externalRecipe,
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "https://evil.example/plugin.zip",
         slug: "evil-plugin",
@@ -211,7 +211,7 @@ writeFileSync(externalUntrustedHostRecipePath, `${JSON.stringify({
 writeFileSync(externalStrictDigestRecipePath, `${JSON.stringify({
   ...externalRecipe,
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
         pluginFile: "bbpress/bbpress.php",
@@ -431,20 +431,19 @@ assert.equal(externalOutput.plan.extra_plugins[1].sourceType, "https_zip")
 assert.equal(externalOutput.plan.extra_plugins[1].provenance.kind, "https_zip")
 assert.equal(externalOutput.plan.extra_plugins[1].provenance.policy.host, "example.com")
 
-const legacyExtraPluginsResult = spawnSync(process.execPath, [
+const unsupportedExtraPluginsResult = spawnSync(process.execPath, [
   cli,
   "recipe-run",
   "--recipe",
-  legacyExtraPluginsRecipePath,
+  unsupportedExtraPluginsRecipePath,
   "--dry-run",
   "--json",
 ], { cwd: root, encoding: "utf8" })
 
-assert.equal(legacyExtraPluginsResult.status, 0, legacyExtraPluginsResult.stderr || legacyExtraPluginsResult.stdout)
-const legacyExtraPluginsOutput = JSON.parse(legacyExtraPluginsResult.stdout)
-assert.equal(legacyExtraPluginsOutput.success, true)
-assert.equal(legacyExtraPluginsOutput.plan.extra_plugins.length, 1)
-assert.equal(legacyExtraPluginsOutput.plan.extra_plugins[0].slug, "simple-plugin")
+assert.equal(unsupportedExtraPluginsResult.status, 1, unsupportedExtraPluginsResult.stderr || unsupportedExtraPluginsResult.stdout)
+const unsupportedExtraPluginsOutput = JSON.parse(unsupportedExtraPluginsResult.stdout)
+assert.equal(unsupportedExtraPluginsOutput.success, false)
+assert.equal(unsupportedExtraPluginsOutput.valid, false)
 
 const externalUntrustedHostResult = spawnSync(process.execPath, [
   cli,

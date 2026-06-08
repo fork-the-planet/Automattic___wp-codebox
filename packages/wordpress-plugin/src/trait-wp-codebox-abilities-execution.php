@@ -51,11 +51,11 @@ public static function create_browser_playground_session( array $input ): array|
 	}
 	$input           = self::browser_input_with_inheritance( $input, $inheritance_payload['inheritance'] );
 	$browser_runner  = is_array( $input['browser_runner'] ?? null ) ? $input['browser_runner'] : array();
-	$legacy_plugins  = self::browser_plugins( $input );
-	if ( is_wp_error( $legacy_plugins ) ) {
-		return $legacy_plugins;
+	$browser_plugins = self::browser_plugins( $input );
+	if ( is_wp_error( $browser_plugins ) ) {
+		return $browser_plugins;
 	}
-	$runtime = self::browser_runtime_dependencies( $input, $legacy_plugins );
+	$runtime = self::browser_runtime_dependencies( $input, $browser_plugins );
 	if ( is_wp_error( $runtime ) ) {
 		return $runtime;
 	}

@@ -7,7 +7,7 @@
     }
   },
   "inputs": {
-    "extraPlugins": [
+    "extra_plugins": [
       {
         "source": "../bench-plugin",
         "slug": "bench-plugin",

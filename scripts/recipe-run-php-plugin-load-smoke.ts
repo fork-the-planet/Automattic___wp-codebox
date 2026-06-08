@@ -21,7 +21,7 @@ writeFileSync(recipePath, `${JSON.stringify({
     blueprint: { steps: [] },
   },
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: component,
         slug: "bench-plugin",

@@ -26,7 +26,7 @@ add_action('wp_footer', function () {
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./editor-canvas-fixture",
         pluginFile: "editor-canvas-fixture/editor-canvas-fixture.php",

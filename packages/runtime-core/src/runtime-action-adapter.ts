@@ -278,7 +278,7 @@ async function runRuntimeFilesystemAction(
 }
 
 async function runRuntimeBrowserAction(episode: RuntimeEpisode, action: RuntimeBrowserAction): Promise<RuntimeActionObservation> {
-  const args = [`actions-json=${JSON.stringify([runtimeBrowserCommandAction(action)])}`]
+  const args = [`steps-json=${JSON.stringify([runtimeBrowserCommandStep(action)])}`]
   if (action.url && action.operation !== "navigate") {
     args.unshift(`url=${action.url}`)
   }
@@ -324,8 +324,8 @@ async function runRuntimeBrowserAction(episode: RuntimeEpisode, action: RuntimeB
   })
 }
 
-function runtimeBrowserCommandAction(action: RuntimeBrowserAction): Record<string, unknown> {
-  const commandAction: Record<string, unknown> = { type: action.operation }
+function runtimeBrowserCommandStep(action: RuntimeBrowserAction): Record<string, unknown> {
+  const commandAction: Record<string, unknown> = { kind: action.operation === "wait" ? "waitFor" : action.operation }
   for (const key of ["url", "selector", "text", "value", "key", "duration"] as const) {
     if (typeof action[key] === "string") {
       commandAction[key] = action[key]

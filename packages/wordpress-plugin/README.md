@@ -21,10 +21,8 @@ WordPress Playground runtime, mounts the requested runtime components, invokes
 the configured sandbox-local ability or hook task, and returns artifact metadata.
 
 The task ability accepts `wp-codebox/task-input/v1` fields: `goal`, `target`,
-`allowed_tools`, `expected_artifacts`, `policy`, and `context`. Legacy callers
-may still pass `task` as a string; the runner normalizes it into `goal` and
-returns the normalized `task_input` in the ability response. Raw PHP `code` and
-`code_file` fields remain rejected on this product ability path.
+`allowed_tools`, `expected_artifacts`, `policy`, and `context`. Raw PHP `code`
+and `code_file` fields remain rejected on this product ability path.
 
 Runtime orchestrators can pass `agent_bundles` plus a generic `runtime_task`
 payload to run caller-owned bundle logic without injecting PHP code. WP Codebox

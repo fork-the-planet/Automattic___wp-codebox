@@ -1,9 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { validateBrowserInteractionScript, type BrowserInteractionStep } from "@automattic/wp-codebox-core"
-import { argValue, jsonArrayArg } from "./commands.js"
-
-export type BrowserActionInput = Record<string, unknown> & { type: string }
+import { argValue } from "./commands.js"
 
 export async function browserInteractionStepsFromArgs(args: string[]): Promise<BrowserInteractionStep[]> {
   const stepsRaw = argValue(args, "steps-json")
@@ -16,8 +14,7 @@ export async function browserInteractionStepsFromArgs(args: string[]): Promise<B
     return result.steps
   }
 
-  // Back-compat: accept the legacy actions-json shape and normalize it to steps.
-  return browserActionsFromArgs(args).map(normalizeLegacyBrowserAction)
+  return []
 }
 
 async function parseBrowserStepsPayload(raw: string, name: string): Promise<unknown> {
@@ -31,33 +28,6 @@ async function parseBrowserStepsPayload(raw: string, name: string): Promise<unkn
   } catch (error) {
     throw new Error(`${name} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
   }
-}
-
-/** Normalize a legacy actions-json action into the steps contract. */
-function normalizeLegacyBrowserAction(action: BrowserActionInput): BrowserInteractionStep {
-  const kind = action.type === "wait" ? "waitFor" : (action.type as BrowserInteractionStep["kind"])
-  const step: BrowserInteractionStep = { kind }
-  if (typeof action.url === "string") step.url = action.url
-  if (typeof action.selector === "string") step.selector = action.selector
-  if (typeof action.text === "string") step.text = action.text
-  if (typeof action.value === "string") step.value = action.value
-  if (typeof action.key === "string") step.key = action.key
-  if (typeof action.waitFor === "string") step.waitFor = action.waitFor
-  if (typeof action.duration === "string") step.duration = action.duration
-  return step
-}
-
-function browserActionsFromArgs(args: string[]): BrowserActionInput[] {
-  return jsonArrayArg(args, "actions-json").map((action, index) => {
-    if (!action || typeof action !== "object" || Array.isArray(action)) {
-      throw new Error(`wordpress.browser-actions actions-json[${index}] must be an object`)
-    }
-    const typedAction = action as BrowserActionInput
-    if (typeof typedAction.type !== "string" || typedAction.type.length === 0) {
-      throw new Error(`wordpress.browser-actions actions-json[${index}].type is required`)
-    }
-    return typedAction
-  })
 }
 
 export function browserActionLoadState(waitFor: unknown): "domcontentloaded" | "load" | "networkidle" {

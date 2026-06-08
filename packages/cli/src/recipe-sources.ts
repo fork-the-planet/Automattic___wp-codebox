@@ -922,7 +922,7 @@ function titleFromSlug(slug: string): string {
 }
 
 export function recipeExtraPlugins(recipe: WorkspaceRecipe): WorkspaceRecipeExtraPlugin[] {
-  return recipe.inputs?.extra_plugins ?? recipe.inputs?.extraPlugins ?? []
+  return recipe.inputs?.extra_plugins ?? []
 }
 
 export function recipeSource(sourceRef: string, expectedSha256?: string): ParsedRecipeSource {

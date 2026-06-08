@@ -38,11 +38,6 @@ export function parseWorkspaceRecipeJson(raw: string): WorkspaceRecipe {
 }
 
 export function normalizeWorkspaceRecipeCompatibility(recipe: WorkspaceRecipe): WorkspaceRecipe {
-  if (recipe.inputs?.extraPlugins !== undefined) {
-    recipe.inputs.extra_plugins ??= recipe.inputs.extraPlugins
-    delete recipe.inputs.extraPlugins
-  }
-
   return recipe
 }
 
@@ -98,6 +93,10 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
   validateRecipeRuntimeWordPressInstallMode(recipe.runtime?.wordpressInstallMode, recipePath)
   validateRecipeRuntimePreview(recipe.runtime?.preview, recipePath)
   validateRecipeMounts(recipe.inputs?.mounts, "mounts", recipePath)
+
+  if (recipe.inputs && "extraPlugins" in recipe.inputs) {
+    throw new Error(`Recipe inputs.extraPlugins is unsupported; use inputs.extra_plugins: ${recipePath}`)
+  }
 
   const workspaces = recipe.inputs?.workspaces ?? []
   if (!Array.isArray(workspaces)) {
@@ -1086,10 +1085,9 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
 
   if (step.command === "wordpress.browser-actions") {
     const stepsJson = recipeStepArgValue(step.args ?? [], "steps-json")
-    const actionsJson = recipeStepArgValue(step.args ?? [], "actions-json")
     const url = recipeStepArgValue(step.args ?? [], "url")?.trim()
-    if (!stepsJson && !actionsJson && !url) {
-      addIssue("missing-steps", `${path}.args`, "wordpress.browser-actions requires steps-json=<array> (or actions-json=<array>) or url=<path-or-url>.")
+    if (!stepsJson && !url) {
+      addIssue("missing-steps", `${path}.args`, "wordpress.browser-actions requires steps-json=<array> or url=<path-or-url>.")
     }
 
     if (stepsJson && !stepsJson.startsWith("@")) {

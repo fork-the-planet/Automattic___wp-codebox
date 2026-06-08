@@ -19,7 +19,7 @@ await mkdir(join(shapedArtifactsRoot, "files", "browser"), { recursive: true })
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: resolve(repoRoot, "examples", "bench-plugin"),
         slug: "bench-plugin",

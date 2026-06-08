@@ -130,7 +130,7 @@ async function runRecipe(name: string, args: string[]): Promise<any> {
   await writeFile(recipePath, `${JSON.stringify({
     schema: "wp-codebox/workspace-recipe/v1",
     inputs: {
-      extraPlugins: [
+      extra_plugins: [
         {
           source: "./browser-assertion-fixture",
           pluginFile: "browser-assertion-fixture/browser-assertion-fixture.php",

@@ -645,7 +645,7 @@ Redaction is part of the contract. The default `redaction: "safe"` avoids user
 identity fields and requires explicit allowlists for options and users.
 `redaction: "none"` is an opt-in export mode for trusted callers that need identity fields.
 Consumers should verify artifact SHA-256 values before replay and should branch
-on `schema` and `version` instead of projecting per-consumer legacy state shapes.
+on `schema` and `version` instead of projecting per-consumer state shapes.
 
 Replay is bounded to the generic runtime contract. A consumer can replay a step
 by creating a compatible backend runtime, applying the same mounts/artifact
@@ -696,7 +696,7 @@ The canonical schema source is `createWorkspaceRecipeJsonSchema()` in `@automatt
 npm run wp-codebox -- schema recipe --json
 ```
 
-The schema covers `runtime`, `inputs.mounts`, `inputs.workspaces`, `inputs.extra_plugins` / `inputs.extraPlugins`, `inputs.secretEnv`, `workflow.steps`, and `artifacts`.
+The schema covers `runtime`, `inputs.mounts`, `inputs.workspaces`, `inputs.extra_plugins`, `inputs.secretEnv`, `workflow.steps`, and `artifacts`.
 
 ### `run`
 
@@ -734,7 +734,7 @@ Supported runtime commands today:
 
 For synthetic web performance investigations, enable `capture=performance` and use `profile=low-end-mobile-slow-4g` or `throttle=low-end-mobile-slow-4g` to apply a deterministic Chromium CPU/network profile before navigation. Performance artifacts include navigation timing, TTFB, FCP, LCP, resource timing, long tasks, CLS, and DOM metrics. Budget assertions may use promoted `browser_*` metric names or short web-performance aliases, for example `assert=lcp_ms<=2500`, `assert=fcp_ms<=1800`, `assert=ttfb_ms<=800`, and `assert=nav_duration_ms<=5000`.
 
-`wordpress.browser-actions` drives the preview with an ordered interaction script so Codebox can prove a plugin still *works* under interaction, not just that it renders. Pass the script as `steps-json=<array>` (inline JSON, or `@<path>` to read it from a file); the legacy `actions-json=<array>` shape is still accepted and normalized to steps. Each step is a thin, stable mapping over a Playwright locator action — this is not a test-runner DSL.
+`wordpress.browser-actions` drives the preview with an ordered interaction script so Codebox can prove a plugin still *works* under interaction, not just that it renders. Pass the script as `steps-json=<array>` (inline JSON, or `@<path>` to read it from a file). Each step is a thin, stable mapping over a Playwright locator action — this is not a test-runner DSL.
 
 Step kinds: `navigate` (`url`, optional `waitFor=domcontentloaded|load|networkidle`), `click`/`hover` (`selector` or `text`), `fill`/`type` (`selector`, `value`), `press` (`key`, optional `selector`), `drag` (`from` selector, `to` as `{ "selector": ... }` or `{ "x": n, "y": n }`), `select` (`selector`, `value` or `values`), `waitFor` (`selector` or `waitFor=domcontentloaded|load|networkidle|duration|selector:<sel>`), `evaluate` (`expression`, optional `assert` to deep-equal the result), `expect` (`selector`, optional `state=visible|hidden|attached|detached|enabled|disabled|checked|unchecked|editable`), and `screenshot` (optional `name` for a named capture). Every step may set its own `timeout=<n>s`; the command also accepts a global `step-timeout=<n>s` (per step) and `timeout=<n>s` (total-script budget). Both are bounded and deterministic — the run stops cleanly on the first failing step, with no silent partial success.
 
@@ -881,7 +881,7 @@ External sources are explicit and CI-safe. WP Codebox validates URL-shaped sourc
 ```json
 {
   "inputs": {
-    "extraPlugins": [
+    "extra_plugins": [
       {
         "source": "https://downloads.wordpress.org/plugin/bbpress.latest-stable.zip",
         "pluginFile": "bbpress/bbpress.php",

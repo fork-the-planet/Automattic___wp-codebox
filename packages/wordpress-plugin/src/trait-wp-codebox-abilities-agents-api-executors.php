@@ -70,7 +70,6 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 				'capabilities' => array( 'wordpress-playground', 'browser-runtime', 'browser-task-contract' ),
 				'input_schema'      => $task_input_schema,
 				'output_schema'     => $browser_task_output_schema,
-				'legacy_abilities' => array( 'wp-codebox/create-browser-task-contract' ),
 			),
 			array(
 				'schema'       => 'agents-api/executor-target/v1',
@@ -82,7 +81,6 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 				'capabilities' => array( 'wordpress-playground', 'host-sandbox-runner', 'artifact-capture' ),
 				'input_schema'      => $task_input_schema,
 				'output_schema'     => array( 'type' => 'object' ),
-				'legacy_abilities' => array( 'wp-codebox/run-agent-task' ),
 			),
 		);
 	}
@@ -92,8 +90,7 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 		$schema = self::task_input_schema();
 		$schema['$id'] = self::AGENTS_API_TASK_INPUT_SCHEMA;
 		$schema['properties']['schema']['const'] = self::AGENTS_API_TASK_INPUT_SCHEMA;
-		$schema['properties']['schema']['description'] = 'Generic Agents API task input schema id. WP Codebox also accepts legacy wp-codebox/task-input/v1 inputs for compatibility.';
-		$schema['x-wp-codebox-accepted-schemas'] = array( self::AGENTS_API_TASK_INPUT_SCHEMA, WP_Codebox_Task_Input_Contract::SCHEMA );
+		$schema['properties']['schema']['description'] = 'Generic Agents API task input schema id.';
 
 		return $schema;
 	}
@@ -122,17 +119,17 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 
 	/** @param array<string,mixed> $request Generic task request. @return array<string,mixed> */
 	private static function agents_api_task_request_input( array $request ): array {
-		foreach ( array( 'input', 'task_input', 'task' ) as $field ) {
+		foreach ( array( 'input', 'task_input' ) as $field ) {
 			if ( is_array( $request[ $field ] ?? null ) ) {
-				return self::agents_api_task_input_with_legacy_compat( $request[ $field ], $request );
+				return self::agents_api_task_input( $request[ $field ], $request );
 			}
 		}
 
-		return self::agents_api_task_input_with_legacy_compat( $request, $request );
+		return self::agents_api_task_input( $request, $request );
 	}
 
 	/** @param array<string,mixed> $input Task input. @param array<string,mixed> $request Full request. @return array<string,mixed> */
-	private static function agents_api_task_input_with_legacy_compat( array $input, array $request ): array {
+	private static function agents_api_task_input( array $input, array $request ): array {
 		if ( self::AGENTS_API_TASK_INPUT_SCHEMA === (string) ( $input['schema'] ?? '' ) ) {
 			$input['schema'] = WP_Codebox_Task_Input_Contract::SCHEMA;
 		}

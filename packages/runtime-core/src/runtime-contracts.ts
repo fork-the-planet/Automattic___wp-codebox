@@ -341,7 +341,6 @@ export interface WorkspaceRecipe {
     workspaces?: WorkspaceRecipeWorkspace[]
     mounts?: WorkspaceRecipeMount[]
     extra_plugins?: WorkspaceRecipeExtraPlugin[]
-    extraPlugins?: WorkspaceRecipeExtraPlugin[]
     secretEnv?: string[]
     pluginRuntime?: WorkspaceRecipePluginRuntime
     fixtureDatabases?: WorkspaceRecipeFixtureDatabase[]

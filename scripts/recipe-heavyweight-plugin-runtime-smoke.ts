@@ -49,7 +49,7 @@ register_activation_hook( __FILE__, static function (): void {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { wp: "7.0" },
     inputs: {
-      extraPlugins: [
+      extra_plugins: [
         {
           source: "./heavy-runtime-plugin",
           slug: "heavy-runtime-plugin",
@@ -121,7 +121,7 @@ register_activation_hook( __FILE__, static function (): void {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { wp: "7.0" },
     inputs: {
-      extraPlugins: [
+      extra_plugins: [
         {
           source: "./heavy-runtime-plugin",
           slug: "heavy-runtime-plugin",
@@ -151,7 +151,7 @@ register_activation_hook( __FILE__, static function (): void {
     schema: "wp-codebox/workspace-recipe/v1",
     runtime: { wp: "7.0" },
     inputs: {
-      extraPlugins: [
+      extra_plugins: [
         {
           source: "./activation-failure-plugin",
           slug: "activation-failure-plugin",

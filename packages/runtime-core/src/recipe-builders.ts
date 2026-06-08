@@ -30,7 +30,7 @@ export interface WordPressBenchRecipeOptions {
   wordpressVersion?: string
   blueprint?: unknown
   mounts?: WorkspaceRecipeMount[]
-  extraPlugins?: WorkspaceRecipeExtraPlugin[]
+  extra_plugins?: WorkspaceRecipeExtraPlugin[]
   componentId?: string
   pluginSlug: string
   iterations?: number
@@ -116,7 +116,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
       blueprint: blueprintWithWpConfigDefines(options.blueprint ?? {}, options.wpConfigDefines ?? {}),
     },
     inputs: {
-      extraPlugins: normalizeExtraPlugins(options.extraPlugins),
+      extra_plugins: normalizeExtraPlugins(options.extra_plugins),
       mounts: normalizeRecipeMounts(options.mounts, { defaultMode: "readonly" }),
     },
     workflow: {

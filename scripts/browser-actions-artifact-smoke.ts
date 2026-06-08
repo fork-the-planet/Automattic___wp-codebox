@@ -32,7 +32,7 @@ add_action('wp_footer', function () {
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./browser-action-fixture",
         pluginFile: "browser-action-fixture/browser-action-fixture.php",
@@ -162,7 +162,7 @@ assert.equal(review.browser?.probes?.[0]?.assertions?.passed, 2)
 await writeFile(failingRecipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./browser-action-fixture",
         pluginFile: "browser-action-fixture/browser-action-fixture.php",

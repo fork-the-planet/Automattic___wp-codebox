@@ -56,7 +56,7 @@ await writeFile(benchOptionsPath, JSON.stringify({
   wordpressVersion: "6.10",
   blueprint: { steps: [{ step: "login", username: "admin", password: "password" }] },
   mounts: [{ source: "/repo/db.php", target: "/wordpress/wp-content/db.php", type: "file" }],
-  extraPlugins: [{ source: "/repo/plugin", slug: "demo", pluginFile: "demo/demo.php", activate: true }],
+  extra_plugins: [{ source: "/repo/plugin", slug: "demo", pluginFile: "demo/demo.php", activate: true }],
   componentId: "demo-component",
   pluginSlug: "demo",
   iterations: 7,
@@ -82,7 +82,7 @@ assert.deepEqual(benchRecipe.runtime.blueprint, {
 })
 assert.equal(benchRecipe.workflow.steps[0].command, "wordpress.bench")
 assert.deepEqual(benchRecipe.inputs.mounts, [{ source: "/repo/db.php", target: "/wordpress/wp-content/db.php", mode: "readonly", type: "file" }])
-assert.deepEqual(benchRecipe.inputs.extraPlugins, [{ source: "/repo/plugin", slug: "demo", pluginFile: "demo/demo.php", activate: true }])
+assert.deepEqual(benchRecipe.inputs.extra_plugins, [{ source: "/repo/plugin", slug: "demo", pluginFile: "demo/demo.php", activate: true }])
 assert.deepEqual(benchRecipe.workflow.steps[0].args, [
   "component-id=demo-component",
   "plugin-slug=demo",

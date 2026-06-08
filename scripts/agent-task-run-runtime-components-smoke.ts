@@ -21,7 +21,7 @@ const input = {
 }
 
 const recipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")
-const extraPlugins = recipe.inputs?.extraPlugins ?? []
+const extraPlugins = recipe.inputs?.extra_plugins ?? []
 
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "agents-api")?.source, "/components/agents-api")
 assert.equal(extraPlugins.find((plugin) => plugin?.slug === "caller-runtime")?.source, "/components/caller-runtime")
@@ -94,7 +94,7 @@ const codexProfileInput = {
   artifacts_path: "/tmp/wp-codebox-artifacts",
 }
 const codexProfileRecipe = buildAgentTaskRecipe(codexProfileInput, normalizeTaskInput(codexProfileInput), "trunk")
-const codexPlugins = codexProfileRecipe.inputs?.extraPlugins ?? []
+const codexPlugins = codexProfileRecipe.inputs?.extra_plugins ?? []
 const codexOverlays = codexProfileRecipe.runtime?.overlays ?? []
 
 const codexProviderPlugin = codexPlugins.find((plugin) => plugin?.slug === "ai-provider-for-openai-codex-oauth-provider")

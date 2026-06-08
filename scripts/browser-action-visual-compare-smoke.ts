@@ -40,7 +40,7 @@ const candidateDomSnapshot = join(artifactsRoot, "files", "browser", "dom-snapsh
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./browser-action-visual-fixture",
         pluginFile: "browser-action-visual-fixture/browser-action-visual-fixture.php",

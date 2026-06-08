@@ -354,7 +354,7 @@ $assert( 'wp codebox run-agent-task-fanout command registered', is_callable( $cl
 $ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-agent-task'] ?? null;
 $assert( 'run-agent-task ability registered', is_array( $ability ) );
 $assert( 'ability is REST visible', true === ( $ability['meta']['show_in_rest'] ?? false ) );
-$assert( 'ability accepts goal or legacy task', array( 'goal' ) === ( $ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'ability requires canonical goal input', array( 'goal' ) === ( $ability['input_schema']['required'] ?? array() ) && ! isset( $ability['input_schema']['properties']['task'] ) );
 $assert( 'ability exposes task target schema', isset( $ability['input_schema']['properties']['target']['properties']['kind'] ) );
 $assert( 'ability exposes canonical task input metadata schema', 'wp-codebox/task-input/v1' === ( $ability['output_schema']['properties']['task_input']['properties']['schema']['const'] ?? '' ) && 1 === ( $ability['output_schema']['properties']['task_input']['properties']['version']['const'] ?? 0 ) );
 $assert( 'ability exposes allowed tools schema', 'array' === ( $ability['input_schema']['properties']['allowed_tools']['type'] ?? '' ) );
@@ -408,7 +408,7 @@ $assert( 'host delegation returns structured unavailable result without provider
 $browser_session_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-playground-session'] ?? null;
 $assert( 'browser Playground session ability registered', is_array( $browser_session_ability ) );
 $assert( 'browser Playground session ability is REST visible', true === ( $browser_session_ability['meta']['show_in_rest'] ?? false ) );
-$assert( 'browser Playground session accepts goal or legacy task', array( 'goal' ) === ( $browser_session_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_session_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser Playground session requires canonical goal input', array( 'goal' ) === ( $browser_session_ability['input_schema']['required'] ?? array() ) && ! isset( $browser_session_ability['input_schema']['properties']['task'] ) );
 $assert( 'browser Playground session exposes artifact file schema', 'array' === ( $browser_session_ability['input_schema']['properties']['artifact_files']['type'] ?? '' ) );
 $assert( 'browser Playground session exposes site blueprint artifact schema', 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) && 'object' === ( $browser_session_ability['input_schema']['properties']['site_blueprint_artifact']['properties']['blueprint']['type'] ?? '' ) );
 $assert( 'browser Playground session declares site blueprint artifact output', 'object' === ( $browser_session_ability['output_schema']['properties']['site_blueprint_artifact']['type'] ?? '' ) );
@@ -421,13 +421,13 @@ $assert( 'browser Playground session exposes generic capture path schema', 'arra
 $browser_materializer_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-materializer-contract'] ?? null;
 $assert( 'browser materializer contract ability registered', is_array( $browser_materializer_ability ) );
 $assert( 'browser materializer contract ability is REST visible', true === ( $browser_materializer_ability['meta']['show_in_rest'] ?? false ) );
-$assert( 'browser materializer contract accepts goal or legacy task', array( 'goal' ) === ( $browser_materializer_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_materializer_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser materializer contract requires canonical goal input', array( 'goal' ) === ( $browser_materializer_ability['input_schema']['required'] ?? array() ) && ! isset( $browser_materializer_ability['input_schema']['properties']['task'] ) );
 $assert( 'browser materializer contract exposes recipe materialization authorization and compact output', 'object' === ( $browser_materializer_ability['output_schema']['properties']['recipe']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['materialization']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['authorization']['type'] ?? '' ) && 'object' === ( $browser_materializer_ability['output_schema']['properties']['compact']['type'] ?? '' ) );
 
 $browser_task_contract_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/create-browser-task-contract'] ?? null;
 $assert( 'browser task contract ability registered', is_array( $browser_task_contract_ability ) );
 $assert( 'browser task contract ability is REST visible', true === ( $browser_task_contract_ability['meta']['show_in_rest'] ?? false ) );
-$assert( 'browser task contract accepts goal or legacy task', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][0]['required'] ?? array() ) && array( 'task' ) === ( $browser_task_contract_ability['input_schema']['anyOf'][1]['required'] ?? array() ) );
+$assert( 'browser task contract requires canonical goal input', array( 'goal' ) === ( $browser_task_contract_ability['input_schema']['required'] ?? array() ) && ! isset( $browser_task_contract_ability['input_schema']['properties']['task'] ) );
 $browser_task_phase_kinds = $browser_task_contract_ability['input_schema']['properties']['phases']['items']['properties']['kind']['enum'] ?? array();
 $assert( 'browser task contract exposes phase and compact schema', 'array' === ( $browser_task_contract_ability['input_schema']['properties']['phases']['type'] ?? '' ) && in_array( 'materializer', $browser_task_phase_kinds, true ) && in_array( 'agent', $browser_task_phase_kinds, true ) && in_array( 'aggregator', $browser_task_phase_kinds, true ) && in_array( 'host-delegation', $browser_task_phase_kinds, true ) && 'array' === ( $browser_task_contract_ability['output_schema']['properties']['phases']['type'] ?? '' ) && 'object' === ( $browser_task_contract_ability['output_schema']['properties']['compact']['type'] ?? '' ) );
 $assert( 'browser task contract exposes explicit host-side phase execution flag', 'boolean' === ( $browser_task_contract_ability['input_schema']['properties']['execute_phases']['type'] ?? '' ) && false === ( $browser_task_contract_ability['input_schema']['properties']['execute_phases']['default'] ?? null ) );
@@ -436,9 +436,9 @@ $agents_api_executor_targets = apply_filters( 'agents_api_executor_targets', arr
 $wp_agent_executor_targets = apply_filters( 'wp_agent_executor_targets', array() );
 $assert( 'Agents API executor registry advertises browser and host targets', isset( $agents_api_executor_targets['wp-codebox/browser-playground'] ) && isset( $agents_api_executor_targets['wp-codebox/host-playground'] ) );
 $assert( 'WP Agent executor registry alias advertises browser and host targets', isset( $wp_agent_executor_targets['wp-codebox/browser-playground'] ) && isset( $wp_agent_executor_targets['wp-codebox/host-playground'] ) );
-$assert( 'Agents API browser executor target delegates to browser task contract shape', 'wp-codebox/browser-playground' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['id'] ?? '' ) && 'wp-codebox/create-browser-task-contract' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['legacy_abilities'][0] ?? '' ) && 'wp-codebox/browser-task-contract/v1' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['output_schema']['properties']['schema']['const'] ?? '' ) );
-$assert( 'Agents API host executor target delegates to host sandbox result shape', 'wp-codebox/host-playground' === ( $agents_api_executor_targets['wp-codebox/host-playground']['id'] ?? '' ) && 'wp-codebox/run-agent-task' === ( $agents_api_executor_targets['wp-codebox/host-playground']['legacy_abilities'][0] ?? '' ) );
-$assert( 'Agents API executor targets accept generic and legacy task input schemas', 'agents-api/task-input/v1' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['input_schema']['properties']['schema']['const'] ?? '' ) && in_array( 'wp-codebox/task-input/v1', $agents_api_executor_targets['wp-codebox/browser-playground']['input_schema']['x-wp-codebox-accepted-schemas'] ?? array(), true ) );
+$assert( 'Agents API browser executor target delegates to browser task contract shape', 'wp-codebox/browser-playground' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['id'] ?? '' ) && ! isset( $agents_api_executor_targets['wp-codebox/browser-playground']['legacy_abilities'] ) && 'wp-codebox/browser-task-contract/v1' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['output_schema']['properties']['schema']['const'] ?? '' ) );
+$assert( 'Agents API host executor target delegates to host sandbox result shape', 'wp-codebox/host-playground' === ( $agents_api_executor_targets['wp-codebox/host-playground']['id'] ?? '' ) && ! isset( $agents_api_executor_targets['wp-codebox/host-playground']['legacy_abilities'] ) );
+$assert( 'Agents API executor targets accept only generic task input schema', 'agents-api/task-input/v1' === ( $agents_api_executor_targets['wp-codebox/browser-playground']['input_schema']['properties']['schema']['const'] ?? '' ) && ! isset( $agents_api_executor_targets['wp-codebox/browser-playground']['input_schema']['x-wp-codebox-accepted-schemas'] ) );
 $sentinel_executor_result = array( 'schema' => 'sentinel/result' );
 $assert( 'Agents API executor dispatch leaves unrelated targets untouched', $sentinel_executor_result === apply_filters( 'agents_api_execute_task', $sentinel_executor_result, array( 'goal' => 'Ignore unrelated target.' ), 'other/executor' ) );
 
@@ -932,23 +932,23 @@ $assert( 'browser task contract exposes compact product DTO with primary runner 
 $assert( 'browser task compact DTO preserves named materializer phases', ! is_wp_error( $browser_task_contract ) && 'static-site-materializer' === ( $browser_task_contract['compact']['phases'][0]['name'] ?? '' ) && 'materializer' === ( $browser_task_contract['compact']['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-product-dto/v1' === ( $browser_task_contract['compact']['phases'][0]['contract']['schema'] ?? '' ) && '/tmp/materializer-result.json' === ( $browser_task_contract['compact']['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
 $assert( 'browser task compact DTO omits raw runtime payloads', is_string( $browser_task_compact_encoded ) && ! str_contains( $browser_task_compact_encoded, '"pluginData"' ) && ! str_contains( $browser_task_compact_encoded, '"content"' ) && ! str_contains( $browser_task_compact_encoded, '"content_base64"' ) && ! str_contains( $browser_task_compact_encoded, 'data:application/zip;base64' ) && ! str_contains( $browser_task_compact_encoded, 'sk-browser-provider-secret' ) );
 
-$legacy_materializer_task_contract = call_user_func(
+$materializer_task_contract = call_user_func(
 	$browser_task_contract_ability['execute_callback'],
 	array_replace_recursive(
 		$browser_session_input,
 		array(
 			'materializers' => array(
 				array(
-					'goal'           => 'Materialize generated browser artifacts through legacy input.',
+					'goal'           => 'Materialize generated browser artifacts through canonical input.',
 					'browser_runner' => array(
-						'result_path' => '/tmp/legacy-materializer-result.json',
+						'result_path' => '/tmp/materializer-result.json',
 					),
 				),
 			),
 		)
 	)
 );
-$assert( 'browser task contract preserves legacy materializers input compatibility', ! is_wp_error( $legacy_materializer_task_contract ) && 1 === count( $legacy_materializer_task_contract['phases'] ?? array() ) && 'materializer' === ( $legacy_materializer_task_contract['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-contract/v1' === ( $legacy_materializer_task_contract['phases'][0]['contract']['schema'] ?? '' ) && '/tmp/legacy-materializer-result.json' === ( $legacy_materializer_task_contract['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
+$assert( 'browser task contract preserves materializer phase input', ! is_wp_error( $materializer_task_contract ) && 1 === count( $materializer_task_contract['phases'] ?? array() ) && 'materializer' === ( $materializer_task_contract['phases'][0]['kind'] ?? '' ) && 'wp-codebox/browser-materializer-contract/v1' === ( $materializer_task_contract['phases'][0]['contract']['schema'] ?? '' ) && '/tmp/materializer-result.json' === ( $materializer_task_contract['phases'][0]['contract']['materialization']['result_path'] ?? '' ) );
 
 $browser_phase_fanout_bin = $root . '/wp-codebox-browser-phase-fanout-fixture';
 file_put_contents(
@@ -1159,7 +1159,7 @@ $agents_api_browser_executor_result = apply_filters(
 	),
 	'wp-codebox/browser-playground'
 );
-$assert( 'Agents API browser executor returns the legacy browser task contract shape', ! is_wp_error( $agents_api_browser_executor_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $agents_api_browser_executor_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $agents_api_browser_executor_result['session']['id'] ?? '' ) && ( $browser_task_contract['compact']['schema'] ?? '' ) === ( $agents_api_browser_executor_result['compact']['schema'] ?? '' ) );
+$assert( 'Agents API browser executor returns the browser task contract shape', ! is_wp_error( $agents_api_browser_executor_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $agents_api_browser_executor_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $agents_api_browser_executor_result['session']['id'] ?? '' ) && ( $browser_task_contract['compact']['schema'] ?? '' ) === ( $agents_api_browser_executor_result['compact']['schema'] ?? '' ) );
 $agents_api_browser_executor_metrics_encoded = wp_json_encode( $agents_api_browser_executor_result['execution_metrics'] ?? array() );
 $assert( 'Agents API browser executor exposes normalized execution metrics', ! is_wp_error( $agents_api_browser_executor_result ) && 'agents-api/execution-metrics/v1' === ( $agents_api_browser_executor_result['execution_metrics']['schema'] ?? '' ) && 'wp-codebox/browser-playground' === ( $agents_api_browser_executor_result['execution_metrics']['executor'] ?? '' ) && 'contract' === ( $agents_api_browser_executor_result['execution_metrics']['phase'] ?? '' ) && 'pending' === ( $agents_api_browser_executor_result['execution_metrics']['status'] ?? '' ) && isset( $agents_api_browser_executor_result['execution_metrics']['payload_bytes']['task_payload'] ) && '/tmp/wp-codebox-agent-events.jsonl' === ( $agents_api_browser_executor_result['execution_metrics']['diagnostics_refs']['event_stream_path'] ?? '' ) );
 $assert( 'Agents API browser executor metrics are secret-safe summaries', is_string( $agents_api_browser_executor_metrics_encoded ) && ! str_contains( $agents_api_browser_executor_metrics_encoded, 'sk-browser-provider-secret' ) && ! str_contains( $agents_api_browser_executor_metrics_encoded, 'data:application/zip;base64' ) && ! str_contains( $agents_api_browser_executor_metrics_encoded, 'pluginData' ) );
@@ -1172,7 +1172,7 @@ $wp_agent_browser_task_handler_result = apply_filters(
 		'input'  => $browser_task_contract_input,
 	)
 );
-$assert( 'WP Agent task handler alias returns the legacy browser task contract shape', ! is_wp_error( $wp_agent_browser_task_handler_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $wp_agent_browser_task_handler_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $wp_agent_browser_task_handler_result['session']['id'] ?? '' ) );
+$assert( 'WP Agent task handler alias returns the browser task contract shape', ! is_wp_error( $wp_agent_browser_task_handler_result ) && ( $browser_task_contract['schema'] ?? '' ) === ( $wp_agent_browser_task_handler_result['schema'] ?? '' ) && ( $browser_task_contract['session']['id'] ?? '' ) === ( $wp_agent_browser_task_handler_result['session']['id'] ?? '' ) );
 
 $invalid_browser_task_contract = call_user_func(
 	$browser_task_contract_ability['execute_callback'],
@@ -2108,7 +2108,7 @@ $runner           = new WP_Codebox_Agent_Sandbox_Runner(
 
 $result = $runner->run(
 	array(
-		'task'           => 'Run a chat-requested sandbox task.',
+		'goal'           => 'Run a chat-requested sandbox task.',
 		'sandbox_session_id' => 'parent-job-123',
 		'session_id'     => 'agent-chat-session-456',
 		'orchestrator'   => array(
@@ -2152,9 +2152,7 @@ $assert( 'runner returns public preview URL in session artifact metadata', ! is_
 $assert( 'runner surfaces normalized agent result summary', ! is_wp_error( $result ) && 'wp-codebox/agent-result/v1' === ( $result['agent_result']['schema'] ?? '' ) && false === ( $result['agent_result']['actionable'] ?? true ) && 'no_file_changes' === ( $result['agent_result']['noOpReason'] ?? '' ) && 'files/transcript.json' === ( $result['agent_result']['transcript']['artifact'] ?? '' ) );
 $assert( 'runner surfaces single runtime agent task result envelope', ! is_wp_error( $result ) && 'wp-codebox/agent-task-result/v1' === ( $result['agent_task_result']['schema'] ?? '' ) && 614 === ( $result['agent_task_result']['outputs']['issue_number'] ?? 0 ) && ! isset( $result['agent_task_result']['scenarios'] ) && 'files/agent-task-result.json' === ( $result['session']['artifacts']['agent_task_result'] ?? '' ) );
 $assert( 'runner surfaces generic completion outcome', ! is_wp_error( $result ) && 'wp-codebox/sandbox-completion-outcome/v1' === ( $result['completion_outcome']['schema'] ?? '' ) && 'partial' === ( $result['completion_outcome']['status'] ?? '' ) && 'files/completion-outcome.json' === ( $result['session']['artifacts']['completion_outcome'] ?? '' ) );
-$assert( 'runner returns normalized task input for legacy task', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
-$legacy_task_fixture = $task_input_fixture_by_name['legacy task maps to canonical goal with empty optionals']['normalized'] ?? array();
-$assert( 'runner legacy task matches shared normalization fixture', ! is_wp_error( $result ) && $legacy_task_fixture === ( $result['task_input'] ?? array() ) );
+$assert( 'runner returns normalized canonical task input', ! is_wp_error( $result ) && 'wp-codebox/task-input/v1' === ( $result['task_input']['schema'] ?? '' ) && 'Run a chat-requested sandbox task.' === ( $result['task_input']['goal'] ?? '' ) );
 $assert( 'runner invokes recipe-run', str_contains( $captured_command, 'recipe-run' ) );
 $assert( 'runner uses node for JS CLI', str_contains( $captured_command, 'node' ) && str_contains( $captured_command, 'wp-codebox.js' ) );
 $assert( 'runner passes preview hold to CLI', str_contains( $captured_command, '--preview-hold' ) && str_contains( $captured_command, "'30'" ) );
@@ -2172,43 +2170,6 @@ $assert( 'runner recipe passes secret env name only', str_contains( $captured_re
 $assert( 'runner passes timeout to command runner and recipe', 7200 === $captured_timeout && str_contains( $captured_recipe, 'timeout-seconds=7200' ) );
 $assert( 'runner does not pass raw code options', ! str_contains( $captured_command, '--code ' ) && ! str_contains( $captured_command, '--code-file' ) );
 
-$GLOBALS['wp_codebox_filters']['wp_codebox_normalize_parent_task_request'] = static function ( mixed $normalized, array $input ) use ( $root, $component_contracts ): array {
-	$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : array();
-	if ( 'caller/sandbox-task-request/v1' !== ( $request['schema'] ?? '' ) ) {
-		return is_array( $normalized ) ? $normalized : $input;
-	}
-
-	$task = is_array( $request['task'] ?? null ) ? $request['task'] : array();
-	return array_merge(
-		$input,
-		array(
-			'goal'                 => (string) ( $task['prompt'] ?? '' ),
-			'expected_artifacts'   => is_array( $task['expected_artifacts'] ?? null ) ? $task['expected_artifacts'] : array(),
-			'policy'               => is_array( $task['policy'] ?? null ) ? $task['policy'] : array(),
-			'context'              => array_merge( is_array( $task['context'] ?? null ) ? $task['context'] : array(), array( 'group_key' => $request['group_key'] ?? '', 'audit_findings' => $request['audit_findings'] ?? array(), 'orchestrator' => $request['orchestrator'] ?? array() ) ),
-			'provider'             => (string) ( $request['provider'] ?? '' ),
-			'model'                => (string) ( $request['model'] ?? '' ),
-			'provider_plugin_paths' => is_array( $request['provider_plugin_paths'] ?? null ) ? $request['provider_plugin_paths'] : array(),
-			'agent_bundles'        => is_array( $request['agent_bundles'] ?? null ) ? $request['agent_bundles'] : array(),
-			'secret_env'           => is_array( $request['secret_env'] ?? null ) ? $request['secret_env'] : array(),
-			'mounts'               => is_array( $request['mounts'] ?? null ) ? $request['mounts'] : array(),
-			'workspaces'           => array(
-				array( 'seed' => array( 'slug' => 'agents-api', 'path' => $root . '/agents-api' ) ),
-				array( 'seed' => array( 'slug' => 'editable-plugin', 'path' => $root . '/editable-plugin' ) ),
-				array( 'seed' => array( 'slug' => 'caller-extension', 'path' => $root . '/plugin-root/agents-api' ) ),
-			),
-			'runtime_stack_mounts' => is_array( $request['runtime_stack_mounts'] ?? null ) ? $request['runtime_stack_mounts'] : array(),
-			'runtime_overlays'     => is_array( $request['runtime_overlays'] ?? null ) ? $request['runtime_overlays'] : array(),
-			'task_timeout_seconds' => (int) ( $request['task_timeout_seconds'] ?? 0 ),
-			'max_turns'            => (int) ( $request['max_turns'] ?? 0 ),
-			'sandbox_session_id'   => (string) ( $request['sandbox_session_id'] ?? '' ),
-			'orchestrator'         => is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array(),
-			'artifacts_path'       => (string) ( $request['artifacts'] ?? '' ),
-			'component_contracts'  => $component_contracts,
-		)
-	);
-};
-
 $caller_adapter_result = $runner->run(
 	array(
 		'runtime_task' => array(
@@ -2224,7 +2185,12 @@ $caller_adapter_result = $runner->run(
 			),
 		),
 		'parent_request' => array(
-			'schema'               => 'caller/sandbox-task-request/v1',
+			'schema'               => 'wp-codebox/task-input/v1',
+			'version'              => 1,
+			'goal'                 => 'Run the canonical parent Codebox task.',
+			'expected_artifacts'   => array( 'patch' ),
+			'policy'               => array( 'kind' => 'audit-remediation' ),
+			'context'              => array( 'group_key' => 'smoke' ),
 			'provider'             => 'openai',
 			'model'                => 'gpt-5.5',
 			'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
@@ -2280,12 +2246,10 @@ $caller_adapter_result = $runner->run(
 				'job_id'        => 'caller-job-123',
 				'agent_task_id' => 'agent-task-123',
 			),
-			'task'                 => array(
-				'prompt'             => 'Run the caller-shaped Codebox task.',
-				'expected_artifacts' => array( 'patch' ),
-				'policy'             => array( 'kind' => 'audit-remediation' ),
-				'context'            => array( 'group_key' => 'smoke' ),
+			'workspaces'           => array(
+				array( 'seed' => array( 'slug' => 'editable-plugin', 'path' => $root . '/editable-plugin' ) ),
 			),
+			'component_contracts'  => $component_contracts,
 		),
 	)
 );
@@ -2299,17 +2263,17 @@ foreach ( $caller_adapter_step_args as $caller_adapter_step_arg ) {
 	}
 }
 $caller_adapter_runtime_task = '' !== $caller_adapter_runtime_task_arg ? json_decode( $caller_adapter_runtime_task_arg, true ) : array();
-$assert( 'runner accepts caller-normalized parent request', ! is_wp_error( $caller_adapter_result ) && true === ( $caller_adapter_result['success'] ?? false ) && 'caller-sandbox-session-123' === ( $caller_adapter_result['session']['id'] ?? '' ) );
-$assert( 'runner maps caller adapter artifacts and orchestrator metadata', ! is_wp_error( $caller_adapter_result ) && $root . '/artifacts/caller-adapter' === ( $caller_adapter_result['artifacts'] ?? '' ) && 'caller-job-123' === ( $caller_adapter_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $caller_adapter_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
-$assert( 'runner returns stable caller adapter diagnostics evidence and metadata refs', ! is_wp_error( $caller_adapter_result ) && in_array( (string) ( $caller_adapter_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $caller_adapter_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $caller_adapter_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $caller_adapter_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/agent-task-result.json' === ( $caller_adapter_result['evidence_refs']['agent_task_result'] ?? '' ) && 'files/transcript.json' === ( $caller_adapter_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $caller_adapter_result['run_metadata']['schema'] ?? '' ) && 'caller-sandbox-session-123' === ( $caller_adapter_result['run_metadata']['sandbox_session_id'] ?? '' ) );
-$assert( 'runner maps caller adapter provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $caller_adapter_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
+$assert( 'runner accepts canonical parent request', ! is_wp_error( $caller_adapter_result ) && true === ( $caller_adapter_result['success'] ?? false ) && 'caller-sandbox-session-123' === ( $caller_adapter_result['session']['id'] ?? '' ) );
+$assert( 'runner maps canonical parent artifacts and orchestrator metadata', ! is_wp_error( $caller_adapter_result ) && $root . '/artifacts/caller-adapter' === ( $caller_adapter_result['artifacts'] ?? '' ) && 'caller-job-123' === ( $caller_adapter_result['session']['orchestrator']['job_id'] ?? '' ) && 'agent-task-123' === ( $caller_adapter_result['session']['orchestrator']['agent_task_id'] ?? '' ) );
+$assert( 'runner returns stable canonical parent diagnostics evidence and metadata refs', ! is_wp_error( $caller_adapter_result ) && in_array( (string) ( $caller_adapter_result['status'] ?? '' ), array( 'completed', 'failed' ), true ) && 'wp-codebox/agent-task-diagnostics/v1' === ( $caller_adapter_result['diagnostics']['schema'] ?? '' ) && 'wp-codebox/agent-task-evidence-refs/v1' === ( $caller_adapter_result['evidence_refs']['schema'] ?? '' ) && 'artifact-bundle-sha256-fixture-2' === ( $caller_adapter_result['evidence_refs']['artifact_bundle_id'] ?? '' ) && 'files/agent-task-result.json' === ( $caller_adapter_result['evidence_refs']['agent_task_result'] ?? '' ) && 'files/transcript.json' === ( $caller_adapter_result['evidence_refs']['transcript'] ?? '' ) && 'wp-codebox/agent-task-run-metadata/v1' === ( $caller_adapter_result['run_metadata']['schema'] ?? '' ) && 'caller-sandbox-session-123' === ( $caller_adapter_result['run_metadata']['sandbox_session_id'] ?? '' ) );
+$assert( 'runner maps canonical parent provider plugins and secrets', in_array( 'provider-plugin-slugs=ai-provider-test', $caller_adapter_step_args, true ) && str_contains( $captured_recipe, 'GITHUB_TOKEN' ) && ! str_contains( $captured_recipe, 'GITHUB_TOKEN=' ) );
 $assert( 'runner preserves multiple runtime agent bundles in recipe inputs and step args', 2 === count( $caller_adapter_recipe['inputs']['agent_bundles'] ?? array() ) && str_contains( implode( "\n", $caller_adapter_step_args ), 'agent-bundles-json=' ) && str_contains( $captured_recipe, 'site-generator-agent.json' ) && str_contains( $captured_recipe, 'repair-agent' ) );
 $assert( 'runner passes generic runtime task execution request to sandbox step', is_array( $caller_adapter_runtime_task ) && 'runtime/run-agent-bundle' === ( $caller_adapter_runtime_task['ability'] ?? '' ) && 'static-site-manual-flow' === ( $caller_adapter_runtime_task['input']['flow'] ?? '' ) && true === ( $caller_adapter_runtime_task['input']['wait_for_completion'] ?? false ) && true === ( $caller_adapter_runtime_task['input']['dry_run'] ?? false ) );
-$assert( 'runner maps caller adapter timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $caller_adapter_step_args, true ) && in_array( 'max-turns=8', $caller_adapter_step_args, true ) );
-$assert( 'runner maps caller adapter runtime stack mounts and overlays', '/runtime/agents-api' === ( $caller_adapter_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'caller-runtime-overlay' === ( $caller_adapter_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
-$assert( 'runner maps caller adapter workspaces without downstream recipe generation', 3 === count( $caller_adapter_recipe['inputs']['workspaces'] ?? array() ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) && str_contains( $captured_recipe, 'agents-api' ) );
-$assert( 'runner passes caller adapter task context to sandbox agent', str_contains( $captured_recipe, 'caller-group-key' ) && str_contains( $captured_recipe, 'finding-1' ) && str_contains( $captured_recipe, 'agent-task-123' ) );
-unset( $GLOBALS['wp_codebox_filters']['wp_codebox_normalize_parent_task_request'] );
+$assert( 'runner maps canonical parent timeout and max turns', 3600 === $captured_timeout && in_array( 'timeout-seconds=3600', $caller_adapter_step_args, true ) && in_array( 'max-turns=8', $caller_adapter_step_args, true ) );
+$assert( 'runner maps canonical parent runtime stack mounts and overlays', '/runtime/agents-api' === ( $caller_adapter_recipe['runtime']['stack']['mounts'][0]['target'] ?? '' ) && 'caller-runtime-overlay' === ( $caller_adapter_recipe['runtime']['overlays'][0]['id'] ?? '' ) );
+$assert( 'runner maps canonical parent workspaces without downstream recipe generation', 1 === count( $caller_adapter_recipe['inputs']['workspaces'] ?? array() ) && ! str_contains( $captured_recipe, 'Use Data Machine Code workspace repos' ) );
+$assert( 'runner maps canonical parent component contracts', str_contains( $captured_recipe, 'caller-runtime' ) && str_contains( $captured_recipe, 'caller-runtime-tools' ) && str_contains( $captured_recipe, 'agents-api' ) );
+$assert( 'runner passes canonical parent task context to sandbox agent', str_contains( $captured_recipe, 'caller-group-key' ) && str_contains( $captured_recipe, 'finding-1' ) && str_contains( $captured_recipe, 'agent-task-123' ) );
 
 $GLOBALS['wp_codebox_options']['blogname'] = 'Parent Seed Site';
 $GLOBALS['wp_codebox_options']['active_plugins'] = array( 'agents-api/agents-api.php' );
@@ -2494,7 +2458,7 @@ unset( $GLOBALS['wp_codebox_filters']['wp_codebox_resolve_inheritance'] );
 
 $raw_code = $runner->run(
 	array(
-		'task'           => 'Run a chat-requested sandbox task.',
+		'goal'           => 'Run a chat-requested sandbox task.',
 		'artifacts_path' => $root . '/artifacts',
 		'code'           => '<?php echo "raw";',
 	)
@@ -2503,7 +2467,7 @@ $assert( 'raw code input fails closed', is_wp_error( $raw_code ) && 'wp_codebox_
 
 $raw_code_file = $runner->run(
 	array(
-		'task'           => 'Run a chat-requested sandbox task.',
+		'goal'           => 'Run a chat-requested sandbox task.',
 		'artifacts_path' => $root . '/artifacts',
 		'code_file'      => '/tmp/raw.php',
 	)
@@ -2512,7 +2476,7 @@ $assert( 'raw code file input fails closed', is_wp_error( $raw_code_file ) && 'w
 
 $invalid_mount = $runner->run(
 	array(
-		'task'           => 'Run a chat-requested sandbox task.',
+		'goal'           => 'Run a chat-requested sandbox task.',
 		'artifacts_path' => $root . '/artifacts',
 		'mounts'         => array(
 			array(
@@ -2526,7 +2490,7 @@ $assert( 'invalid mount input fails closed', is_wp_error( $invalid_mount ) && 'w
 
 $invalid_preview_bind = $runner->run(
 	array(
-		'task'           => 'Run a chat-requested sandbox task.',
+		'goal'           => 'Run a chat-requested sandbox task.',
 		'artifacts_path' => $root . '/artifacts',
 		'preview_bind'   => '0.0.0.0',
 	)
@@ -2535,7 +2499,7 @@ $assert( 'preview bind without preview port fails closed', is_wp_error( $invalid
 
 $invalid_preview_url = $runner->run(
 	array(
-		'task'               => 'Run a chat-requested sandbox task.',
+		'goal'               => 'Run a chat-requested sandbox task.',
 		'artifacts_path'     => $root . '/artifacts',
 		'preview_public_url' => 'file:///tmp/preview',
 	)
@@ -2768,7 +2732,10 @@ $assert( 'configured allow-list denial reports allowed tools', is_wp_error( $not
 
 $batch_result = $runner->run_batch(
 	array(
-		'tasks'          => array( 'Fix issue one.', 'Fix issue two.' ),
+		'tasks'          => array(
+			array( 'goal' => 'Fix issue one.' ),
+			array( 'goal' => 'Fix issue two.' ),
+		),
 		'sandbox_session_id' => 'parent-batch-789',
 		'artifacts_path' => $root . '/artifacts',
 		'provider_plugin_paths' => array( $root . '/ai-provider-test' ),
@@ -2827,7 +2794,10 @@ $failing_batch_runner = new WP_Codebox_Agent_Sandbox_Runner(
 );
 $partial_batch = $failing_batch_runner->run_batch(
 	array(
-		'tasks'          => array( 'Succeed once.', 'Fail once.' ),
+		'tasks'          => array(
+			array( 'goal' => 'Succeed once.' ),
+			array( 'goal' => 'Fail once.' ),
+		),
 		'artifacts_path' => $root . '/artifacts',
 	)
 );
@@ -2997,7 +2967,7 @@ $GLOBALS['wp_codebox_site_options'] = array(
 	'wp_codebox_artifacts_root'  => $root . '/artifact-network-root',
 );
 
-$network_result = $runner->run( array( 'task' => 'Use network-level WP Codebox configuration.' ) );
+$network_result = $runner->run( array( 'goal' => 'Use network-level WP Codebox configuration.' ) );
 $assert( 'multisite runner reads network-level options', ! is_wp_error( $network_result ) && str_starts_with( (string) ( $network_result['artifacts'] ?? '' ), $root . '/artifact-network-root' ) );
 
 $GLOBALS['wp_codebox_is_multisite'] = false;

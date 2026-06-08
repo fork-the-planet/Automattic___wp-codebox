@@ -83,7 +83,7 @@ Recipes can declare generic heavyweight plugin runtime needs with `inputs.plugin
   "schema": "wp-codebox/workspace-recipe/v1",
   "runtime": { "wp": "7.0" },
   "inputs": {
-    "extraPlugins": [
+    "extra_plugins": [
       {
         "source": "./plugins/page-builder",
         "slug": "page-builder",
@@ -119,9 +119,9 @@ Recipes can declare generic heavyweight plugin runtime needs with `inputs.plugin
 
 Execution order is stable:
 
-1. Mount recipe workspaces and `extraPlugins`.
+1. Mount recipe workspaces and `extra_plugins`.
 2. Install recipe-declared mu-plugin loaders.
-3. Activate `extraPlugins` in recipe order.
+3. Activate `extra_plugins` in recipe order.
 4. Run `pluginRuntime.setup` steps in declared order.
 5. Run `pluginRuntime.healthProbes` in declared order.
 6. Import site seeds, then run normal workflow steps.

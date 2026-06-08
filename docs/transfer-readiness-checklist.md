@@ -124,7 +124,7 @@ generic substrate boundary.
 
 Transfer checklist:
 
-- Support caller-provided plugins through `extraPlugins` with explicit source,
+- Support caller-provided plugins through `extra_plugins` with explicit source,
   slug, plugin file, activation behavior, optional hash, and `loadAs` mode.
 - Support caller-provided MU plugins through the same generic runtime dependency
   path; prove load order and invocation through issue #317.

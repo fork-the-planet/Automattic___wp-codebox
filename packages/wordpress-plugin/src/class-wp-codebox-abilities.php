@@ -182,10 +182,7 @@ final class WP_Codebox_Abilities {
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'anyOf'      => array(
-							array( 'type' => 'object', 'required' => array( 'goal' ) ),
-							array( 'type' => 'object', 'required' => array( 'task' ) ),
-						),
+						'required'   => array( 'goal' ),
 						'properties' => $host_agent_task_properties,
 					),
 					'output_schema'       => array(
@@ -228,12 +225,7 @@ final class WP_Codebox_Abilities {
 							'tasks'                  => array(
 								'type'        => 'array',
 								'description' => 'Task descriptions or structured task inputs. Each task runs in its own isolated sandbox.',
-								'items'       => array(
-									'anyOf' => array(
-										array( 'type' => 'string' ),
-										$task_input_schema,
-									),
-								),
+								'items'       => $task_input_schema,
 							),
 						) + $host_agent_batch_properties,
 					),
@@ -411,10 +403,7 @@ final class WP_Codebox_Abilities {
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'anyOf'      => array(
-							array( 'type' => 'object', 'required' => array( 'goal' ) ),
-							array( 'type' => 'object', 'required' => array( 'task' ) ),
-						),
+						'required'   => array( 'goal' ),
 						'properties' => $browser_session_properties,
 					),
 					'output_schema'       => $browser_session_schema,
@@ -432,10 +421,7 @@ final class WP_Codebox_Abilities {
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'anyOf'      => array(
-							array( 'type' => 'object', 'required' => array( 'goal' ) ),
-							array( 'type' => 'object', 'required' => array( 'task' ) ),
-						),
+						'required'   => array( 'goal' ),
 						'properties' => $browser_contract_properties,
 					),
 					'output_schema'       => self::browser_materializer_contract_schema(),
@@ -453,10 +439,7 @@ final class WP_Codebox_Abilities {
 					'category'            => 'wp-codebox',
 					'input_schema'        => array(
 						'type'       => 'object',
-						'anyOf'      => array(
-							array( 'type' => 'object', 'required' => array( 'goal' ) ),
-							array( 'type' => 'object', 'required' => array( 'task' ) ),
-						),
+						'required'   => array( 'goal' ),
 						'properties' => $browser_contract_properties + array(
 							'execute_phases'     => array(
 								'type'        => 'boolean',

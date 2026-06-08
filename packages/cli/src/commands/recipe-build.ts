@@ -30,7 +30,7 @@ interface WordPressBenchBuilderOptions {
   blueprint?: unknown
   wordpressVersion?: string
   mounts?: WorkspaceRecipeMount[]
-  extraPlugins?: WorkspaceRecipeExtraPlugin[]
+  extra_plugins?: WorkspaceRecipeExtraPlugin[]
   componentId?: string
   pluginSlug: string
   iterations?: number
@@ -83,7 +83,7 @@ function buildRecipe(recipeType: RecipeBuildOptions["recipeType"], options: Word
         blueprint: options.blueprint,
         wordpressVersion: stringOrUndefined(options.wordpressVersion),
         mounts: Array.isArray(options.mounts) ? options.mounts : [],
-        extraPlugins: Array.isArray((options as WordPressBenchBuilderOptions).extraPlugins) ? (options as WordPressBenchBuilderOptions).extraPlugins : [],
+        extra_plugins: Array.isArray((options as WordPressBenchBuilderOptions).extra_plugins) ? (options as WordPressBenchBuilderOptions).extra_plugins : [],
         componentId: stringOrUndefined((options as WordPressBenchBuilderOptions).componentId),
         pluginSlug: requiredString(options.pluginSlug, "pluginSlug"),
         iterations: integerOrUndefined((options as WordPressBenchBuilderOptions).iterations),

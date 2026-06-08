@@ -26,7 +26,7 @@ writeFileSync(recipePath, `${JSON.stringify({
     },
   },
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: component,
         slug: "bench-plugin",
