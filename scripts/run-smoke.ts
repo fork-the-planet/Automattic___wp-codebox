@@ -8,7 +8,7 @@ type ResolvedGroup = {
 
 function usage(): string {
   return [
-    "Usage: npm run smoke -- [--group=<name> | --all | --list]",
+    "Usage: npm run smoke -- [--group=<name> | --command=<name> | --all | --list]",
     "",
     "Groups:",
     ...Object.entries(smokeGroups).map(([name, group]) => `  ${name.padEnd(10)} ${group.description}`),
@@ -20,8 +20,9 @@ function usage(): string {
   ].join("\n")
 }
 
-function parseArgs(args: string[]): { group?: string; all: boolean; list: boolean } {
+function parseArgs(args: string[]): { group?: string; command?: string; all: boolean; list: boolean } {
   let group: string | undefined
+  let command: string | undefined
   let all = false
   let list = false
 
@@ -33,9 +34,20 @@ function parseArgs(args: string[]): { group?: string; all: boolean; list: boolea
       list = true
     } else if (arg === "--group") {
       group = args[index + 1]
+      if (!group) {
+        throw new Error("--group requires a value")
+      }
       index += 1
     } else if (arg.startsWith("--group=")) {
       group = arg.slice("--group=".length)
+    } else if (arg === "--command") {
+      command = args[index + 1]
+      if (!command) {
+        throw new Error("--command requires a value")
+      }
+      index += 1
+    } else if (arg.startsWith("--command=")) {
+      command = arg.slice("--command=".length)
     } else if (arg === "--help" || arg === "-h") {
       list = true
     } else {
@@ -43,7 +55,7 @@ function parseArgs(args: string[]): { group?: string; all: boolean; list: boolea
     }
   }
 
-  return { group, all, list }
+  return { group, command, all, list }
 }
 
 function resolveGroup(groupName: string): ResolvedGroup {
@@ -60,6 +72,17 @@ function resolveGroup(groupName: string): ResolvedGroup {
   }
 
   throw new Error(`Unknown smoke group: ${groupName}\n\n${usage()}`)
+}
+
+function resolveCommand(commandName: string): ResolvedGroup {
+  for (const group of Object.values(smokeGroups)) {
+    const command = group.commands.find((entry) => entry.name === commandName)
+    if (command) {
+      return { name: commandName, commands: [command] }
+    }
+  }
+
+  throw new Error(`Unknown smoke command: ${commandName}\n\n${usage()}`)
 }
 
 function runCommand(command: SmokeCommand): Promise<void> {
@@ -93,11 +116,12 @@ async function main(): Promise<void> {
     return
   }
 
-  if (options.all && options.group) {
-    throw new Error("Use either --all or --group, not both.")
+  const selectors = [options.all, Boolean(options.group), Boolean(options.command)].filter(Boolean).length
+  if (selectors > 1) {
+    throw new Error("Use only one of --all, --group, or --command.")
   }
 
-  const group = resolveGroup(options.all ? "check" : options.group ?? "check")
+  const group = options.command ? resolveCommand(options.command) : resolveGroup(options.all ? "check" : options.group ?? "check")
   console.log(`[smoke] Running ${group.commands.length} command(s) from ${group.name}`)
 
   for (const command of group.commands) {

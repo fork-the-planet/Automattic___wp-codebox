@@ -22,8 +22,7 @@ running local package validation.
 
 ```bash
 npm run build
-npm run package-distribution-smoke
-npm run package-installed-binary-smoke
+npm run smoke -- --group package
 ```
 
 The distribution smoke runs `npm pack --dry-run --json` and verifies the package

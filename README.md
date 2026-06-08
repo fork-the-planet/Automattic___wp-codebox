@@ -264,7 +264,7 @@ npm run build
 npm run check
 ```
 
-`npm run check` runs the TypeScript build, policy validation smoke test, WordPress plugin smoke test, and a real Playground-backed CLI smoke test.
+`npm run check` runs the full smoke manifest aggregate. Use `npm run smoke -- --list` to see focused smoke groups and commands.
 
 ## Distribution Artifacts
 
@@ -312,15 +312,15 @@ npm run package:wordpress-plugin
 unzip -Z1 packages/wordpress-plugin/dist/wp-codebox.zip
 ```
 
-`npm run package-distribution-smoke` validates both artifact shapes. It checks
-that the CLI pack includes `package.json`, `README.md`, and compiled `dist/`
-files without TypeScript source, checks that the root release tarball installs a
-`wp-codebox` binary, then builds the WordPress plugin zip and checks that it
-contains the plugin bootstrap, README, PHP sources, checked-in browser runtime
-asset, and vendored CLI runtime without package metadata or generated artifacts.
-`npm run package-installed-binary-smoke` packs the root release tarball, installs
-it into a temporary global prefix, and verifies the installed `wp-codebox`
-binary can emit the command catalog.
+`npm run smoke -- --group package` validates the package artifact shapes. It
+checks that the CLI pack includes `package.json`, `README.md`, and compiled
+`dist/` files without TypeScript source, checks that the root release tarball
+installs a `wp-codebox` binary, then builds the WordPress plugin zip and checks
+that it contains the plugin bootstrap, README, PHP sources, checked-in browser
+runtime asset, and vendored CLI runtime without package metadata or generated
+artifacts. The package group also packs the root release tarball, installs it
+into a temporary global prefix, and verifies the installed `wp-codebox` binary
+can emit the command catalog.
 
 Versioning and release policy:
 
@@ -361,8 +361,8 @@ options because the executable path is host-level configuration.
 Release checklist:
 
 1. Run `npm run check` from a clean checkout.
-2. Run `npm run package-installed-binary-smoke` to verify the root release
-   tarball installs a working `wp-codebox` binary.
+2. Run `npm run smoke -- --group package` to verify the package artifacts and
+   root release tarball install a working `wp-codebox` binary.
 3. Review `npm pack --workspace @automattic/wp-codebox-cli --dry-run --json` before publishing the CLI package.
 4. Build `packages/wordpress-plugin/dist/wp-codebox.zip` with
    `npm run package:wordpress-plugin` and inspect

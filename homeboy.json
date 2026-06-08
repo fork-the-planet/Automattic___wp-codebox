@@ -40,7 +40,7 @@
       "npm run build"
     ],
     "test": [
-      "npm run package-distribution-smoke",
+      "npm run smoke -- --group package",
       "npm run release:package"
     ]
   }

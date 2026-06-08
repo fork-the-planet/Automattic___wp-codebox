@@ -240,7 +240,7 @@ are intentionally excluded from the plugin zip.
 Validate the artifact shape with:
 
 ```bash
-npm run package-distribution-smoke
+npm run smoke -- --group package
 ```
 
 ## Boundary
