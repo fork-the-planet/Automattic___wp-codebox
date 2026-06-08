@@ -83,7 +83,7 @@ throws only when asked to create a request from a non-ready preflight.
 
 ## Smoke Fixture
 
-`npm run external-adapter-contract-smoke` demonstrates the contract without
+`npm run smoke -- --command external-adapter-contract-smoke` demonstrates the contract without
 depending on Data Machine Code or any other apply-back implementation.
 The fixture builds a verified artifact payload, runs a stand-in parent control
 plane adapter, and persists this external record shape:
@@ -120,6 +120,6 @@ The smoke asserts that the external record includes adapter metadata, explicit
 owner approval metadata, bot-authored PR metadata, branch, commit, and artifact
 digest while excluding the raw patch body.
 
-`npm run artifact-apply-adapter-smoke` covers Codebox-owned adapter
+`npm run smoke -- --command artifact-apply-adapter-smoke` covers Codebox-owned adapter
 normalization for bundle-path input, preflight-file input, payload input,
 approved-file mismatch, digest mismatch, and missing patch/changed-files cases.
