@@ -713,7 +713,7 @@ function agentRuntimeIncompleteFromRecord(record: Record<string, unknown> | unde
 
   const runtime = isRecord(record?.agent_runtime) ? record.agent_runtime : undefined
   const runtimeResult = runtime?.success === true && isRecord(runtime.result) ? runtime.result : undefined
-  const candidates = [...(runtimeResult ? [runtimeResult] : []), ...collectRecords(record)]
+  const candidates = [runtimeResult, record].filter(isRecord)
 
   for (const result of candidates) {
     if (!isIncompleteAgentResult(result)) {
@@ -761,18 +761,6 @@ function incompleteAgentResultData(payload: Record<string, unknown>): Record<str
     has_pending_tools: truthyKey(payload, ["has_pending_tools", "hasPendingTools"]) || undefined,
     max_turns_reached: truthyKey(payload, ["max_turns_reached", "maxTurnsReached"]) || undefined,
   })
-}
-
-function collectRecords(value: unknown): Record<string, unknown>[] {
-  if (Array.isArray(value)) {
-    return value.flatMap(collectRecords)
-  }
-
-  if (!isRecord(value)) {
-    return []
-  }
-
-  return [value, ...Object.values(value).flatMap(collectRecords)]
 }
 
 function truthyKey(record: Record<string, unknown>, keys: string[]): boolean {
