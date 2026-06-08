@@ -1,23 +1,5 @@
 [
   {
-    "name": "legacy task maps to canonical goal with empty optionals",
-    "input": {
-      "task": " Run a chat-requested sandbox task. "
-    },
-    "normalized": {
-      "schema": "wp-codebox/task-input/v1",
-      "version": 1,
-      "goal": "Run a chat-requested sandbox task.",
-      "target": {},
-      "allowed_tools": [],
-      "expected_artifacts": [],
-      "agent_bundles": [],
-      "sandbox_tool_policy": {},
-      "policy": {},
-      "context": {}
-    }
-  },
-  {
     "name": "structured goal deduplicates lists and preserves objects",
     "input": {
       "goal": " Add a focused product feature. ",

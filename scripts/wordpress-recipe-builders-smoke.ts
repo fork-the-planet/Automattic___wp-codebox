@@ -61,7 +61,7 @@ const benchRecipe = buildWordPressBenchRecipe({
   workloads: [{ id: "noop", file: "tests/bench/noop.php" }],
   lifecycle: { setup: [{ type: "php", code: "update_option('bench_setup', 'yes');" }] },
   resetPolicy: { betweenIterations: "object-cache" },
-  extraPlugins: [{ source: "/repo/demo-plugin", slug: "demo-plugin", pluginFile: "demo-plugin/demo.php", activate: false }],
+  extra_plugins: [{ source: "/repo/demo-plugin", slug: "demo-plugin", pluginFile: "demo-plugin/demo.php", activate: false }],
   mounts: [{ source: "/repo/db.php", target: "/wordpress/wp-content/db.php" }],
 })
 

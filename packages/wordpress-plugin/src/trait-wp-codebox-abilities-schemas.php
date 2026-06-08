@@ -511,11 +511,6 @@ private static function object_array_property_schema( string $description = '' )
 }
 
 /** @return array<string,mixed> */
-private static function legacy_task_property_schema(): array {
-	return self::string_property_schema( 'Legacy task description. Prefer goal for new product callers.' );
-}
-
-/** @return array<string,mixed> */
 private static function approved_files_schema( string $description ): array {
 	return self::string_array_property_schema( $description );
 }
@@ -552,7 +547,7 @@ private static function host_agent_task_input_properties( array $task_input_sche
 		'provider_plugin_paths'  => self::string_array_property_schema( $detailed ? 'AI provider plugin directories to mount and activate inside the sandbox.' : '' ),
 		'agent_bundles'          => self::agent_bundle_schema(),
 		'runtime_task'           => self::object_property_schema( $detailed ? 'Generic runtime task request. WP Codebox forwards input to the requested sandbox-local ability after importing agent_bundles.' : '' ),
-		'parent_request'         => self::object_property_schema( $detailed ? 'External orchestrator task request normalized by wp_codebox_normalize_parent_task_request adapters into the WP Codebox runner contract.' : '' ),
+		'parent_request'         => self::object_property_schema( $detailed ? 'Canonical wp-codebox/task-input/v1 parent request normalized into the WP Codebox runner contract.' : '' ),
 		'component_contracts'    => self::component_contracts_schema( $detailed ? 'Caller-declared runtime components WP Codebox should package, mount, or probe.' : '' ),
 		'mounts'                 => $mount_schema,
 		'workspaces'             => self::object_array_property_schema( $detailed ? 'Recipe workspace entries to seed as policy-checked writable repositories.' : '' ),
@@ -578,7 +573,6 @@ private static function host_agent_task_input_properties( array $task_input_sche
 	if ( ! empty( $options['task_fields'] ) ) {
 		$properties = array(
 			'goal'                => $task_input_schema['properties']['goal'],
-			'task'                => self::legacy_task_property_schema(),
 			'target'              => $task_input_schema['properties']['target'],
 			'allowed_tools'       => $task_input_schema['properties']['allowed_tools'],
 			'sandbox_tool_policy' => $task_input_schema['properties']['sandbox_tool_policy'],
@@ -652,7 +646,6 @@ private static function component_contracts_schema( string $description = '' ): 
 private static function browser_task_input_properties( array $task_input_schema, array $inherit_schema, array $session_input, bool $detailed = false ): array {
 	return array(
 		'goal'                    => $task_input_schema['properties']['goal'],
-		'task'                    => self::legacy_task_property_schema(),
 		'target'                  => $task_input_schema['properties']['target'],
 		'allowed_tools'           => $task_input_schema['properties']['allowed_tools'],
 		'sandbox_tool_policy'     => $task_input_schema['properties']['sandbox_tool_policy'],

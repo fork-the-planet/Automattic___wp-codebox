@@ -33,7 +33,7 @@ add_action( 'template_redirect', function () {
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./visual-compare-fixture",
         pluginFile: "visual-compare-fixture/visual-compare-fixture.php",

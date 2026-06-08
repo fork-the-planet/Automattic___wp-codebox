@@ -98,20 +98,16 @@ foreach (is_array($wp_codebox_run_php_active_plugins) ? $wp_codebox_run_php_acti
 
 function recipeActivePluginMetadata(spec: RuntimeCreateSpec): RecipePluginMetadata[] {
   const recipe = spec.metadata?.recipe && typeof spec.metadata.recipe === "object" && !Array.isArray(spec.metadata.recipe)
-    ? spec.metadata.recipe as { inputs?: { extra_plugins?: unknown; extraPlugins?: unknown } }
+    ? spec.metadata.recipe as { inputs?: { extra_plugins?: unknown } }
     : undefined
   const task = spec.metadata?.task && typeof spec.metadata.task === "object" && !Array.isArray(spec.metadata.task)
-    ? spec.metadata.task as { inputs?: { extra_plugins?: unknown; extraPlugins?: unknown } }
+    ? spec.metadata.task as { inputs?: { extra_plugins?: unknown } }
     : undefined
   const extraPlugins = Array.isArray(recipe?.inputs?.extra_plugins)
     ? recipe.inputs.extra_plugins
-    : Array.isArray(recipe?.inputs?.extraPlugins)
-      ? recipe.inputs.extraPlugins
-      : Array.isArray(task?.inputs?.extra_plugins)
-        ? task.inputs.extra_plugins
-        : Array.isArray(task?.inputs?.extraPlugins)
-          ? task.inputs.extraPlugins
-          : []
+    : Array.isArray(task?.inputs?.extra_plugins)
+      ? task.inputs.extra_plugins
+      : []
 
   const plugins: RecipePluginMetadata[] = extraPlugins
     .filter((plugin): plugin is RecipePluginMetadata => Boolean(plugin) && typeof plugin === "object" && !Array.isArray(plugin))

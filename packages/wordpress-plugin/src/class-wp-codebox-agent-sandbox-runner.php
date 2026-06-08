@@ -100,7 +100,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				static fn( array $worker ): array => array(
 					'id'                 => (string) $worker['id'],
 					'agent'              => (string) ( $worker['agent'] ?? $input['agent'] ?? '' ),
-					'goal'               => (string) ( $worker['goal'] ?? $worker['task'] ?? '' ),
+					'goal'               => (string) ( $worker['goal'] ?? '' ),
 					'artifact_namespace' => (string) $worker['id'],
 				),
 				$workers
@@ -472,9 +472,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				return new WP_Error( 'wp_codebox_fanout_worker_id_duplicate', 'Fanout worker ids must be unique.', array( 'status' => 400, 'worker_id' => $id ) );
 			}
 
-			$goal = trim( (string) ( $worker['goal'] ?? $worker['task'] ?? '' ) );
+			$goal = trim( (string) ( $worker['goal'] ?? '' ) );
 			if ( '' === $goal ) {
-				return new WP_Error( 'wp_codebox_fanout_worker_goal_missing', 'Each fanout worker requires goal or task.', array( 'status' => 400, 'worker_id' => $id ) );
+				return new WP_Error( 'wp_codebox_fanout_worker_goal_missing', 'Each fanout worker requires goal.', array( 'status' => 400, 'worker_id' => $id ) );
 			}
 
 			$seen[ $id ] = true;
@@ -506,7 +506,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		$this->ensure_directory( $worker_artifacts_path );
 
 		$input = array_merge( $parent, $worker );
-		unset( $input['workers'], $input['dependencies'], $input['aggregation'], $input['concurrency'], $input['task'] );
+		unset( $input['workers'], $input['dependencies'], $input['aggregation'], $input['concurrency'] );
 
 		$input['goal']               = (string) $worker['goal'];
 		$input['sandbox_session_id'] = $parent_session_id . ':' . (string) $worker['id'];
@@ -874,14 +874,60 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function normalize_parent_task_request( array $input ): array|WP_Error {
-		if ( function_exists( 'apply_filters' ) ) {
-			$filtered = apply_filters( 'wp_codebox_normalize_parent_task_request', null, $input );
-			if ( is_wp_error( $filtered ) || is_array( $filtered ) ) {
-				return $filtered;
+		$request = is_array( $input['parent_request'] ?? null ) ? $input['parent_request'] : $input;
+		$schema  = (string) ( $request['schema'] ?? '' );
+		if ( self::TASK_INPUT_SCHEMA !== $schema ) {
+			return $input;
+		}
+
+		$goal = trim( (string) ( $request['goal'] ?? '' ) );
+		if ( '' === $goal ) {
+			return new WP_Error( 'wp_codebox_parent_task_missing', 'parent_request.goal is required.', array( 'status' => 400 ) );
+		}
+
+		$context = is_array( $request['context'] ?? null ) ? $request['context'] : array();
+		foreach ( array( 'sandbox_session_id', 'group_key', 'audit_findings', 'orchestrator' ) as $context_key ) {
+			if ( array_key_exists( $context_key, $request ) ) {
+				$context[ $context_key ] = $request[ $context_key ];
 			}
 		}
 
-		return $input;
+		$normalized = array_merge(
+			$input,
+			array_filter(
+				array(
+					'goal'                   => $goal,
+					'target'                 => is_array( $request['target'] ?? null ) ? $request['target'] : array(),
+					'allowed_tools'          => is_array( $request['allowed_tools'] ?? null ) ? $request['allowed_tools'] : array(),
+					'sandbox_tool_policy'    => is_array( $request['sandbox_tool_policy'] ?? null ) ? $request['sandbox_tool_policy'] : array(),
+					'expected_artifacts'     => is_array( $request['expected_artifacts'] ?? null ) ? $request['expected_artifacts'] : array(),
+					'policy'                 => is_array( $request['policy'] ?? null ) ? $request['policy'] : array(),
+					'context'                => $context,
+					'provider'               => (string) ( $input['provider'] ?? $request['provider'] ?? '' ),
+					'model'                  => (string) ( $input['model'] ?? $request['model'] ?? '' ),
+					'provider_plugin_paths'  => $this->merge_string_lists( $input['provider_plugin_paths'] ?? array(), $request['provider_plugin_paths'] ?? array() ),
+					'agent_bundles'          => $this->agent_bundles( $input, $request ),
+					'runtime_task'           => $this->runtime_task( $input, $request ),
+					'component_contracts'    => $this->merge_array_lists( $input['component_contracts'] ?? array(), $request['component_contracts'] ?? array() ),
+					'secret_env'             => $this->merge_string_lists( $input['secret_env'] ?? array(), $request['secret_env'] ?? array() ),
+					'mounts'                 => $this->merge_array_lists( $input['mounts'] ?? array(), $request['mounts'] ?? array() ),
+					'workspaces'             => $this->merge_array_lists( $input['workspaces'] ?? array(), $request['workspaces'] ?? array() ),
+					'runtime_stack_mounts'   => $this->merge_array_lists( $input['runtime_stack_mounts'] ?? array(), $request['runtime_stack_mounts'] ?? array() ),
+					'runtime_overlays'       => $this->merge_array_lists( $input['runtime_overlays'] ?? array(), $request['runtime_overlays'] ?? array() ),
+					'task_timeout_seconds'   => (int) ( $input['task_timeout_seconds'] ?? $request['task_timeout_seconds'] ?? 0 ),
+					'max_turns'              => (int) ( $input['max_turns'] ?? $request['max_turns'] ?? 0 ),
+					'sandbox_session_id'     => (string) ( $input['sandbox_session_id'] ?? $request['sandbox_session_id'] ?? '' ),
+					'orchestrator'           => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : ( is_array( $request['orchestrator'] ?? null ) ? $request['orchestrator'] : array() ),
+					'artifacts_path'         => (string) ( $input['artifacts_path'] ?? $request['artifacts'] ?? '' ),
+					'wp_codebox_bin'         => (string) ( $input['wp_codebox_bin'] ?? $request['wp_codebox_bin'] ?? '' ),
+				),
+				static fn( mixed $value ): bool => '' !== $value && array() !== $value && 0 !== $value
+			)
+		);
+
+		unset( $normalized['parent_request'] );
+
+		return $normalized;
 	}
 
 	private function agent_slug( array $input ): string {
@@ -1142,7 +1188,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 		$task_inputs = array();
 		foreach ( $tasks as $task ) {
-			$normalized = is_array( $task ) ? $this->task_input( $task ) : $this->task_input( array( 'task' => $task ) );
+			if ( ! is_array( $task ) ) {
+				continue;
+			}
+
+			$normalized = $this->task_input( $task );
 			if ( is_wp_error( $normalized ) ) {
 				continue;
 			}
@@ -1203,7 +1253,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Direct ability input. @param array<string,mixed> $request Parent request input. @return array<int,array<string,mixed>> */
 	private function agent_bundles( array $input, array $request = array() ): array {
-		$bundles = $this->merge_array_lists( $input['agent_bundles'] ?? $input['agentBundles'] ?? array(), $request['agent_bundles'] ?? $request['agentBundles'] ?? array() );
+		$bundles = $this->merge_array_lists( $input['agent_bundles'] ?? array(), $request['agent_bundles'] ?? array() );
 		$normalized = array();
 		foreach ( $bundles as $bundle ) {
 			$source = isset( $bundle['source'] ) ? trim( (string) $bundle['source'] ) : '';
@@ -1684,7 +1734,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function resolved_sandbox_tool_policy( array $input ): array|WP_Error {
-		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : ( is_array( $input['sandboxToolPolicy'] ?? null ) ? $input['sandboxToolPolicy'] : array() );
+		$policy = is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array();
 		if ( empty( $policy ) && function_exists( 'apply_filters' ) ) {
 			$policy = apply_filters( 'wp_codebox_resolved_sandbox_tool_policy', $policy, $input );
 		}
@@ -1732,9 +1782,15 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				$issues[] = array( 'field' => 'tools[' . $index . '].id', 'message' => 'Duplicate tool id: ' . $id . '.' );
 			}
 			$seen[ $id ] = true;
-			foreach ( array( 'runtime_tool_id', 'execution_location', 'transport_visibility' ) as $field ) {
+			foreach ( array( 'runtime_tool_id' ) as $field ) {
 				if ( '' === trim( (string) ( $tool[ $field ] ?? '' ) ) ) {
 					$issues[] = array( 'field' => 'tools[' . $index . '].' . $field, 'message' => 'Tool ' . $field . ' must be a non-empty string.' );
+				}
+			}
+			$runtime = is_array( $tool['runtime'] ?? null ) ? $tool['runtime'] : array();
+			foreach ( array( self::AGENTS_API_RUNTIME_ENVIRONMENT, self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ) as $field ) {
+				if ( '' === trim( (string) ( $runtime[ $field ] ?? '' ) ) ) {
+					$issues[] = array( 'field' => 'tools[' . $index . '].runtime.' . $field, 'message' => 'Tool runtime.' . $field . ' must be a non-empty string.' );
 				}
 			}
 			if ( ! is_bool( $tool['allowed'] ?? null ) ) {
@@ -1792,19 +1848,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return array(
 			self::AGENTS_API_RUNTIME_ENVIRONMENT => isset( $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
 				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_ENVIRONMENT ] )
-				: $this->legacy_execution_environment( (string) ( $tool['execution_location'] ?? '' ) ),
+				: '',
 			self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE => isset( $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] ) && '' !== trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
 				? trim( (string) $runtime[ self::AGENTS_API_RUNTIME_CAPABILITY_SCOPE ] )
-				: $this->legacy_capability_scope( (string) ( $tool['transport_visibility'] ?? '' ) ),
+				: '',
 		);
-	}
-
-	private function legacy_execution_environment( string $location ): string {
-		return 'sandbox' === $location ? self::AGENTS_API_RUNTIME_LOCAL : self::AGENTS_API_CONTROL_PLANE;
-	}
-
-	private function legacy_capability_scope( string $visibility ): string {
-		return in_array( $visibility, array( 'sandbox', 'both' ), true ) ? self::AGENTS_API_RUNTIME_LOCAL : self::AGENTS_API_CONTROL_PLANE;
 	}
 
 	private function default_artifacts_path(): string {
@@ -2131,7 +2179,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			'workspaces'   => $workspaces,
 			'inherit'      => $this->inheritance_request( $input ),
 			'inheritance'  => $inheritance,
-			'extraPlugins' => array_merge( $this->component_plugins( $paths ), $provider_plugins ),
+			'extra_plugins' => array_merge( $this->component_plugins( $paths ), $provider_plugins ),
 			'secretEnv'    => $this->secret_env_names( $input, $inheritance ),
 		);
 		if ( ! empty( $agent_bundles ) ) {

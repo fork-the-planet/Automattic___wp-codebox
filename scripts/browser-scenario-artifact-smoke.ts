@@ -25,7 +25,7 @@ add_action('wp_footer', function () {
 await writeFile(recipePath, `${JSON.stringify({
   schema: "wp-codebox/workspace-recipe/v1",
   inputs: {
-    extraPlugins: [
+    extra_plugins: [
       {
         source: "./browser-scenario-fixture",
         pluginFile: "browser-scenario-fixture/browser-scenario-fixture.php",

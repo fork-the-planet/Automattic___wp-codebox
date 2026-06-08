@@ -114,7 +114,7 @@ async function writeRecipe(name: string, args: string[]): Promise<string> {
   await writeFile(recipePath, `${JSON.stringify({
     schema: "wp-codebox/workspace-recipe/v1",
     inputs: {
-      extraPlugins: [
+      extra_plugins: [
         {
           source: "./browser-web-performance-fixture",
           pluginFile: "browser-web-performance-fixture/browser-web-performance-fixture.php",

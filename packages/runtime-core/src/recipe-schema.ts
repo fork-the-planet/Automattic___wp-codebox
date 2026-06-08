@@ -63,10 +63,6 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             type: "array",
             items: { $ref: "#/$defs/extraPlugin" },
           },
-          extraPlugins: {
-            type: "array",
-            items: { $ref: "#/$defs/extraPlugin" },
-          },
           secretEnv: {
             type: "array",
             items: { type: "string", pattern: "^[A-Z_][A-Z0-9_]*$" },

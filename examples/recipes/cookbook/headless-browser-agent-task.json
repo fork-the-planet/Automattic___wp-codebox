@@ -15,7 +15,7 @@
     }
   },
   "inputs": {
-    "extraPlugins": [
+    "extra_plugins": [
       {
         "source": "./headless-browser-agent-task-plugin",
         "pluginFile": "headless-browser-agent-task-plugin/headless-browser-agent-task.php",

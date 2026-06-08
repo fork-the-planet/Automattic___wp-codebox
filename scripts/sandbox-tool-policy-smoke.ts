@@ -50,6 +50,10 @@ const genericSnapshot = {
       execution_location: "sandbox",
       transport_visibility: "both",
       allowed: true,
+      runtime: {
+        environment: "runtime_local",
+        capability_scope: "runtime_local",
+      },
       risk: "read",
       action: "workspace.read",
     },
@@ -59,6 +63,10 @@ const genericSnapshot = {
       execution_location: "parent",
       transport_visibility: "hidden",
       allowed: false,
+      runtime: {
+        environment: "control_plane",
+        capability_scope: "control_plane",
+      },
       risk: "deploy",
       action: "deploy.production",
     },

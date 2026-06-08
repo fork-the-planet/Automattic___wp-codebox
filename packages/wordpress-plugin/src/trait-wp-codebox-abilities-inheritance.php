@@ -50,7 +50,7 @@ private static function browser_task_payload( array $input, array $task_input, s
 			'message'     => (string) $task_input['goal'],
 			'session_id'  => $session_id,
 			'task_input'  => $task_input,
-			'agent_bundles' => self::normalize_agent_bundles( $input['agent_bundles'] ?? $input['agentBundles'] ?? array() ),
+			'agent_bundles' => self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
 			'inheritance' => $inheritance,
 			'secret_env'  => self::browser_secret_env_names( $input ),
 			'artifacts'   => array(

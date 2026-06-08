@@ -98,8 +98,9 @@ export function validateSandboxToolPolicySnapshot(input: unknown): SandboxToolPo
     }
     const id = typeof tool.id === "string" ? tool.id.trim() : ""
     const runtimeToolId = typeof tool.runtime_tool_id === "string" ? tool.runtime_tool_id.trim() : ""
-    const location = typeof tool.execution_location === "string" ? tool.execution_location.trim() : ""
-    const visibility = typeof tool.transport_visibility === "string" ? tool.transport_visibility.trim() : ""
+    const runtime = isPlainObject(tool.runtime) ? tool.runtime : {}
+    const runtimeEnvironment = typeof runtime[AGENTS_API_RUNTIME_ENVIRONMENT] === "string" ? runtime[AGENTS_API_RUNTIME_ENVIRONMENT].trim() : ""
+    const runtimeCapabilityScope = typeof runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE] === "string" ? runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE].trim() : ""
     if (!id) {
       issues.push({ code: "invalid-tool", field: `${field}.id`, message: `${field}.id must be a non-empty string.` })
     } else if (seen.has(id)) {
@@ -109,11 +110,11 @@ export function validateSandboxToolPolicySnapshot(input: unknown): SandboxToolPo
     if (!runtimeToolId) {
       issues.push({ code: "invalid-tool", field: `${field}.runtime_tool_id`, message: `${field}.runtime_tool_id must be a non-empty string.` })
     }
-    if (!location) {
-      issues.push({ code: "invalid-tool", field: `${field}.execution_location`, message: `${field}.execution_location must be a non-empty string.` })
+    if (!runtimeEnvironment) {
+      issues.push({ code: "invalid-tool", field: `${field}.runtime.environment`, message: `${field}.runtime.environment must be a non-empty string.` })
     }
-    if (!visibility) {
-      issues.push({ code: "invalid-tool", field: `${field}.transport_visibility`, message: `${field}.transport_visibility must be a non-empty string.` })
+    if (!runtimeCapabilityScope) {
+      issues.push({ code: "invalid-tool", field: `${field}.runtime.capability_scope`, message: `${field}.runtime.capability_scope must be a non-empty string.` })
     }
     if (typeof tool.allowed !== "boolean") {
       issues.push({ code: "invalid-tool", field: `${field}.allowed`, message: `${field}.allowed must be boolean.` })
@@ -140,21 +141,13 @@ export function sandboxToolRuntimeMetadata(tool: SandboxToolPolicyTool): Require
   const runtime = isPlainObject(tool.runtime) ? tool.runtime : {}
   const environment = typeof runtime[AGENTS_API_RUNTIME_ENVIRONMENT] === "string"
     ? runtime[AGENTS_API_RUNTIME_ENVIRONMENT]
-    : legacyExecutionEnvironment(tool.execution_location)
+    : ""
   const capabilityScope = typeof runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE] === "string"
     ? runtime[AGENTS_API_RUNTIME_CAPABILITY_SCOPE]
-    : legacyCapabilityScope(tool.transport_visibility)
+    : ""
 
   return {
     environment,
     capability_scope: capabilityScope,
   }
-}
-
-function legacyExecutionEnvironment(location: string): AgentsApiRuntimeEnvironment {
-  return location === "sandbox" ? AGENTS_API_RUNTIME_LOCAL : AGENTS_API_CONTROL_PLANE
-}
-
-function legacyCapabilityScope(visibility: string): AgentsApiRuntimeEnvironment {
-  return ["sandbox", "both"].includes(visibility) ? AGENTS_API_RUNTIME_LOCAL : AGENTS_API_CONTROL_PLANE
 }

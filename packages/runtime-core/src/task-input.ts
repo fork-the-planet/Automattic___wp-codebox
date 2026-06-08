@@ -4,7 +4,6 @@ import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 export type TaskTargetKind = "repo" | "site" | "plugin" | "theme" | (string & {})
 
 export const TASK_INPUT_SCHEMA = "wp-codebox/task-input/v1" as const
-export const AGENTS_API_TASK_INPUT_SCHEMA = "agents-api/task-input/v1" as const
 export const TASK_INPUT_VERSION = 1 as const
 
 export interface TaskTarget {
@@ -31,7 +30,7 @@ export interface TaskInputAgentBundle {
 }
 
 export interface TaskInput {
-  schema: typeof TASK_INPUT_SCHEMA | typeof AGENTS_API_TASK_INPUT_SCHEMA
+  schema: typeof TASK_INPUT_SCHEMA
   version: typeof TASK_INPUT_VERSION
   goal: string
   target: Partial<TaskTarget>
@@ -45,8 +44,6 @@ export interface TaskInput {
 
 export type TaskInputRequest = Partial<Omit<TaskInput, "schema" | "version" | "goal">> & {
   goal?: string
-  task?: string
-  sandboxToolPolicy?: SandboxToolPolicySnapshot
 }
 
 export const TASK_INPUT_JSON_SCHEMA = {
@@ -54,7 +51,7 @@ export const TASK_INPUT_JSON_SCHEMA = {
   type: "object",
   required: ["schema", "version", "goal", "target", "allowed_tools", "expected_artifacts", "agent_bundles", "sandbox_tool_policy", "policy", "context"],
   properties: {
-    schema: { enum: [TASK_INPUT_SCHEMA, AGENTS_API_TASK_INPUT_SCHEMA], description: "Task input contract schema id. The legacy WP Codebox schema remains accepted alongside the generic Agents API schema." },
+    schema: { const: TASK_INPUT_SCHEMA, description: "Task input contract schema id." },
     version: { const: TASK_INPUT_VERSION, description: "Task input contract version." },
     goal: { type: "string", description: "User-facing outcome the sandboxed coding agent should accomplish." },
     target: {
@@ -109,9 +106,8 @@ export const TASK_INPUT_JSON_SCHEMA = {
 } as const
 
 export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
-  const goal = String(input.goal ?? input.task ?? "").trim()
-  if (goal === "") throw new Error("goal or task is required.")
-  const rawPolicy = (input as Record<string, unknown>).sandbox_tool_policy ?? (input as Record<string, unknown>).sandboxToolPolicy
+  const goal = String(input.goal ?? "").trim()
+  if (goal === "") throw new Error("goal is required.")
 
   return {
     schema: TASK_INPUT_SCHEMA,
@@ -120,8 +116,8 @@ export function normalizeTaskInput(input: TaskInputRequest): TaskInput {
     target: isPlainObject(input.target) ? input.target : {},
     allowed_tools: stringList(input.allowed_tools),
     expected_artifacts: stringList(input.expected_artifacts),
-    agent_bundles: normalizeAgentBundles((input as Record<string, unknown>).agent_bundles ?? (input as Record<string, unknown>).agentBundles),
-    sandbox_tool_policy: isPlainObject(rawPolicy) ? rawPolicy as unknown as SandboxToolPolicySnapshot : {},
+    agent_bundles: normalizeAgentBundles(input.agent_bundles),
+    sandbox_tool_policy: isPlainObject(input.sandbox_tool_policy) ? input.sandbox_tool_policy as unknown as SandboxToolPolicySnapshot : {},
     policy: isPlainObject(input.policy) ? input.policy : {},
     context: isPlainObject(input.context) ? input.context : {},
   }

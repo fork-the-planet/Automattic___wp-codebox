@@ -91,9 +91,9 @@ final class WP_Codebox_Task_Input_Contract {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function normalize( array $input ): array|WP_Error {
-		$goal = trim( (string) ( $input['goal'] ?? $input['task'] ?? '' ) );
+		$goal = trim( (string) ( $input['goal'] ?? '' ) );
 		if ( '' === $goal ) {
-			return new WP_Error( 'wp_codebox_task_missing', 'goal or task is required.', array( 'status' => 400 ) );
+			return new WP_Error( 'wp_codebox_task_missing', 'goal is required.', array( 'status' => 400 ) );
 		}
 
 		return array(
@@ -103,8 +103,8 @@ final class WP_Codebox_Task_Input_Contract {
 			'target'             => is_array( $input['target'] ?? null ) ? $input['target'] : array(),
 			'allowed_tools'      => self::string_list( $input['allowed_tools'] ?? array() ),
 			'expected_artifacts' => self::string_list( $input['expected_artifacts'] ?? array() ),
-			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? $input['agentBundles'] ?? array() ),
-			'sandbox_tool_policy' => is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : ( is_array( $input['sandboxToolPolicy'] ?? null ) ? $input['sandboxToolPolicy'] : array() ),
+			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? array() ),
+			'sandbox_tool_policy' => is_array( $input['sandbox_tool_policy'] ?? null ) ? $input['sandbox_tool_policy'] : array(),
 			'policy'             => is_array( $input['policy'] ?? null ) ? $input['policy'] : array(),
 			'context'            => is_array( $input['context'] ?? null ) ? $input['context'] : array(),
 		);

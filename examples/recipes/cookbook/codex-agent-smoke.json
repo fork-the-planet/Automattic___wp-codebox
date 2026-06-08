@@ -22,7 +22,7 @@
     ]
   },
   "inputs": {
-    "extraPlugins": [
+    "extra_plugins": [
       {
         "source": "/path/to/agents-api",
         "slug": "agents-api",
