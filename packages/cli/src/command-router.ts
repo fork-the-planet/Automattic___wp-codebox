@@ -21,6 +21,7 @@ const cliCommandRoutes = {
     diagnostics: "artifactsDiagnostics",
     "transfer-verify": "artifactsTransferVerify",
     "transfer-probes": "artifactsTransferProbes",
+    "export-links": "artifactsExportLinks",
     benchmark: "artifactsBenchmark",
     "discover-partial": "artifactsDiscoverPartial",
     "bench-results": "artifactsBenchResults",

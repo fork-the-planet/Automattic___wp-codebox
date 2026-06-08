@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { buildArtifactDiagnostics, buildTransferProbeDiagnostics, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics, type PartialArtifactDiscoveryResult, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
+import { buildArtifactDiagnostics, buildReviewerArtifactExportLinks, buildTransferProbeDiagnostics, discoverPartialRunArtifacts, preflightArtifactBundleApply, verifyArtifactBundle, verifyTransferProofBundle, type ArtifactBundleApplyPreflightResult, type ArtifactBundleVerificationResult, type ArtifactDiagnosticNormalizerOptions, type ArtifactDiagnostics, type PartialArtifactDiscoveryResult, type ReviewerArtifactExportLinks, type TransferProbeDiagnosticsResult, type TransferProofBundleVerificationResult } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "@automattic/wp-codebox-playground"
 import { printArtifactVerifyHumanOutput } from "../output.js"
 
@@ -28,6 +28,14 @@ interface ArtifactDiscoverPartialOptions {
 
 interface ArtifactDiagnosticsOptions extends ArtifactDiagnosticNormalizerOptions {
   inputFile: string
+  json: boolean
+}
+
+interface ArtifactExportLinksOptions {
+  bundleDirectory: string
+  baseUrl: string
+  includeKinds: string[]
+  includePaths: string[]
   json: boolean
 }
 
@@ -116,6 +124,18 @@ export async function runArtifactsTransferProbesCommand(args: string[]): Promise
   return output.status === "passed" ? 0 : 1
 }
 
+export async function runArtifactsExportLinksCommand(args: string[]): Promise<number> {
+  const options = parseArtifactExportLinksOptions(args)
+  const output = await exportLinks(options)
+  if (!options.json) {
+    printArtifactExportLinksHumanOutput(output)
+    return 0
+  }
+
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
+  return 0
+}
+
 export async function runArtifactsBenchmarkCommand(args: string[]): Promise<number> {
   const options = parseBenchmarkArtifactsOptions(args)
   const output = await benchmarkArtifacts(options)
@@ -170,6 +190,14 @@ async function transferVerify(options: ArtifactVerifyOptions): Promise<TransferP
 
 async function transferProbes(options: ArtifactVerifyOptions): Promise<TransferProbeDiagnosticsResult> {
   return buildTransferProbeDiagnostics(resolve(options.bundleDirectory))
+}
+
+async function exportLinks(options: ArtifactExportLinksOptions): Promise<ReviewerArtifactExportLinks> {
+  return buildReviewerArtifactExportLinks(resolve(options.bundleDirectory), {
+    baseUrl: options.baseUrl,
+    includeKinds: options.includeKinds,
+    includePaths: options.includePaths,
+  })
 }
 
 async function benchmarkArtifacts(options: BenchmarkArtifactsOptions): Promise<BenchmarkArtifactsOutput> {
@@ -302,6 +330,54 @@ function parseArtifactDiscoverPartialOptions(args: string[]): ArtifactDiscoverPa
   return options as ArtifactDiscoverPartialOptions
 }
 
+function parseArtifactExportLinksOptions(args: string[]): ArtifactExportLinksOptions {
+  const options: Partial<ArtifactExportLinksOptions> = { json: false, includeKinds: [], includePaths: [] }
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (arg === "--json") {
+      options.json = true
+      continue
+    }
+
+    const [name, inlineValue] = arg.split("=", 2)
+    const value = inlineValue ?? args[++index]
+    if (!name.startsWith("--") || value === undefined) {
+      throw new Error(`Invalid argument: ${arg}`)
+    }
+
+    switch (name) {
+      case "--bundle":
+      case "--artifacts":
+        options.bundleDirectory = value
+        break
+      case "--base-url":
+      case "--url-base":
+        options.baseUrl = value
+        break
+      case "--kind":
+      case "--include-kind":
+        options.includeKinds?.push(value)
+        break
+      case "--path":
+      case "--include-path":
+        options.includePaths?.push(value)
+        break
+      default:
+        throw new Error(`Unknown option: ${name}`)
+    }
+  }
+
+  if (!options.bundleDirectory) {
+    throw new Error("Missing required option: --bundle")
+  }
+  if (!options.baseUrl) {
+    throw new Error("Missing required option: --base-url")
+  }
+
+  return options as ArtifactExportLinksOptions
+}
+
 function parseArtifactBrowserMetricsOptions(args: string[]): ArtifactVerifyOptions {
   return parseArtifactVerifyOptions(args)
 }
@@ -423,6 +499,15 @@ function printArtifactTransferProbesHumanOutput(output: TransferProbeDiagnostics
   console.log(`Diagnostics: ${output.summary.total} (${output.summary.errors} error(s), ${output.summary.warnings} warning(s))`)
   for (const diagnostic of output.diagnostics) {
     console.log(`- ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`)
+  }
+}
+
+function printArtifactExportLinksHumanOutput(output: ReviewerArtifactExportLinks): void {
+  console.log("WP Codebox reviewer artifact export links")
+  console.log(`Artifact: ${output.artifactId}`)
+  console.log(`Files: ${output.files.length}`)
+  for (const file of output.files) {
+    console.log(`- ${file.kind} ${file.path}: ${file.url}`)
   }
 }
 
