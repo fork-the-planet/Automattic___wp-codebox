@@ -94,6 +94,7 @@ function agentChatTaskCode(options: AgentSandboxCodeOptions): string {
   const timeoutLimit = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0
   const agentBundles = normalizeAgentBundleSpecs(options.agentBundles ?? [])
   const runtimeTask = normalizeRuntimeTask(options.runtimeTask, input)
+  const sandboxWorkspaceJson = JSON.stringify(sandboxWorkspace ?? null)
 
   return `
 if (function_exists('wp_set_current_user')) {
@@ -119,19 +120,35 @@ add_filter('datamachine_code_remote_workspace_backend_should_handle', '__return_
 
 $sandbox_workspace_adoptions = array();
 if (function_exists('wp_get_ability')) {
-    $sandbox_adopt_callback = static function () use (&$sandbox_workspace_adoptions): void {
+    $sandbox_workspace_contract = json_decode(${JSON.stringify(sandboxWorkspaceJson)}, true);
+    $sandbox_repo_backed_mounts = array();
+    if (is_array($sandbox_workspace_contract) && is_array($sandbox_workspace_contract['mounts'] ?? null)) {
+        foreach ($sandbox_workspace_contract['mounts'] as $sandbox_mount) {
+            if (!is_array($sandbox_mount)) {
+                continue;
+            }
+            $sandbox_mount_target = rtrim((string) ($sandbox_mount['target'] ?? ''), '/');
+            if ('' === $sandbox_mount_target) {
+                continue;
+            }
+            if ('repo-backed' === (string) ($sandbox_mount['sourceMode'] ?? '')) {
+                $sandbox_repo_backed_mounts[$sandbox_mount_target] = true;
+            }
+        }
+    }
+    $sandbox_adopt_callback = static function () use (&$sandbox_workspace_adoptions, $sandbox_repo_backed_mounts): void {
         $sandbox_adopt_ability = wp_get_ability('datamachine-code/workspace-adopt') ?: wp_get_ability('datamachine/workspace-adopt');
         if (!$sandbox_adopt_ability || !method_exists($sandbox_adopt_ability, 'execute')) {
             return;
         }
         foreach (glob(rtrim(DATAMACHINE_WORKSPACE_PATH, '/') . '/*', GLOB_ONLYDIR) ?: array() as $sandbox_workspace_dir) {
             $sandbox_workspace_name = basename($sandbox_workspace_dir);
-            if (is_file($sandbox_workspace_dir . '/.git')) {
+            if (is_file($sandbox_workspace_dir . '/.git') || isset($sandbox_repo_backed_mounts[rtrim($sandbox_workspace_dir, '/')])) {
                 $sandbox_workspace_adoptions[$sandbox_workspace_name] = array(
                     'success' => true,
                     'skipped' => true,
-                    'reason' => 'linked_worktree_mount',
-                    'message' => 'Mounted linked worktrees are treated as sandbox workspaces, not Data Machine primary checkouts.',
+                    'reason' => 'repo_backed_mount',
+                    'message' => 'Mounted repo-backed workspaces are treated as sandbox workspaces, not Data Machine primary checkouts.',
                 );
                 continue;
             }

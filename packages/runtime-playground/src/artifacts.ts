@@ -152,7 +152,7 @@ interface RedactionResult {
 
 export const MAX_CAPTURED_MOUNT_FILES = 200
 export const MAX_CAPTURED_MOUNT_FILE_BYTES = 1024 * 1024
-export const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules"])
+export const SKIPPED_CAPTURE_DIRECTORIES = new Set([".git", "node_modules", "target"])
 
 const packageRequire = createRequire(import.meta.url)
 

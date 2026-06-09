@@ -116,7 +116,7 @@ export function vfsMountSnapshotPhp(hostSnapshots: HostMountSnapshot[]): string 
   const payload = JSON.stringify(JSON.stringify({ mounts: hostSnapshots }))
   return `<?php
 $payload = json_decode(${payload}, true);
-$skip = array_fill_keys(array('.git', 'node_modules'), true);
+$skip = array_fill_keys(array('.git', 'node_modules', 'target'), true);
 
 function wp_codebox_vfs_mount_files(string $root, array $host_hashes, array $skip): array {
     $files = array();
