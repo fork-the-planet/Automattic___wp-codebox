@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
-import { readdir, readFile, stat, writeFile } from "node:fs/promises"
+import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, stripUndefined, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { createPlaygroundRuntimeBackend } from "@automattic/wp-codebox-playground"
 import { Ajv2020 } from "ajv/dist/2020.js"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
@@ -125,6 +126,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let dependencyOverlays: PreparedDependencyOverlay[] = []
   let stagedFiles: PreparedStagedFile[] = []
   let overlays: PreparedRuntimeOverlay[] = []
+  const inputMountBaselinePaths: string[] = []
   let backendPackage: PreparedRuntimeBackendPackage | undefined
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
@@ -308,12 +310,13 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
     for (const mount of recipe.inputs?.mounts ?? []) {
       const source = resolve(recipeDirectory, mount.source)
+      const metadata = await inputMountMetadataWithBaseline(source, mount, inputMountBaselinePaths)
       await awaitRecipe(`input.mount:${mount.target}`, runtime.mount({
         type: await recipeMountType(source, mount.type),
         source,
         target: mount.target,
         mode: mount.mode ?? "readwrite",
-        metadata: mount.metadata,
+        metadata,
       }))
       interruption?.throwIfInterrupted()
     }
@@ -416,6 +419,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
       await awaitRecipe("runtime.release", releaseRuntime(activeRuntime, successfulRecipe ? options.previewHoldSeconds : 0))
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
+      await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
     runRecord = await runRegistry.read(runRecord.runId)
     interruption?.throwIfInterrupted()
@@ -529,7 +533,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
     }
 
-    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, () => cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays))
+    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
+      await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
+      await cleanupInputMountBaselines(inputMountBaselinePaths)
+    })
     runRecord = await runRegistry.read(runRecord.runId)
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     runRecord = await runRegistry.update(runRecord.runId, {
@@ -1642,6 +1649,59 @@ function recipeRunMetadata(recipe: WorkspaceRecipe, recipePath: string, workspac
     })),
     ...(backendPackage ? { preparedRuntimeBackend: backendPackage.provenance } : {}),
   }
+}
+
+async function inputMountMetadataWithBaseline(source: string, mount: WorkspaceRecipeMount, cleanupPaths: string[]): Promise<Record<string, unknown> | undefined> {
+  const metadata = mount.metadata ? { ...mount.metadata } : {}
+  if ((mount.mode ?? "readwrite") !== "readwrite") {
+    return Object.keys(metadata).length > 0 ? metadata : undefined
+  }
+  if (typeof metadata.baselineSource === "string" && metadata.baselineSource.length > 0) {
+    return metadata
+  }
+
+  let sourceStats
+  try {
+    sourceStats = await stat(source)
+  } catch {
+    return Object.keys(metadata).length > 0 ? metadata : undefined
+  }
+  if (!sourceStats.isDirectory() || await hasGitMetadata(source)) {
+    return Object.keys(metadata).length > 0 ? metadata : undefined
+  }
+
+  const baselineSource = await mkdtemp(join(tmpdir(), "wp-codebox-input-mount-baseline-"))
+  cleanupPaths.push(baselineSource)
+  await cp(source, baselineSource, {
+    recursive: true,
+    filter: (entry) => shouldCopyInputMountBaselineEntry(source, entry),
+  })
+  metadata.baselineSource = baselineSource
+  metadata.baselineStrategy = "input-mount-snapshot"
+  return metadata
+}
+
+async function cleanupInputMountBaselines(paths: string[]): Promise<void> {
+  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })))
+  paths.length = 0
+}
+
+async function hasGitMetadata(directory: string): Promise<boolean> {
+  try {
+    await stat(join(directory, ".git"))
+    return true
+  } catch {
+    return false
+  }
+}
+
+function shouldCopyInputMountBaselineEntry(sourceRoot: string, entry: string): boolean {
+  const relativePath = entry.slice(sourceRoot.length).replace(/^\/+/, "")
+  if (!relativePath) {
+    return true
+  }
+  const firstSegment = relativePath.split("/")[0]
+  return firstSegment !== ".git" && firstSegment !== "node_modules"
 }
 
 function recipeRunDependencyOverlay(overlay: PreparedDependencyOverlay): Record<string, unknown> {
