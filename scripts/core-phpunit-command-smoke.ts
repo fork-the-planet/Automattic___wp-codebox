@@ -83,6 +83,7 @@ assert.match(pluginCode, /pg_activate_plugin_file\(\$plugin_file, !empty\(\$cfg\
 assert.match(pluginCode, /do_action\('activate_' \. \$plugin_basename, \$network_wide\)/)
 assert.match(pluginCode, /update_site_option\('active_sitewide_plugins', \$active_plugins\)/)
 assert.match(pluginCode, /putenv\('WP_MULTISITE=1'\)/)
+assert.ok(pluginCode.includes("str_replace('\\\\', '/', $cwd)"))
 
 const fixtureRoot = mkdtempSync(join(tmpdir(), "wp-codebox-core-phpunit-"))
 const coreRoot = join(fixtureRoot, "wordpress")

@@ -550,7 +550,7 @@ CONFIG;
 }
 
 function pg_resolve_runtime_cwd(string $cwd, string $plugin_path): string {
-    $cwd = trim(str_replace('\\', '/', $cwd));
+    $cwd = trim(str_replace('\\\\', '/', $cwd));
     if ($cwd === '') {
         return $plugin_path;
     }
