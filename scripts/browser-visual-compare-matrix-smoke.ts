@@ -104,11 +104,14 @@ assert.equal(existsSync(matrixSummaryPath), true, "matrix summary should be capt
 const summary = JSON.parse(await readFile(matrixSummaryPath, "utf8")) as {
   schema: string
   status: string
-  metrics: { comparisons: number; different: number; maxMismatchPixels: number; meanMismatchRatio: number }
+  complete: boolean
+  metrics: { expectedComparisons: number; comparisons: number; different: number; maxMismatchPixels: number; meanMismatchRatio: number }
   comparisons: Array<{ name: string; status: string; files: Record<string, string>; comparison: { mismatchPixels: number } }>
 }
 assert.equal(summary.schema, "wp-codebox/visual-compare-matrix/v1")
 assert.equal(summary.status, "different")
+assert.equal(summary.complete, true)
+assert.equal(summary.metrics.expectedComparisons, 4)
 assert.equal(summary.metrics.comparisons, 4)
 assert.equal(summary.metrics.different, 4)
 assert.ok(summary.metrics.maxMismatchPixels > 0, "aggregate should expose max mismatch pixels")
@@ -134,6 +137,76 @@ assert.equal(review.browser?.probes?.[0]?.visualCompare?.status, "different", "r
 assert.ok((review.browser?.probes?.[0]?.visualCompare?.mismatchPixels ?? 0) > 0, "review summary should expose matrix max mismatch count")
 assert.equal(review.browser?.probes?.[0]?.visualCompare?.explanation, "files/browser/visual-compare/matrix-summary.json", "review summary should expose aggregate artifact")
 
+const partialRecipePath = join(workspace, "partial-recipe.json")
+const partialArtifactsRoot = join(workspace, "partial-artifacts")
+const completedComparison = summary.comparisons[0]
+assert.ok(completedComparison, "matrix smoke should have a completed comparison to reuse")
+const partialMatrix = {
+  comparisons: [
+    {
+      name: "desktop",
+      sourceScreenshot: join(artifactDirectory, completedComparison.files.sourceScreenshot),
+      candidateScreenshot: join(artifactDirectory, completedComparison.files.candidateScreenshot),
+      sourceLabel: "desktop-source",
+      candidateLabel: "desktop-candidate",
+    },
+    {
+      name: "mobile",
+      sourceScreenshot: join(workspace, "missing-source.png"),
+      candidateScreenshot: join(workspace, "missing-candidate.png"),
+      sourceLabel: "mobile-source",
+      candidateLabel: "mobile-candidate",
+    },
+  ],
+}
+await writeFile(partialRecipePath, `${JSON.stringify({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [
+      {
+        command: "wordpress.visual-compare",
+        args: [
+          `matrix-json=${JSON.stringify(partialMatrix)}`,
+          "threshold=0.1",
+        ],
+      },
+    ],
+  },
+  artifacts: {
+    directory: partialArtifactsRoot,
+  },
+}, null, 2)}\n`)
+
+const partialOutput = await runCliAllowFailure([
+  "packages/cli/dist/index.js",
+  "recipe-run",
+  "--recipe",
+  partialRecipePath,
+  "--json",
+])
+
+assert.equal(partialOutput.success, false, "partial matrix recipe should fail on the later missing screenshot")
+assert.ok(partialOutput.artifacts?.directory, "partial matrix failure should return an artifact directory")
+const partialSummaryPath = join(partialOutput.artifacts.directory, "files", "browser", "visual-compare", "matrix-summary.json")
+assert.equal(existsSync(partialSummaryPath), true, "partial matrix summary should be recoverable after later command failure")
+const partialSummary = JSON.parse(await readFile(partialSummaryPath, "utf8")) as {
+  schema: string
+  status: string
+  complete: boolean
+  limitations?: string[]
+  metrics: { expectedComparisons: number; comparisons: number }
+  comparisons: Array<{ name: string; files: Record<string, string>; comparison: { mismatchPixels: number } }>
+}
+assert.equal(partialSummary.schema, "wp-codebox/visual-compare-matrix/v1")
+assert.equal(partialSummary.status, "partial")
+assert.equal(partialSummary.complete, false)
+assert.equal(partialSummary.metrics.expectedComparisons, 2)
+assert.equal(partialSummary.metrics.comparisons, 1)
+assert.equal(partialSummary.comparisons[0]?.name, "desktop")
+assert.ok(partialSummary.limitations?.some((limitation) => limitation.includes("interrupted before all comparisons completed")), "partial summary should explain the interrupted contract")
+assert.equal(existsSync(join(partialOutput.artifacts.directory, partialSummary.comparisons[0]!.files.sourceScreenshot)), true, "partial summary should point to recovered source screenshot")
+assert.equal(existsSync(join(partialOutput.artifacts.directory, partialSummary.comparisons[0]!.files.candidateScreenshot)), true, "partial summary should point to recovered candidate screenshot")
+
 console.log("Browser visual compare matrix smoke passed")
 
 async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: { directory?: string }; error?: { message?: string } }> {
@@ -145,6 +218,19 @@ async function runCli(args: string[]): Promise<{ success?: boolean; artifacts?: 
   const code = await new Promise<number | null>((resolveCode) => child.on("close", resolveCode))
   if (code !== 0) {
     throw new Error(`CLI exited with ${code}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
+  }
+  return JSON.parse(stdout)
+}
+
+async function runCliAllowFailure(args: string[]): Promise<{ success?: boolean; artifacts?: { directory?: string }; error?: { message?: string } }> {
+  const child = spawn(process.execPath, args, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] })
+  let stdout = ""
+  let stderr = ""
+  child.stdout.on("data", (chunk) => { stdout += chunk })
+  child.stderr.on("data", (chunk) => { stderr += chunk })
+  const code = await new Promise<number | null>((resolveCode) => child.on("close", resolveCode))
+  if (code === 0) {
+    throw new Error(`CLI unexpectedly exited with 0\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`)
   }
   return JSON.parse(stdout)
 }
