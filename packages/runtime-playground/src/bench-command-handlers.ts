@@ -7,6 +7,7 @@ export interface BenchRunCodeOptions {
   env: Record<string, unknown>
   bootstrapFiles: string[]
   workloads: unknown[]
+  scenarioIds?: string[]
   lifecycle: Record<string, unknown>
   resetPolicy: Record<string, unknown>
   wpCliBridge?: { url: string; token: string }
@@ -24,6 +25,7 @@ $dependency_slugs = ${phpJsonDecodeExpression(options.dependencySlugs)};
 $bench_env = ${phpJsonDecodeExpression(options.env)};
 $bootstrap_files = ${phpJsonDecodeExpression(options.bootstrapFiles)};
 $configured_workloads = ${phpJsonDecodeExpression(options.workloads)};
+$selected_scenario_ids = ${phpJsonDecodeExpression(options.scenarioIds ?? [])};
 $bench_lifecycle = ${phpJsonDecodeExpression(options.lifecycle)};
 $bench_reset_policy = ${phpJsonDecodeExpression(options.resetPolicy)};
 $wp_cli_bridge_url = ${JSON.stringify(options.wpCliBridge?.url ?? null)};
@@ -630,9 +632,48 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
     return $payload;
 }
 
+function wp_codebox_bench_selected_scenario_ids(array $ids): array {
+    $selected = array();
+    foreach ($ids as $id) {
+        if (!is_string($id)) {
+            continue;
+        }
+        $id = trim($id);
+        if ($id !== '') {
+            $selected[$id] = true;
+        }
+    }
+    return $selected;
+}
+
+function wp_codebox_bench_scenario_selected(string $scenario_id, array $selected_ids): bool {
+    return empty($selected_ids) || isset($selected_ids[$scenario_id]);
+}
+
 $bench_dir = $plugin_path . '/tests/bench';
 $workload_files = is_dir($bench_dir) ? glob($bench_dir . '/*.php') : array();
 sort($workload_files, SORT_STRING);
+
+$selected_scenario_ids = is_array($selected_scenario_ids) ? wp_codebox_bench_selected_scenario_ids($selected_scenario_ids) : array();
+if (!empty($selected_scenario_ids)) {
+    $available_scenario_ids = array();
+    foreach ($workload_files as $workload_file) {
+        $available_scenario_ids[preg_replace('/\\.php$/', '', basename($workload_file))] = true;
+    }
+    foreach (is_array($configured_workloads) ? $configured_workloads : array() as $index => $workload) {
+        if (!is_array($workload)) {
+            continue;
+        }
+        $available_scenario_ids[isset($workload['id']) && is_string($workload['id']) ? $workload['id'] : 'configured-' . $index] = true;
+    }
+    if (empty(array_intersect_key($selected_scenario_ids, $available_scenario_ids))) {
+        throw new RuntimeException('wordpress.bench selected scenario ids did not match any known scenarios. diagnostic=' . wp_json_encode(array(
+            'schema' => 'wp-codebox/bench-scenario-selection-diagnostic/v1',
+            'selected_scenario_ids' => array_keys($selected_scenario_ids),
+            'available_scenario_ids' => array_keys($available_scenario_ids),
+        ), JSON_UNESCAPED_SLASHES));
+    }
+}
 
 $bench_lifecycle = is_array($bench_lifecycle) ? $bench_lifecycle : array();
 $bench_reset_policy = is_array($bench_reset_policy) ? $bench_reset_policy : array();
@@ -643,6 +684,11 @@ wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'setup', $plugin_path, $l
 
 $scenarios = array();
 foreach ($workload_files as $workload_file) {
+    $scenario_id = preg_replace('/\\.php$/', '', basename($workload_file));
+    if (!wp_codebox_bench_scenario_selected($scenario_id, $selected_scenario_ids)) {
+        continue;
+    }
+
     $callable = require $workload_file;
     if (!is_callable($callable)) {
         continue;
@@ -679,7 +725,7 @@ foreach ($workload_files as $workload_file) {
 
     $relative_file = substr($workload_file, strlen($plugin_path) + 1);
     $scenario = array(
-        'id' => preg_replace('/\\.php$/', '', basename($workload_file)),
+        'id' => $scenario_id,
         'source' => 'in_tree',
         'file' => $relative_file,
         'iterations' => $iterations,
@@ -712,6 +758,10 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
         continue;
     }
     $scenario_id = isset($workload['id']) && is_string($workload['id']) ? $workload['id'] : 'configured-' . $index;
+    if (!wp_codebox_bench_scenario_selected($scenario_id, $selected_scenario_ids)) {
+        continue;
+    }
+
     $timings = array();
     $metric_samples = array();
     $metadata = null;
@@ -757,6 +807,13 @@ foreach (is_array($configured_workloads) ? $configured_workloads : array() as $i
     }
     wp_codebox_bench_run_lifecycle_phase($bench_lifecycle, 'teardown', $plugin_path, $lifecycle_diagnostics);
     $scenarios[] = $scenario;
+}
+
+if (!empty($selected_scenario_ids) && empty($scenarios)) {
+    throw new RuntimeException('wordpress.bench selected scenario ids did not match any runnable scenarios. diagnostic=' . wp_json_encode(array(
+        'schema' => 'wp-codebox/bench-scenario-selection-diagnostic/v1',
+        'selected_scenario_ids' => array_keys($selected_scenario_ids),
+    ), JSON_UNESCAPED_SLASHES));
 }
 
 echo wp_json_encode(array(

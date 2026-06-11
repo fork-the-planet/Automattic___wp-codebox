@@ -976,6 +976,7 @@ async function validateRecipeStepArgs(step: WorkspaceRecipe["workflow"]["steps"]
     }
 
     validateInlineJsonArg(step, "workloads-json", "array", path, addIssue)
+    validateInlineJsonArg(step, "scenario-ids-json", "array", path, addIssue)
     validateInlineJsonArg(step, "lifecycle-json", "object", path, addIssue)
     const resetPolicy = validateInlineJsonArg(step, "reset-policy-json", "object", path, addIssue)
     if (resetPolicy && typeof resetPolicy === "object" && !Array.isArray(resetPolicy)) {
