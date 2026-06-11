@@ -2786,6 +2786,31 @@ async function runVisualComparePairCommand({
   let viewport: BrowserProbeViewport | null = null
   let sourceDomSnapshot: VisualCompareDomSnapshot | undefined
   let candidateDomSnapshot: VisualCompareDomSnapshot | undefined
+  const sourceSummary = (): Record<string, unknown> => ({
+    label: sourceLabel,
+    ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
+    ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
+    ...(sourceDomSnapshotRef ? { domSnapshot: sourceDomSnapshotRef } : {}),
+  })
+  const candidateSummary = (): Record<string, unknown> => ({
+    label: candidateLabel,
+    ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
+    ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
+    ...(candidateDomSnapshotRef ? { domSnapshot: candidateDomSnapshotRef } : {}),
+  })
+
+  const writePartialSummary = async (stage: "source-captured" | "candidate-captured"): Promise<void> => {
+    await writeVisualComparePartialSummary(summaryPath, {
+      artifactPathPrefix,
+      stage,
+      startedAt,
+      source: sourceSummary(),
+      candidate: candidateSummary(),
+      options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
+      preview,
+      viewport,
+    })
+  }
 
   if (sourceTargetUrl && candidateTargetUrl) {
     const browser = await launchChromiumBrowser()
@@ -2795,14 +2820,17 @@ async function runVisualComparePairCommand({
       const sourceCapture = await captureVisualCompareUrl(page, sourceTargetUrl, sourcePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
       finalSourceUrl = sourceCapture.finalUrl
       sourceDomSnapshot = sourceCapture.domSnapshot
+      await writePartialSummary("source-captured")
       const candidateCapture = await captureVisualCompareUrl(page, candidateTargetUrl, candidatePath, waitFor, durationMs, fullPage, maxExplanationCandidates, explainSelectors)
       finalCandidateUrl = candidateCapture.finalUrl
       candidateDomSnapshot = candidateCapture.domSnapshot
+      await writePartialSummary("candidate-captured")
     } finally {
       await browser.close()
     }
   } else if (sourceScreenshot && candidateScreenshot) {
     await writeFile(sourcePath, await readFile(await resolveVisualCompareScreenshotPath(sourceScreenshot, artifactRoot)))
+    await writePartialSummary("source-captured")
     await writeFile(candidatePath, await readFile(await resolveVisualCompareScreenshotPath(candidateScreenshot, artifactRoot)))
     if (sourceDomSnapshotRef && candidateDomSnapshotRef) {
       const sourceArtifact = await readVisualCompareDomSnapshotArtifact(sourceDomSnapshotRef, artifactRoot)
@@ -2813,6 +2841,7 @@ async function runVisualComparePairCommand({
       finalCandidateUrl = candidateArtifact.finalUrl || candidateArtifact.snapshot.url
       viewport = candidateArtifact.viewport ?? sourceArtifact.viewport ?? viewport
     }
+    await writePartialSummary("candidate-captured")
   }
 
   const comparison = await comparePngFiles(sourcePath, candidatePath, diffPath, { threshold, includeAA, maxRegions })
@@ -2828,23 +2857,11 @@ async function runVisualComparePairCommand({
   })
   const finishedAt = now()
   const status = comparison.mismatchPixels === 0 && !comparison.dimensionMismatch ? "identical" : "different"
-  const sourceSummary = {
-    label: sourceLabel,
-    ...(sourceUrl ? { url: sourceUrl, finalUrl: finalSourceUrl } : {}),
-    ...(sourceScreenshot ? { screenshot: sourceScreenshot } : {}),
-    ...(sourceDomSnapshotRef ? { domSnapshot: sourceDomSnapshotRef } : {}),
-  }
-  const candidateSummary = {
-    label: candidateLabel,
-    ...(candidateUrl ? { url: candidateUrl, finalUrl: finalCandidateUrl } : {}),
-    ...(candidateScreenshot ? { screenshot: candidateScreenshot } : {}),
-    ...(candidateDomSnapshotRef ? { domSnapshot: candidateDomSnapshotRef } : {}),
-  }
   const baseline = baselineRef
     ? await createVisualCompareBaselineDelta({
         baselineRef,
         artifactRoot,
-        current: { status, comparison, source: sourceSummary, candidate: candidateSummary },
+        current: { status, comparison, source: sourceSummary(), candidate: candidateSummary() },
       })
     : undefined
   const files = {
@@ -2859,8 +2876,8 @@ async function runVisualComparePairCommand({
     schema: "wp-codebox/visual-compare/v1",
     command: "wordpress.visual-compare",
     status,
-    source: sourceSummary,
-    candidate: candidateSummary,
+    source: sourceSummary(),
+    candidate: candidateSummary(),
     options: { waitFor, durationMs, fullPage, threshold, includeAA, maxRegions, maxExplanationElements, maxExplanationCandidates, ...(explainSelectors.length > 0 ? { explainSelectors } : {}) },
     limitations: explanation
       ? explanation.limitations
@@ -2945,44 +2962,10 @@ async function runVisualCompareMatrixCommand({
       artifactPathPrefix: `files/browser/visual-compare/${entry.name}`,
     })
     entries.push({ name: entry.name, artifact: result.artifact, summary: JSON.parse(result.output) as VisualComparePairSummary })
+    await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, startedAt, false)
   }
 
-  const finishedAt = now()
-  const comparisons = entries.map((entry) => ({
-    name: entry.name,
-    status: entry.summary.status,
-    source: entry.summary.source,
-    candidate: entry.summary.candidate,
-    options: entry.summary.options,
-    viewport: entry.summary.viewport,
-    files: entry.summary.files,
-    comparison: entry.summary.comparison,
-  }))
-  const mismatchRatios = comparisons.map((entry) => entry.comparison.mismatchRatio)
-  const mismatchPixels = comparisons.map((entry) => entry.comparison.mismatchPixels)
-  const matrixSummary = {
-    schema: "wp-codebox/visual-compare-matrix/v1",
-    command: "wordpress.visual-compare",
-    status: comparisons.every((entry) => entry.status === "identical") ? "identical" : "different",
-    startedAt,
-    finishedAt,
-    metrics: {
-      comparisons: comparisons.length,
-      identical: comparisons.filter((entry) => entry.status === "identical").length,
-      different: comparisons.filter((entry) => entry.status !== "identical").length,
-      maxMismatchRatio: Math.max(...mismatchRatios),
-      meanMismatchRatio: mismatchRatios.reduce((total, value) => total + value, 0) / mismatchRatios.length,
-      maxMismatchPixels: Math.max(...mismatchPixels),
-      meanMismatchPixels: mismatchPixels.reduce((total, value) => total + value, 0) / mismatchPixels.length,
-    },
-    comparisons,
-    files: {
-      summary: "files/browser/visual-compare/matrix-summary.json",
-    },
-  }
-  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
-  await mkdir(browserDirectory, { recursive: true })
-  await writeFile(join(browserDirectory, "matrix-summary.json"), `${JSON.stringify(matrixSummary, null, 2)}\n`)
+  const matrixSummary = await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, startedAt, true)
 
   const sourceScreenshots = entries.map((entry) => entry.artifact.files.sourceScreenshot).filter((file): file is string => typeof file === "string")
   const candidateScreenshots = entries.map((entry) => entry.artifact.files.candidateScreenshot).filter((file): file is string => typeof file === "string")
@@ -3016,8 +2999,8 @@ async function runVisualCompareMatrixCommand({
         status: matrixSummary.status,
         mismatchRatio: matrixSummary.metrics.maxMismatchRatio,
         mismatchPixels: matrixSummary.metrics.maxMismatchPixels,
-        totalPixels: comparisons.reduce((total, entry) => total + entry.comparison.totalPixels, 0),
-        dimensionMismatch: comparisons.some((entry) => entry.comparison.dimensionMismatch),
+        totalPixels: matrixSummary.comparisons.reduce((total, entry) => total + entry.comparison.totalPixels, 0),
+        dimensionMismatch: matrixSummary.comparisons.some((entry) => entry.comparison.dimensionMismatch),
         explanation: matrixSummary.files.summary,
       },
       viewport: firstArtifact?.summary.viewport ?? null,
@@ -3030,6 +3013,98 @@ async function runVisualCompareMatrixCommand({
   }
 }
 
+async function writeVisualComparePartialSummary(summaryPath: string, input: {
+  artifactPathPrefix: string
+  stage: "source-captured" | "candidate-captured"
+  startedAt: string
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  preview: ReturnType<typeof browserPreviewRouting>
+  viewport: BrowserProbeViewport | null
+}): Promise<void> {
+  const files = {
+    sourceScreenshot: `${input.artifactPathPrefix}/source.png`,
+    ...(input.stage === "candidate-captured" ? { candidateScreenshot: `${input.artifactPathPrefix}/candidate.png` } : {}),
+    summary: `${input.artifactPathPrefix}/summary.json`,
+  }
+  const summary = {
+    schema: "wp-codebox/visual-compare/v1",
+    command: "wordpress.visual-compare",
+    status: "partial",
+    partial: true,
+    stage: input.stage,
+    source: input.source,
+    candidate: input.candidate,
+    options: input.options,
+    limitations: ["visual compare was interrupted before full diff metrics were available; recovered files show the latest completed capture stage"],
+    preview: input.preview,
+    viewport: input.viewport,
+    startedAt: input.startedAt,
+    updatedAt: now(),
+    files,
+  }
+  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`)
+}
+
+async function writeVisualCompareMatrixSummary(
+  artifactRoot: string,
+  args: string[],
+  runtimeSpec: RuntimeCreateSpec | undefined,
+  server: PlaygroundCliServer,
+  expectedEntries: VisualCompareMatrixEntry[],
+  entries: Array<{ name: string; artifact: BrowserArtifact; summary: VisualComparePairSummary }>,
+  startedAt: string,
+  complete: boolean,
+): Promise<VisualCompareMatrixSummary> {
+  const comparisons = entries.map((entry) => ({
+    name: entry.name,
+    status: entry.summary.status,
+    source: entry.summary.source,
+    candidate: entry.summary.candidate,
+    options: entry.summary.options,
+    viewport: entry.summary.viewport,
+    files: entry.summary.files,
+    comparison: entry.summary.comparison,
+  }))
+  const mismatchRatios = comparisons.map((entry) => entry.comparison.mismatchRatio)
+  const mismatchPixels = comparisons.map((entry) => entry.comparison.mismatchPixels)
+  const maxMismatchRatio = mismatchRatios.length > 0 ? Math.max(...mismatchRatios) : 0
+  const maxMismatchPixels = mismatchPixels.length > 0 ? Math.max(...mismatchPixels) : 0
+  const matrixSummary: VisualCompareMatrixSummary = {
+    schema: "wp-codebox/visual-compare-matrix/v1",
+    command: "wordpress.visual-compare",
+    status: complete
+      ? comparisons.every((entry) => entry.status === "identical") ? "identical" : "different"
+      : "partial",
+    complete,
+    startedAt,
+    ...(complete ? { finishedAt: now() } : { updatedAt: now() }),
+    metrics: {
+      expectedComparisons: expectedEntries.length,
+      comparisons: comparisons.length,
+      identical: comparisons.filter((entry) => entry.status === "identical").length,
+      different: comparisons.filter((entry) => entry.status !== "identical").length,
+      maxMismatchRatio,
+      meanMismatchRatio: mismatchRatios.length > 0 ? mismatchRatios.reduce((total, value) => total + value, 0) / mismatchRatios.length : 0,
+      maxMismatchPixels,
+      meanMismatchPixels: mismatchPixels.length > 0 ? mismatchPixels.reduce((total, value) => total + value, 0) / mismatchPixels.length : 0,
+    },
+    comparisons,
+    files: {
+      summary: "files/browser/visual-compare/matrix-summary.json",
+    },
+    ...(!complete ? {
+      preview: entries[0]?.artifact.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
+      limitations: ["visual compare matrix was interrupted before all comparisons completed; recovered comparisons contain complete per-entry evidence for finished viewports"],
+    } : {}),
+  }
+  const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
+  await mkdir(browserDirectory, { recursive: true })
+  await writeFile(join(browserDirectory, "matrix-summary.json"), `${JSON.stringify(matrixSummary, null, 2)}\n`)
+  return matrixSummary
+}
+
 interface VisualComparePairSummary {
   status: string
   source: Record<string, unknown>
@@ -3038,6 +3113,39 @@ interface VisualComparePairSummary {
   viewport: BrowserProbeViewport | null
   files: Record<string, string>
   comparison: { mismatchRatio: number; mismatchPixels: number; totalPixels: number; dimensionMismatch: boolean }
+}
+
+interface VisualCompareMatrixSummary {
+  schema: "wp-codebox/visual-compare-matrix/v1"
+  command: "wordpress.visual-compare"
+  status: string
+  complete: boolean
+  startedAt: string
+  finishedAt?: string
+  updatedAt?: string
+  metrics: {
+    expectedComparisons: number
+    comparisons: number
+    identical: number
+    different: number
+    maxMismatchRatio: number
+    meanMismatchRatio: number
+    maxMismatchPixels: number
+    meanMismatchPixels: number
+  }
+  comparisons: Array<{
+    name: string
+    status: string
+    source: Record<string, unknown>
+    candidate: Record<string, unknown>
+    options: Record<string, unknown>
+    viewport: BrowserProbeViewport | null
+    files: Record<string, string>
+    comparison: VisualComparePairSummary["comparison"]
+  }>
+  files: { summary: string }
+  preview?: ReturnType<typeof browserPreviewRouting>
+  limitations?: string[]
 }
 
 interface VisualCompareMatrixEntry {
