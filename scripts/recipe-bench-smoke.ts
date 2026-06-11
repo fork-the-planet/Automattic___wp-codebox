@@ -52,9 +52,10 @@ writeFileSync(recipePath, `${JSON.stringify({
           `workloads-json=${JSON.stringify([
             {
               id: "noop",
-              source: "rig",
+              source: "external",
+              overridesDiscovered: true,
               run: [{ type: "php", file: "tests/bench/noop.php" }],
-              metadata: { kind: "rig" },
+              metadata: { kind: "external" },
             },
             {
               id: "configured-env",
@@ -111,7 +112,7 @@ assert.equal(output.benchResults.provenance.definition.schema, "wp-codebox/bench
 
 const scenario = output.benchResults.scenarios[0]
 assert.equal(scenario.id, "noop")
-assert.equal(scenario.source, "rig")
+assert.equal(scenario.source, "external")
 assert.equal(scenario.file, undefined)
 assert.equal(scenario.iterations, 2)
 assert.equal(scenario.metrics.duration.unit, "ms")
@@ -133,7 +134,7 @@ assert.equal(scenario.metrics.dependency_init_callback_count.samples.mean, 1)
 assert.equal(scenario.metrics.duration.samples.values.length, 2)
 assert.deepEqual(scenario.metrics.fixture_value.samples.values, [7, 7])
 assert.equal(scenario.metrics.fixture_value.samples.standard_deviation, 0)
-assert.equal(scenario.metadata.kind, "rig")
+assert.equal(scenario.metadata.kind, "external")
 assert.equal(scenario.metadata.fixture, "bench-plugin")
 const configured = output.benchResults.scenarios[1]
 assert.equal(configured.id, "configured-env")
