@@ -194,18 +194,34 @@ const partialSummary = JSON.parse(await readFile(partialSummaryPath, "utf8")) as
   status: string
   complete: boolean
   limitations?: string[]
-  metrics: { expectedComparisons: number; comparisons: number }
-  comparisons: Array<{ name: string; files: Record<string, string>; comparison: { mismatchPixels: number } }>
+  metrics: { expectedComparisons: number; comparisons: number; missing: number; failed: number }
+  comparisons: Array<{
+    name: string
+    status: string
+    files: Record<string, string>
+    comparison?: { mismatchPixels: number }
+    diagnostic?: { type: string; message: string; missingInputs?: Array<{ role: string; path: string }> }
+  }>
 }
 assert.equal(partialSummary.schema, "wp-codebox/visual-compare-matrix/v1")
 assert.equal(partialSummary.status, "partial")
 assert.equal(partialSummary.complete, false)
 assert.equal(partialSummary.metrics.expectedComparisons, 2)
 assert.equal(partialSummary.metrics.comparisons, 1)
+assert.equal(partialSummary.metrics.missing, 1)
+assert.equal(partialSummary.metrics.failed, 0)
 assert.equal(partialSummary.comparisons[0]?.name, "desktop")
-assert.ok(partialSummary.limitations?.some((limitation) => limitation.includes("interrupted before all comparisons completed")), "partial summary should explain the interrupted contract")
+assert.equal(partialSummary.comparisons[0]?.status, "different")
+assert.equal(partialSummary.comparisons[1]?.name, "mobile")
+assert.equal(partialSummary.comparisons[1]?.status, "missing")
+assert.equal(partialSummary.comparisons[1]?.diagnostic?.type, "missing-input")
+assert.equal(partialSummary.comparisons[1]?.diagnostic?.message, "Visual compare matrix entry is missing expected screenshot input.")
+assert.deepEqual(partialSummary.comparisons[1]?.diagnostic?.missingInputs?.map((input) => input.role), ["sourceScreenshot", "candidateScreenshot"])
+assert.ok(partialSummary.limitations?.some((limitation) => limitation.includes("interrupted or an expected input was missing")), "partial summary should explain the interrupted or missing-input contract")
 assert.equal(existsSync(join(partialOutput.artifacts.directory, partialSummary.comparisons[0]!.files.sourceScreenshot)), true, "partial summary should point to recovered source screenshot")
 assert.equal(existsSync(join(partialOutput.artifacts.directory, partialSummary.comparisons[0]!.files.candidateScreenshot)), true, "partial summary should point to recovered candidate screenshot")
+assert.ok(partialOutput.error?.message?.includes("wordpress.visual-compare matrix incomplete"), "failure should be reported as a structured partial matrix failure")
+assert.equal(partialOutput.error?.message?.includes("ENOENT"), false, "failure should not surface bare filesystem ENOENT as the primary signal")
 
 console.log("Browser visual compare matrix smoke passed")
 

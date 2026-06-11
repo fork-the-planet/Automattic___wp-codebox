@@ -2953,30 +2953,54 @@ async function runVisualCompareMatrixCommand({
   const baseArgs = args.filter((arg) => !arg.startsWith("matrix-json="))
   const startedAt = now()
   const entries: Array<{ name: string; artifact: BrowserArtifact; summary: VisualComparePairSummary }> = []
+  const failedEntries: VisualCompareMatrixFailedEntry[] = []
 
   for (const entry of matrix.entries) {
-    const result = await runVisualComparePairCommand({
-      artifactRoot,
-      runtimeSpec,
-      server,
-      args: mergeVisualCompareMatrixArgs(baseArgs, entry.args),
-      artifactPathPrefix: `files/browser/visual-compare/${entry.name}`,
-    })
-    entries.push({ name: entry.name, artifact: result.artifact, summary: JSON.parse(result.output) as VisualComparePairSummary })
-    await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, startedAt, false)
+    const entryArgs = mergeVisualCompareMatrixArgs(baseArgs, entry.args)
+    try {
+      const result = await runVisualComparePairCommand({
+        artifactRoot,
+        runtimeSpec,
+        server,
+        args: entryArgs,
+        artifactPathPrefix: `files/browser/visual-compare/${entry.name}`,
+      })
+      entries.push({ name: entry.name, artifact: result.artifact, summary: JSON.parse(result.output) as VisualComparePairSummary })
+      await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, failedEntries, startedAt, false)
+    } catch (error) {
+      failedEntries.push(await createVisualCompareMatrixFailedEntry(entry.name, entryArgs, artifactRoot, error))
+      const matrixSummary = await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, failedEntries, startedAt, false)
+      throw new BrowserCommandArtifactError(`wordpress.visual-compare matrix incomplete: ${errorMessage(error)}`, visualCompareMatrixArtifact(args, runtimeSpec, server, matrix.entries, entries, matrixSummary))
+    }
   }
 
-  const matrixSummary = await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, startedAt, true)
+  const matrixSummary = await writeVisualCompareMatrixSummary(artifactRoot, args, runtimeSpec, server, matrix.entries, entries, failedEntries, startedAt, true)
 
+  const artifact = visualCompareMatrixArtifact(args, runtimeSpec, server, matrix.entries, entries, matrixSummary)
+
+  return {
+    artifact,
+    output: `${JSON.stringify(matrixSummary, null, 2)}\n`,
+  }
+}
+
+function visualCompareMatrixArtifact(
+  args: string[],
+  runtimeSpec: RuntimeCreateSpec | undefined,
+  server: PlaygroundCliServer,
+  expectedEntries: VisualCompareMatrixEntry[],
+  entries: Array<{ name: string; artifact: BrowserArtifact; summary: VisualComparePairSummary }>,
+  matrixSummary: VisualCompareMatrixSummary,
+): BrowserArtifact {
   const sourceScreenshots = entries.map((entry) => entry.artifact.files.sourceScreenshot).filter((file): file is string => typeof file === "string")
   const candidateScreenshots = entries.map((entry) => entry.artifact.files.candidateScreenshot).filter((file): file is string => typeof file === "string")
   const diffScreenshots = entries.map((entry) => entry.artifact.files.diffScreenshot).filter((file): file is string => typeof file === "string")
   const visualDiffs = entries.map((entry) => entry.artifact.files.visualDiff).filter((file): file is string => typeof file === "string")
   const visualExplanations = entries.map((entry) => entry.artifact.files.visualExplanation).filter((file): file is string => typeof file === "string")
   const firstArtifact = entries[0]?.artifact
-  const artifact: BrowserArtifact = {
+  return {
     artifactType: "visual-compare",
-    requestedUrl: matrix.entries.map((entry) => entry.name).join(","),
+    requestedUrl: expectedEntries.map((entry) => entry.name).join(","),
     url: firstArtifact?.url ?? "visual-compare-matrix",
     preview: firstArtifact?.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
     files: {
@@ -3000,17 +3024,12 @@ async function runVisualCompareMatrixCommand({
         status: matrixSummary.status,
         mismatchRatio: matrixSummary.metrics.maxMismatchRatio,
         mismatchPixels: matrixSummary.metrics.maxMismatchPixels,
-        totalPixels: matrixSummary.comparisons.reduce((total, entry) => total + entry.comparison.totalPixels, 0),
-        dimensionMismatch: matrixSummary.comparisons.some((entry) => entry.comparison.dimensionMismatch),
+        totalPixels: matrixSummary.comparisons.reduce((total, entry) => total + (entry.comparison?.totalPixels ?? 0), 0),
+        dimensionMismatch: matrixSummary.comparisons.some((entry) => entry.comparison?.dimensionMismatch === true),
         explanation: matrixSummary.files.summary,
       },
       viewport: firstArtifact?.summary.viewport ?? null,
     },
-  }
-
-  return {
-    artifact,
-    output: `${JSON.stringify(matrixSummary, null, 2)}\n`,
   }
 }
 
@@ -3055,6 +3074,7 @@ async function writeVisualCompareMatrixSummary(
   server: PlaygroundCliServer,
   expectedEntries: VisualCompareMatrixEntry[],
   entries: Array<{ name: string; artifact: BrowserArtifact; summary: VisualComparePairSummary }>,
+  failedEntries: VisualCompareMatrixFailedEntry[],
   startedAt: string,
   complete: boolean,
 ): Promise<VisualCompareMatrixSummary> {
@@ -3068,22 +3088,26 @@ async function writeVisualCompareMatrixSummary(
     files: entry.summary.files,
     comparison: entry.summary.comparison,
   }))
+  const allComparisons = [...comparisons, ...failedEntries]
   const mismatchRatios = comparisons.map((entry) => entry.comparison.mismatchRatio)
   const mismatchPixels = comparisons.map((entry) => entry.comparison.mismatchPixels)
   const maxMismatchRatio = mismatchRatios.length > 0 ? Math.max(...mismatchRatios) : 0
   const maxMismatchPixels = mismatchPixels.length > 0 ? Math.max(...mismatchPixels) : 0
+  const matrixComplete = complete && failedEntries.length === 0
   const matrixSummary: VisualCompareMatrixSummary = {
     schema: "wp-codebox/visual-compare-matrix/v1",
     command: "wordpress.visual-compare",
-    status: complete
+    status: matrixComplete
       ? comparisons.every((entry) => entry.status === "identical") ? "identical" : "different"
       : "partial",
-    complete,
+    complete: matrixComplete,
     startedAt,
-    ...(complete ? { finishedAt: now() } : { updatedAt: now() }),
+    ...(matrixComplete ? { finishedAt: now() } : { updatedAt: now() }),
     metrics: {
       expectedComparisons: expectedEntries.length,
       comparisons: comparisons.length,
+      missing: failedEntries.filter((entry) => entry.status === "missing").length,
+      failed: failedEntries.filter((entry) => entry.status === "failed").length,
       identical: comparisons.filter((entry) => entry.status === "identical").length,
       different: comparisons.filter((entry) => entry.status !== "identical").length,
       maxMismatchRatio,
@@ -3091,19 +3115,87 @@ async function writeVisualCompareMatrixSummary(
       maxMismatchPixels,
       meanMismatchPixels: mismatchPixels.length > 0 ? mismatchPixels.reduce((total, value) => total + value, 0) / mismatchPixels.length : 0,
     },
-    comparisons,
+    comparisons: allComparisons,
     files: {
       summary: "files/browser/visual-compare/matrix-summary.json",
     },
-    ...(!complete ? {
+    ...(!matrixComplete ? {
       preview: entries[0]?.artifact.preview ?? browserPreviewRouting(args, runtimeSpec, server.serverUrl),
-      limitations: ["visual compare matrix was interrupted before all comparisons completed; recovered comparisons contain complete per-entry evidence for finished viewports"],
+      limitations: ["visual compare matrix was interrupted or an expected input was missing before all comparisons completed; recovered comparisons contain complete per-entry evidence for finished viewports and structured diagnostics for incomplete entries"],
     } : {}),
   }
   const browserDirectory = join(artifactRoot, "files", "browser", "visual-compare")
   await mkdir(browserDirectory, { recursive: true })
   await writeFile(join(browserDirectory, "matrix-summary.json"), `${JSON.stringify(matrixSummary, null, 2)}\n`)
   return matrixSummary
+}
+
+async function createVisualCompareMatrixFailedEntry(name: string, args: string[], artifactRoot: string, error: unknown): Promise<VisualCompareMatrixFailedEntry> {
+  const sourceScreenshot = argValue(args, "source-screenshot")?.trim()
+  const candidateScreenshot = argValue(args, "candidate-screenshot")?.trim()
+  const missingInputs: Array<{ role: "sourceScreenshot" | "candidateScreenshot"; path: string }> = []
+  if (sourceScreenshot && !await visualCompareScreenshotExists(sourceScreenshot, artifactRoot)) {
+    missingInputs.push({ role: "sourceScreenshot", path: sourceScreenshot })
+  }
+  if (candidateScreenshot && !await visualCompareScreenshotExists(candidateScreenshot, artifactRoot)) {
+    missingInputs.push({ role: "candidateScreenshot", path: candidateScreenshot })
+  }
+
+  return {
+    name,
+    status: missingInputs.length > 0 ? "missing" : "failed",
+    source: visualCompareMatrixEndpoint(args, "source"),
+    candidate: visualCompareMatrixEndpoint(args, "candidate"),
+    options: visualCompareMatrixOptions(args),
+    viewport: null,
+    files: {},
+    diagnostic: {
+      type: missingInputs.length > 0 ? "missing-input" : "comparison-failed",
+      message: missingInputs.length > 0 ? "Visual compare matrix entry is missing expected screenshot input." : errorMessage(error),
+      ...(missingInputs.length > 0 ? { missingInputs } : {}),
+    },
+  }
+}
+
+async function visualCompareScreenshotExists(requestedPath: string, artifactRoot: string): Promise<boolean> {
+  try {
+    await resolveVisualCompareScreenshotPath(requestedPath, artifactRoot)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function visualCompareMatrixEndpoint(args: string[], role: "source" | "candidate"): Record<string, unknown> {
+  const label = argValue(args, `${role}-label`)?.trim() || role
+  const url = argValue(args, `${role}-url`)?.trim()
+  const screenshot = argValue(args, `${role}-screenshot`)?.trim()
+  const domSnapshot = argValue(args, `${role}-dom-snapshot`)?.trim()
+  return {
+    label,
+    ...(url ? { url } : {}),
+    ...(screenshot ? { screenshot } : {}),
+    ...(domSnapshot ? { domSnapshot } : {}),
+  }
+}
+
+function visualCompareMatrixOptions(args: string[]): Record<string, unknown> {
+  const requestedViewport = viewportArg(args, "viewport")
+  return {
+    waitFor: argValue(args, "wait-for")?.trim() || "domcontentloaded",
+    durationMs: durationArg(args, "duration", 0),
+    ...(requestedViewport ? { requestedViewport } : {}),
+    fullPage: strictBooleanArg(args, "full-page", true),
+    threshold: numberArg(args, "threshold", 0.1),
+    includeAA: strictBooleanArg(args, "include-aa", false),
+    maxRegions: positiveIntegerArg(args, "max-regions", 8),
+    maxExplanationElements: positiveIntegerArg(args, "max-explanation-elements", 25),
+    maxExplanationCandidates: positiveIntegerArg(args, "max-explanation-candidates", 160),
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 interface VisualComparePairSummary {
@@ -3127,6 +3219,8 @@ interface VisualCompareMatrixSummary {
   metrics: {
     expectedComparisons: number
     comparisons: number
+    missing: number
+    failed: number
     identical: number
     different: number
     maxMismatchRatio: number
@@ -3142,11 +3236,27 @@ interface VisualCompareMatrixSummary {
     options: Record<string, unknown>
     viewport: BrowserProbeViewport | null
     files: Record<string, string>
-    comparison: VisualComparePairSummary["comparison"]
+    comparison?: VisualComparePairSummary["comparison"]
+    diagnostic?: VisualCompareMatrixFailedEntry["diagnostic"]
   }>
   files: { summary: string }
   preview?: ReturnType<typeof browserPreviewRouting>
   limitations?: string[]
+}
+
+interface VisualCompareMatrixFailedEntry {
+  name: string
+  status: "missing" | "failed"
+  source: Record<string, unknown>
+  candidate: Record<string, unknown>
+  options: Record<string, unknown>
+  viewport: BrowserProbeViewport | null
+  files: Record<string, string>
+  diagnostic: {
+    type: "missing-input" | "comparison-failed"
+    message: string
+    missingInputs?: Array<{ role: "sourceScreenshot" | "candidateScreenshot"; path: string }>
+  }
 }
 
 interface VisualCompareMatrixEntry {
