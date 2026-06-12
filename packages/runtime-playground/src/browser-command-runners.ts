@@ -5,7 +5,7 @@ import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, vali
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserProbeArtifact, BrowserProbeArtifactRef, BrowserProbeAuthSummary, BrowserProbeCapabilityDiagnostics, BrowserProbeCheckpointRecord, BrowserProbeContextDetails, BrowserProbeErrorRecord, BrowserProbeLifecycleArtifact, BrowserProbeMeasuredMetric, BrowserProbeMemoryArtifact, BrowserProbeNetworkCountSummary, BrowserProbeNetworkRecord, BrowserProbeNetworkReviewSummary, BrowserProbePerformanceArtifact, BrowserProbePreviewRouting, BrowserProbeReviewSummary, BrowserProbeScriptMetadata, BrowserProbeViewport, BrowserRedirectDiagnosticsSummary, BrowserStepRecord, BrowserWordPressDiagnosticsSummary } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, chromiumBrowserMetadata, launchChromiumBrowser, settleBrowserNetworkTasks } from "./browser-capture-session.js"
 import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionStep } from "./browser-interactions.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
@@ -409,6 +409,7 @@ async function runSingleBrowserProbeCommand({
   const reviewPath = join(browserDirectory, "review.json")
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const summaryPath = join(browserDirectory, "summary.json")
+  const redirectDiagnosticsPath = join(browserDirectory, "redirect-diagnostics.json")
   const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
@@ -615,6 +616,18 @@ async function runSingleBrowserProbeCommand({
       await writeFile(performancePath, `${JSON.stringify(performanceArtifact, null, 2)}\n`)
     }
 
+    const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
+      artifactPath: `${browserFilesDirectory}/redirect-diagnostics.json`,
+      error: pendingError,
+      finalAttemptedUrl: finalUrl,
+      network,
+      requestedUrl: targetUrl,
+    })
+    if (redirectDiagnostics) {
+      await writeFile(redirectDiagnosticsPath, `${JSON.stringify(redirectDiagnostics, null, 2)}\n`)
+    }
+    const redirectDiagnosticsSummary = redirectDiagnostics?.summary
+
     const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
       artifactPath: `${browserFilesDirectory}/wordpress-diagnostics.json`,
       network,
@@ -655,6 +668,7 @@ async function runSingleBrowserProbeCommand({
         memory: Boolean(memoryArtifact),
         network: capture.has("network") || capturesNetworkForAssertions,
         performance: Boolean(performanceArtifact),
+        redirectDiagnostics: Boolean(redirectDiagnostics),
         screenshot: capture.has("screenshot") ? screenshotSha256 : undefined,
         wordpressDiagnostics: Boolean(wordpressDiagnostics),
       }),
@@ -666,6 +680,7 @@ async function runSingleBrowserProbeCommand({
       totalDurationMs: Date.now() - startedAtMs,
       viewport,
       waitFor,
+      redirectDiagnostics: redirectDiagnosticsSummary,
       wordpressDiagnostics: wordpressDiagnosticsSummary,
     })
     await writeFile(reviewPath, `${JSON.stringify(review, null, 2)}\n`)
@@ -682,11 +697,12 @@ async function runSingleBrowserProbeCommand({
         ...(capture.has("console") || capturesConsoleForAssertions ? { console: `${browserFilesDirectory}/console.jsonl` } : {}),
         ...(checkpoints.length > 0 ? { checkpoints: `${browserFilesDirectory}/checkpoints.jsonl` } : {}),
         ...(capture.has("errors") || capturesErrorsForAssertions ? { errors: `${browserFilesDirectory}/errors.jsonl` } : {}),
-        ...(capture.has("html") ? { html: `${browserFilesDirectory}/snapshot.html` } : {}),
+        ...(htmlSha256 ? { html: `${browserFilesDirectory}/snapshot.html` } : {}),
         ...(lifecycleArtifact ? { lifecycle: `${browserFilesDirectory}/lifecycle.json` } : {}),
         ...(memoryArtifact ? { memory: `${browserFilesDirectory}/memory.json` } : {}),
         ...(capture.has("network") || capturesNetworkForAssertions ? { network: `${browserFilesDirectory}/network.jsonl` } : {}),
         ...(performanceArtifact ? { performance: `${browserFilesDirectory}/performance.json` } : {}),
+        ...(redirectDiagnostics ? { redirectDiagnostics: `${browserFilesDirectory}/redirect-diagnostics.json` } : {}),
         review: `${browserFilesDirectory}/review.json`,
         ...(capture.has("screenshot") ? { screenshot: `${browserFilesDirectory}/screenshot.png` } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: `${browserFilesDirectory}/wordpress-diagnostics.json` } : {}),
@@ -698,7 +714,7 @@ async function runSingleBrowserProbeCommand({
         errors: errors.length,
         finalUrl,
         ...(windowLocationOrigin ? { windowLocationOrigin } : {}),
-        htmlSnapshot: capture.has("html"),
+        htmlSnapshot: Boolean(htmlSha256),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(lifecycleArtifact ? { lifecycle: { schema: lifecycleArtifact.schema, version: lifecycleArtifact.version, startedAtMs: lifecycleArtifact.startedAtMs, selectors: lifecycleArtifact.selectors } } : {}),
         ...(memoryArtifact ? { memory: memoryArtifact.peak } : {}),
@@ -708,6 +724,7 @@ async function runSingleBrowserProbeCommand({
         ...(performanceArtifact ? { performance: performanceArtifact.peak } : {}),
         progress: progress.summary(),
         review,
+        ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
         ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         context: contextDetails,
         auth: authSummary,
@@ -745,6 +762,7 @@ async function runSingleBrowserProbeCommand({
       auth: authSummary,
       capabilities: capabilityDiagnostics,
       review,
+      ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,
@@ -993,6 +1011,7 @@ function browserProbeReviewSummary(input: {
   totalDurationMs: number
   viewport: BrowserProbeViewport | null
   waitFor: string
+  redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
 }): BrowserProbeReviewSummary {
   const performance = input.performanceArtifact?.final
@@ -1056,6 +1075,7 @@ function browserProbeReviewSummary(input: {
       probe: browserProbeIssueSummary(probeErrors.length, Boolean(input.files.errors), input.files.errors?.path),
     },
     network: browserProbeNetworkReviewSummary(input.network, input.files.network),
+    ...(input.redirectDiagnostics ? { redirectDiagnostics: input.redirectDiagnostics } : {}),
     ...(input.wordpressDiagnostics ? { wordpressDiagnostics: input.wordpressDiagnostics } : {}),
     milestones: {
       status: input.checkpoints.length > 0 ? "captured" : "not-captured",
@@ -1141,6 +1161,7 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
   memory: boolean
   network: boolean
   performance: boolean
+  redirectDiagnostics: boolean
   screenshot?: string
   wordpressDiagnostics: boolean
 }): Record<string, BrowserProbeArtifactRef> {
@@ -1148,11 +1169,12 @@ function browserProbeArtifactRefs(browserFilesDirectory: string, capture: Set<st
     ...(input.console ? { console: { path: `${browserFilesDirectory}/console.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.checkpoints ? { checkpoints: { path: `${browserFilesDirectory}/checkpoints.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.errors ? { errors: { path: `${browserFilesDirectory}/errors.jsonl`, kind: "jsonl" as const } } : {}),
-    ...(capture.has("html") ? { html: { path: `${browserFilesDirectory}/snapshot.html`, kind: "html" as const, ...(input.html ? { sha256: input.html } : {}) } } : {}),
+    ...(input.html ? { html: { path: `${browserFilesDirectory}/snapshot.html`, kind: "html" as const, sha256: input.html } } : {}),
     ...(input.lifecycle ? { lifecycle: { path: `${browserFilesDirectory}/lifecycle.json`, kind: "json" as const } } : {}),
     ...(input.memory ? { memory: { path: `${browserFilesDirectory}/memory.json`, kind: "json" as const } } : {}),
     ...(input.network ? { network: { path: `${browserFilesDirectory}/network.jsonl`, kind: "jsonl" as const } } : {}),
     ...(input.performance ? { performance: { path: `${browserFilesDirectory}/performance.json`, kind: "json" as const } } : {}),
+    ...(input.redirectDiagnostics ? { redirectDiagnostics: { path: `${browserFilesDirectory}/redirect-diagnostics.json`, kind: "json" as const } } : {}),
     review: { path: `${browserFilesDirectory}/review.json`, kind: "json" as const },
     ...(capture.has("screenshot") ? { screenshot: { path: `${browserFilesDirectory}/screenshot.png`, kind: "png" as const, ...(input.screenshot ? { sha256: input.screenshot } : {}) } } : {}),
     ...(input.wordpressDiagnostics ? { wordpressDiagnostics: { path: `${browserFilesDirectory}/wordpress-diagnostics.json`, kind: "json" as const } } : {}),
@@ -1168,6 +1190,165 @@ function safeBrowserProbeUrl(value: string | undefined): string | null {
     return "data:[redacted]"
   }
   return value
+}
+
+interface BrowserRedirectDiagnosticsArtifact {
+  schema: "wp-codebox/browser-redirect-diagnostics/v1"
+  version: 1
+  capturedAt: string
+  status: BrowserRedirectDiagnosticsSummary["status"]
+  classification: BrowserRedirectDiagnosticsSummary["classification"]
+  reason: string
+  error?: { name: string; message: string }
+  chain: BrowserRedirectDiagnosticsChainEntry[]
+  summary: BrowserRedirectDiagnosticsSummary
+}
+
+interface BrowserRedirectDiagnosticsChainEntry {
+  url: string
+  method: string
+  status?: number
+  statusText?: string
+  timestamp: string
+  host?: string
+  path?: string
+  queryKeys: string[]
+  redactedQueryKeys: string[]
+}
+
+function browserRedirectDiagnosticsArtifact({
+  artifactPath,
+  error,
+  finalAttemptedUrl,
+  network,
+  requestedUrl,
+}: {
+  artifactPath: string
+  error?: Error
+  finalAttemptedUrl: string
+  network: BrowserProbeNetworkRecord[]
+  requestedUrl: string
+}): BrowserRedirectDiagnosticsArtifact | undefined {
+  const errorMessage = error?.message ?? ""
+  const tooManyRedirects = /ERR_TOO_MANY_REDIRECTS/i.test(errorMessage)
+  const documentEvents = network.filter((record) => record.resourceType === "document")
+  const redirectResponses = documentEvents.filter((record) => record.type === "response" && typeof record.status === "number" && record.status >= 300 && record.status < 400)
+  const chain = documentEvents.map(browserRedirectDiagnosticsChainEntry)
+  const repeatedUrls = repeatedBrowserRedirectValues(chain.map((entry) => entry.url), "url")
+  const repeatedHosts = repeatedBrowserRedirectValues(chain.map((entry) => entry.host).filter((host): host is string => Boolean(host)), "host")
+  const repeatedPaths = repeatedBrowserRedirectValues(chain.map((entry) => entry.path).filter((path): path is string => Boolean(path)), "path")
+  const hasRepeatedTarget = repeatedUrls.length > 0 || repeatedHosts.length > 0 || repeatedPaths.length > 0
+
+  if (!tooManyRedirects && redirectResponses.length === 0 && !hasRepeatedTarget) {
+    return undefined
+  }
+
+  const finalAttempted = browserRedirectSafeUrl(extractBrowserNavigationUrl(errorMessage) ?? finalAttemptedUrl)
+  const firstUrl = chain[0]?.url ?? browserRedirectSafeUrl(requestedUrl)
+  const lastUrl = chain.at(-1)?.url ?? finalAttempted
+  const sanitizedQueryKeys = [...new Set(chain.flatMap((entry) => entry.queryKeys))].sort()
+  const redactedQueryKeys = [...new Set(chain.flatMap((entry) => entry.redactedQueryKeys))].sort()
+  const classification: BrowserRedirectDiagnosticsSummary["classification"] = tooManyRedirects || hasRepeatedTarget ? "redirect-loop" : "redirect-chain"
+  const reason = tooManyRedirects
+    ? "playwright reported ERR_TOO_MANY_REDIRECTS"
+    : hasRepeatedTarget ? "document navigation repeated URL, host, or path values" : "document navigation included redirect responses"
+  const summary: BrowserRedirectDiagnosticsSummary = {
+    status: "captured",
+    artifact: artifactPath,
+    classification,
+    reason,
+    documentEvents: chain.length,
+    redirectResponses: redirectResponses.length,
+    repeatedUrls,
+    repeatedHosts,
+    repeatedPaths,
+    ...(firstUrl ? { firstUrl } : {}),
+    ...(lastUrl ? { lastUrl } : {}),
+    ...(finalAttempted ? { finalAttemptedUrl: finalAttempted } : {}),
+    sanitizedQueryKeys,
+    redactedQueryKeys,
+  }
+
+  return {
+    schema: "wp-codebox/browser-redirect-diagnostics/v1",
+    version: 1,
+    capturedAt: now(),
+    status: "captured",
+    classification,
+    reason,
+    ...(error ? { error: { name: error.name, message: sanitizeBrowserRedirectMessage(error.message) } } : {}),
+    chain,
+    summary,
+  }
+}
+
+function browserRedirectDiagnosticsChainEntry(record: BrowserProbeNetworkRecord): BrowserRedirectDiagnosticsChainEntry {
+  const parsed = parseBrowserRedirectUrl(record.url)
+  return {
+    url: browserRedirectSafeUrl(record.url),
+    method: record.method,
+    ...(typeof record.status === "number" ? { status: record.status } : {}),
+    ...(record.statusText ? { statusText: record.statusText } : {}),
+    timestamp: record.timestamp,
+    ...(parsed ? { host: parsed.host, path: parsed.pathname } : {}),
+    queryKeys: parsed?.queryKeys ?? [],
+    redactedQueryKeys: parsed?.redactedQueryKeys ?? [],
+  }
+}
+
+function browserRedirectSafeUrl(value: string): string {
+  if (/^data:/i.test(value)) {
+    return "data:[redacted]"
+  }
+  const parsed = parseBrowserRedirectUrl(value)
+  if (!parsed) {
+    return value
+  }
+  const search = parsed.queryKeys.length > 0
+    ? `?${parsed.queryKeys.map((key) => `${encodeURIComponent(key)}=[redacted]`).join("&")}`
+    : ""
+  return `${parsed.origin}${parsed.pathname}${search}${parsed.hash ? "#[redacted]" : ""}`
+}
+
+function parseBrowserRedirectUrl(value: string): { origin: string; host: string; pathname: string; hash: string; queryKeys: string[]; redactedQueryKeys: string[] } | undefined {
+  try {
+    const url = new URL(value)
+    const queryKeys = [...new Set([...url.searchParams.keys()])].sort()
+    return {
+      origin: url.origin,
+      host: url.host,
+      pathname: url.pathname || "/",
+      hash: url.hash,
+      queryKeys,
+      redactedQueryKeys: queryKeys.filter(isSensitiveBrowserRedirectQueryKey),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function isSensitiveBrowserRedirectQueryKey(key: string): boolean {
+  const tokens = key.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  return tokens.some((token) => ["auth", "bearer", "code", "cookie", "credential", "key", "login", "nonce", "pass", "password", "secret", "session", "state", "token"].includes(token))
+}
+
+function repeatedBrowserRedirectValues<Key extends "url" | "host" | "path">(values: string[], key: Key): Array<Record<Key, string> & { count: number }> {
+  const counts = new Map<string, number>()
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort(([leftValue, leftCount], [rightValue, rightCount]) => rightCount - leftCount || leftValue.localeCompare(rightValue))
+    .map(([value, count]) => ({ [key]: value, count }) as Record<Key, string> & { count: number })
+}
+
+function extractBrowserNavigationUrl(message: string): string | undefined {
+  return message.match(/\bat\s+(https?:\/\/\S+)/i)?.[1]?.replace(/[),.]+$/, "")
+}
+
+function sanitizeBrowserRedirectMessage(message: string): string {
+  return message.replace(/https?:\/\/[^\s"')]+/gi, (url) => browserRedirectSafeUrl(url.replace(/[),.]+$/, "")))
 }
 
 interface BrowserWordPressDiagnosticRecord {
@@ -1900,6 +2081,7 @@ export async function runBrowserActionsCommand({
   const screenshotPath = join(browserDirectory, "screenshot.png")
   const domSnapshotPath = join(browserDirectory, "dom-snapshot.json")
   const summaryPath = join(browserDirectory, "action-summary.json")
+  const redirectDiagnosticsPath = join(browserDirectory, "redirect-diagnostics.json")
   const wordpressDiagnosticsPath = join(browserDirectory, "wordpress-diagnostics.json")
   const startedAt = now()
   const startedAtMs = Date.now()
@@ -2044,6 +2226,18 @@ export async function runBrowserActionsCommand({
       await writeFile(networkPath, jsonLines(network))
     }
 
+    const redirectDiagnostics = browserRedirectDiagnosticsArtifact({
+      artifactPath: "files/browser/redirect-diagnostics.json",
+      error: pendingError,
+      finalAttemptedUrl: finalUrl,
+      network,
+      requestedUrl,
+    })
+    if (redirectDiagnostics) {
+      await writeFile(redirectDiagnosticsPath, `${JSON.stringify(redirectDiagnostics, null, 2)}\n`)
+    }
+    const redirectDiagnosticsSummary = redirectDiagnostics?.summary
+
     const wordpressDiagnostics = await browserWordPressDiagnosticsArtifact({
       artifactPath: "files/browser/wordpress-diagnostics.json",
       network,
@@ -2067,8 +2261,9 @@ export async function runBrowserActionsCommand({
         ...(capture.has("steps") ? { steps: "files/browser/steps.jsonl" } : {}),
         ...(capture.has("console") ? { console: "files/browser/console.jsonl" } : {}),
         ...(capture.has("errors") ? { errors: "files/browser/errors.jsonl" } : {}),
-        ...(capture.has("html") ? { html: "files/browser/snapshot.html" } : {}),
+        ...(htmlSha256 ? { html: "files/browser/snapshot.html" } : {}),
         ...(capture.has("network") ? { network: "files/browser/network.jsonl" } : {}),
+        ...(redirectDiagnostics ? { redirectDiagnostics: "files/browser/redirect-diagnostics.json" } : {}),
         ...(capture.has("screenshot") ? { screenshot: "files/browser/screenshot.png" } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots: domSnapshots.map((snapshot) => snapshot.snapshot) } : {}),
         ...(wordpressDiagnostics ? { wordpressDiagnostics: "files/browser/wordpress-diagnostics.json" } : {}),
@@ -2081,10 +2276,11 @@ export async function runBrowserActionsCommand({
         consoleMessages: consoleMessages.length,
         errors: errors.length,
         finalUrl,
-        htmlSnapshot: capture.has("html"),
+        htmlSnapshot: Boolean(htmlSha256),
         ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
         ...(domSnapshots.length > 0 ? { domSnapshots } : {}),
         networkEvents: network.length,
+        ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
         ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
         replayability: browserProbeReplayability(capture),
         screenshot: capture.has("screenshot"),
@@ -2112,6 +2308,7 @@ export async function runBrowserActionsCommand({
       limits: {
         maxDomSnapshotElements,
       },
+      ...(redirectDiagnosticsSummary ? { redirectDiagnostics: redirectDiagnosticsSummary } : {}),
       ...(wordpressDiagnosticsSummary ? { wordpressDiagnostics: wordpressDiagnosticsSummary } : {}),
       viewport,
       summary: artifact.summary,

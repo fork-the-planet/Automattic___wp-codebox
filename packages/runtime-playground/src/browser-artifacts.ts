@@ -73,8 +73,26 @@ export interface BrowserArtifactFiles {
   diffScreenshot?: string | string[]
   visualDiff?: string | string[]
   visualExplanation?: string | string[]
+  redirectDiagnostics?: string
   wordpressDiagnostics?: string
   summary: string
+}
+
+export interface BrowserRedirectDiagnosticsSummary {
+  status: "captured" | "not-applicable"
+  artifact?: string
+  classification: "redirect-loop" | "redirect-chain"
+  reason: string
+  documentEvents: number
+  redirectResponses: number
+  repeatedUrls: Array<{ url: string; count: number }>
+  repeatedHosts: Array<{ host: string; count: number }>
+  repeatedPaths: Array<{ path: string; count: number }>
+  firstUrl?: string
+  lastUrl?: string
+  finalAttemptedUrl?: string
+  sanitizedQueryKeys: string[]
+  redactedQueryKeys: string[]
 }
 
 export interface BrowserWordPressDiagnosticsSummary {
@@ -121,6 +139,7 @@ export interface BrowserArtifactSummary {
   performance?: BrowserProbePerformanceSummary
   progress?: BrowserProbeProgressSummary
   review?: BrowserProbeReviewSummary
+  redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   context?: BrowserProbeContextDetails
   auth?: BrowserProbeAuthSummary
@@ -242,6 +261,7 @@ export interface BrowserProbeReviewSummary {
     probe: BrowserProbeIssueSummary
   }
   network: BrowserProbeNetworkReviewSummary
+  redirectDiagnostics?: BrowserRedirectDiagnosticsSummary
   wordpressDiagnostics?: BrowserWordPressDiagnosticsSummary
   milestones: BrowserProbeMilestoneSummary
   artifacts: Record<string, BrowserProbeArtifactRef>
@@ -797,6 +817,7 @@ export function browserReviewSummary(probes: BrowserArtifact[]): ArtifactReviewB
       ...(probe.summary.assertions ? { assertions: { total: probe.summary.assertions.total, passed: probe.summary.assertions.passed, failed: probe.summary.assertions.failed } } : {}),
       performance: probe.files.performance,
       visualCompare: probe.summary.visualCompare,
+      redirectDiagnostics: probe.summary.redirectDiagnostics,
       wordpressDiagnostics: probe.summary.wordpressDiagnostics,
       summaryFile: probe.files.summary,
     })),
@@ -850,6 +871,7 @@ const BROWSER_ARTIFACT_FILE_MANIFEST: Record<keyof BrowserArtifactFiles, Browser
   diffScreenshot: { kind: "browser-visual-diff-screenshot", contentType: "image/png", redact: false },
   visualDiff: { kind: "browser-visual-diff", contentType: "application/json", redact: true },
   visualExplanation: { kind: "browser-visual-explanation", contentType: "application/json", redact: true },
+  redirectDiagnostics: { kind: "browser-redirect-diagnostics", contentType: "application/json", redact: true },
   wordpressDiagnostics: { kind: "browser-wordpress-diagnostics", contentType: "application/json", redact: true },
   summary: { kind: "browser-summary", contentType: "application/json", redact: true },
 }
