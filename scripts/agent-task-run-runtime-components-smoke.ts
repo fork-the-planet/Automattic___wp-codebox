@@ -292,22 +292,11 @@ assert.equal(structuredIndex.artifacts[0]?.payload?.theme, "warm editorial")
 
 const profileRoot = mkdtempSync(join(tmpdir(), "wp-codebox-agent-task-profile-"))
 const codexProviderPath = join(profileRoot, "ai-provider-for-openai@codex-oauth-provider")
-const openAiProviderPath = join(profileRoot, "ai-provider-for-openai")
 const phpAiClientPath = join(profileRoot, "php-ai-client@custom-provider-auth")
 mkdirSync(codexProviderPath, { recursive: true })
-mkdirSync(openAiProviderPath, { recursive: true })
-mkdirSync(join(codexProviderPath, "src", "Codex"), { recursive: true })
 mkdirSync(join(phpAiClientPath, "vendor"), { recursive: true })
 writeFileSync(join(codexProviderPath, "composer.json"), "{}\n")
-writeFileSync(join(openAiProviderPath, "composer.json"), "{}\n")
-writeFileSync(join(codexProviderPath, "plugin.php"), "<?php\n$registry->registerProvider(CodexProvider::class);\n")
-writeFileSync(join(codexProviderPath, "src", "Codex", "CodexProvider.php"), "<?php\nclass CodexProvider {}\n")
 writeFileSync(join(phpAiClientPath, "composer.json"), "{}\n")
-process.env.WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH = openAiProviderPath
-assert.throws(
-  () => buildAgentTaskRecipe({ goal: "Run a Codex subscription-backed agent", provider: "codex", runtime_overlay_profiles: ["codex-subscription"] }, normalizeTaskInput({ goal: "Run a Codex subscription-backed agent", provider: "codex", runtime_overlay_profiles: ["codex-subscription"] }), "trunk"),
-  /codex-subscription runtime overlay profile path from WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH does not satisfy profile requirements: .*provider plugin must register provider: codex/,
-)
 process.env.WP_CODEBOX_CODEX_PROVIDER_PLUGIN_PATH = codexProviderPath
 process.env.WP_CODEBOX_PHP_AI_CLIENT_PATH = phpAiClientPath
 
@@ -328,6 +317,10 @@ assert.equal(codexOverlays[0]?.kind, "bundled-library")
 assert.equal(codexOverlays[0]?.library, "php-ai-client")
 assert.equal(codexOverlays[0]?.source, phpAiClientPath)
 assert.equal(codexOverlays[0]?.strategy, "wordpress-scoped-bundle")
+assert.ok(agentCodeSource.includes("wp_codebox_validate_requested_provider"))
+assert.ok(agentCodeSource.includes("WordPress\\\\AiClient\\\\Providers\\\\ProviderRegistry"))
+assert.ok(agentCodeSource.includes("wp_codebox_provider_not_registered"))
+assert.ok(!agentTaskRunSource.includes("CodexProvider"))
 
 async function promiseMustSettle<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeout: NodeJS.Timeout | undefined

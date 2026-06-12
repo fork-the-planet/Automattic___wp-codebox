@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
@@ -290,7 +290,7 @@ function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlay
       defaults.providerPluginPaths.push(requiredProfilePath(CODEX_SUBSCRIPTION_PROFILE, CODEX_PROVIDER_PLUGIN_ENV, [
         "~/Developer/ai-provider-for-openai@codex-oauth-provider",
         "~/Developer/ai-provider-for-openai",
-      ], hasComposerPackage, hasCodexProviderRegistration, "provider plugin must register provider: codex"))
+      ], hasComposerPackage))
       defaults.runtimeOverlays.push({
         kind: "bundled-library",
         library: "php-ai-client",
@@ -309,17 +309,14 @@ function runtimeOverlayProfileDefaults(input: AgentTaskRunInput): RuntimeOverlay
   return defaults
 }
 
-function requiredProfilePath(profile: string, envName: string, candidates: string[], isUsablePath: (path: string) => boolean = existsSync, satisfiesProfile: (path: string) => boolean = () => true, requirement = "profile requirements"): string {
+function requiredProfilePath(profile: string, envName: string, candidates: string[], isUsablePath: (path: string) => boolean = existsSync): string {
   const explicit = stringValue(process.env[envName])
-  const resolved = explicit || candidates.map(resolveProfilePathCandidate).find((candidate) => isUsablePath(candidate) && satisfiesProfile(candidate)) || ""
+  const resolved = explicit || candidates.map(resolveProfilePathCandidate).find((candidate) => isUsablePath(candidate)) || ""
   if (!resolved) {
-    throw new Error(`${profile} runtime overlay profile requires ${envName} or one of: ${candidates.join(", ")} (${requirement})`)
+    throw new Error(`${profile} runtime overlay profile requires ${envName} or one of: ${candidates.join(", ")}`)
   }
   if (!isUsablePath(resolved)) {
     throw new Error(`${profile} runtime overlay profile path from ${envName} is not prepared: ${resolved}`)
-  }
-  if (!satisfiesProfile(resolved)) {
-    throw new Error(`${profile} runtime overlay profile path from ${envName} does not satisfy profile requirements: ${resolved} (${requirement})`)
   }
   return resolved
 }
@@ -330,18 +327,6 @@ function resolveProfilePathCandidate(candidate: string): string {
 
 function hasComposerPackage(candidate: string): boolean {
   return existsSync(join(candidate, "composer.json"))
-}
-
-function hasCodexProviderRegistration(candidate: string): boolean {
-  const pluginFile = join(candidate, "plugin.php")
-  const providerFile = join(candidate, "src", "Codex", "CodexProvider.php")
-  if (!existsSync(pluginFile) || !existsSync(providerFile)) return false
-  try {
-    const plugin = readFileSync(pluginFile, "utf8")
-    return plugin.includes("CodexProvider") && plugin.includes("registerProvider(CodexProvider::class)")
-  } catch {
-    return false
-  }
 }
 
 function hasInstalledComposerPackage(candidate: string): boolean {
