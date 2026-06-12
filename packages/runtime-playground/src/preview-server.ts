@@ -86,7 +86,24 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
 }
 
 function previewProxyServer(target: URL): PreviewProxyServer {
+  const upstreamQueue = createPreviewProxyQueue()
+
   return createHttpServer((incoming, outgoing) => {
+    upstreamQueue(() => proxyPreviewRequest(target, incoming, outgoing)).catch((error: Error) => writeProxyError(outgoing, error))
+  })
+}
+
+function proxyPreviewRequest(target: URL, incoming: IncomingMessage, outgoing: ServerResponse): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    const settle = () => {
+      if (settled) {
+        return
+      }
+      settled = true
+      resolve()
+    }
+
     const targetRequest = httpRequest(
       {
         protocol: target.protocol,
@@ -98,15 +115,59 @@ function previewProxyServer(target: URL): PreviewProxyServer {
       },
       (targetResponse) => {
         outgoing.writeHead(targetResponse.statusCode ?? 502, targetResponse.statusMessage, proxyResponseHeaders(targetResponse.headers))
-        targetResponse.on("error", (error) => outgoing.destroy(error))
+        targetResponse.on("error", (error) => {
+          outgoing.destroy(error)
+          settle()
+        })
+        outgoing.on("finish", settle)
+        outgoing.on("close", settle)
         targetResponse.pipe(outgoing)
       },
     )
 
-    targetRequest.on("error", (error) => writeProxyError(outgoing, error))
-    incoming.on("error", () => targetRequest.destroy())
+    targetRequest.on("error", (error) => {
+      writeProxyError(outgoing, error)
+      settle()
+    })
+    incoming.on("error", () => {
+      targetRequest.destroy()
+      settle()
+    })
     incoming.pipe(targetRequest)
   })
+}
+
+function createPreviewProxyQueue(): (task: () => Promise<void>) => Promise<void> {
+  let active = false
+  const pending: Array<() => void> = []
+
+  const acquire = async () => {
+    if (!active) {
+      active = true
+      return
+    }
+
+    await new Promise<void>((resolve) => pending.push(resolve))
+  }
+
+  const release = () => {
+    const next = pending.shift()
+    if (next) {
+      next()
+      return
+    }
+
+    active = false
+  }
+
+  return async (task) => {
+    await acquire()
+    try {
+      await task()
+    } finally {
+      release()
+    }
+  }
 }
 
 async function listenPreviewProxy(proxy: PreviewProxyServer, port: number, bind: string): Promise<void> {
