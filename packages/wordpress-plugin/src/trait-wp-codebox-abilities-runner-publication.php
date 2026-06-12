@@ -105,6 +105,7 @@ trait WP_Codebox_Abilities_Runner_Publication {
 				'from'         => array( 'type' => 'string' ),
 				'to'           => array( 'type' => 'string' ),
 				'path'         => array( 'type' => 'string' ),
+				'exclude_paths' => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 				'include_diff' => array( 'type' => 'boolean', 'default' => true ),
 			),
 		);
@@ -369,8 +370,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		}
 
 		$status_result = is_array( $status['result'] ?? null ) ? $status['result'] : array();
-		$files         = self::runner_publication_string_list( $status_result['files'] ?? array() );
-		$dirty         = (int) ( $status_result['dirty'] ?? count( $files ) );
+		$exclude_paths = self::runner_publication_string_list( $input['exclude_paths'] ?? array() );
+		$files         = self::filter_runner_workspace_capture_files( self::runner_publication_string_list( $status_result['files'] ?? array() ), $exclude_paths );
+		$dirty         = count( $files );
 		$backend       = (string) ( $status_result['backend'] ?? $normalized['workspace_backend'] ?? 'datamachine-code' );
 		$diff_result   = array();
 		$include_diff  = false !== ( $input['include_diff'] ?? true );
@@ -391,6 +393,9 @@ trait WP_Codebox_Abilities_Runner_Publication {
 			}
 
 			$diff_result = is_array( $diff['result'] ?? null ) ? $diff['result'] : array();
+			if ( ! empty( $exclude_paths ) && is_string( $diff_result['diff'] ?? null ) ) {
+				$diff_result['diff'] = self::filter_runner_workspace_capture_diff( (string) $diff_result['diff'], $exclude_paths );
+			}
 		}
 
 		return array_filter(
@@ -913,5 +918,76 @@ trait WP_Codebox_Abilities_Runner_Publication {
 		}
 
 		return array_values( array_filter( array_map( static fn( mixed $item ): string => trim( (string) $item ), $value ), static fn( string $item ): bool => '' !== $item ) );
+	}
+
+	/** @param array<int,string> $files @param array<int,string> $exclude_paths @return array<int,string> */
+	private static function filter_runner_workspace_capture_files( array $files, array $exclude_paths ): array {
+		$filtered = array();
+		foreach ( $files as $file ) {
+			$path = self::runner_workspace_status_path( $file );
+			if ( '' !== $path && ( empty( $exclude_paths ) || ! self::runner_workspace_capture_path_excluded( $path, $exclude_paths ) ) ) {
+				$filtered[] = $path;
+			}
+		}
+
+		return array_values( array_unique( $filtered ) );
+	}
+
+	/** @param array<int,string> $exclude_paths */
+	private static function filter_runner_workspace_capture_diff( string $diff, array $exclude_paths ): string {
+		if ( '' === $diff || empty( $exclude_paths ) ) {
+			return $diff;
+		}
+
+		$sections = preg_split( '/(?=^diff --git )/m', $diff );
+		if ( ! is_array( $sections ) ) {
+			return $diff;
+		}
+
+		$kept = array();
+		foreach ( $sections as $section ) {
+			if ( '' === $section ) {
+				continue;
+			}
+			if ( preg_match( '/^diff --git a\/(.*?) b\//m', $section, $matches ) && self::runner_workspace_capture_path_excluded( $matches[1], $exclude_paths ) ) {
+				continue;
+			}
+			$kept[] = $section;
+		}
+
+		return implode( '', $kept );
+	}
+
+	private static function runner_workspace_status_path( string $status_line ): string {
+		$line = trim( $status_line );
+		if ( preg_match( '/^(?:[ MADRCU?!]{1,2})\s+(.+)$/', $line, $matches ) ) {
+			$line = $matches[1];
+		}
+		if ( str_contains( $line, ' -> ' ) ) {
+			$parts = explode( ' -> ', $line );
+			$line  = (string) end( $parts );
+		}
+
+		return trim( $line, " \t\n\r\0\x0B\"'" );
+	}
+
+	/** @param array<int,string> $exclude_paths */
+	private static function runner_workspace_capture_path_excluded( string $path, array $exclude_paths ): bool {
+		$path = ltrim( trim( $path ), '/' );
+		foreach ( $exclude_paths as $pattern ) {
+			$pattern = ltrim( trim( $pattern ), '/' );
+			if ( '' === $pattern ) {
+				continue;
+			}
+			$prefix = str_ends_with( $pattern, '/**' ) ? substr( $pattern, 0, -3 ) : null;
+			if ( null !== $prefix && ( $path === rtrim( $prefix, '/' ) || str_starts_with( $path, rtrim( $prefix, '/' ) . '/' ) ) ) {
+				return true;
+			}
+			if ( $path === rtrim( $pattern, '/' ) || str_starts_with( $path, rtrim( $pattern, '/' ) . '/' ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
