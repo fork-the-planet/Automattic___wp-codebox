@@ -7,11 +7,12 @@ const UNSETTLED_COMMAND_MESSAGE = "WP Codebox CLI command did not settle before 
 
 export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): void {
   let settled = false
+  const writeStderr = process.stderr.write.bind(process.stderr)
   const handleBeforeExit = () => {
     if (settled) {
       return
     }
-    console.error(UNSETTLED_COMMAND_MESSAGE)
+    writeStderr(`${UNSETTLED_COMMAND_MESSAGE}\n`)
     process.exitCode = 1
   }
 
@@ -25,7 +26,7 @@ export function runCliEntrypoint(args: string[], runner: CliRunner = runCli): vo
     (error) => {
       settled = true
       process.off("beforeExit", handleBeforeExit)
-      console.error(serializeError(error)?.message ?? String(error))
+      writeStderr(`${serializeError(error)?.message ?? String(error)}\n`)
       process.exitCode = 1
     },
   )
