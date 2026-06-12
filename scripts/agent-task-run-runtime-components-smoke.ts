@@ -317,6 +317,10 @@ assert.equal(codexOverlays[0]?.kind, "bundled-library")
 assert.equal(codexOverlays[0]?.library, "php-ai-client")
 assert.equal(codexOverlays[0]?.source, phpAiClientPath)
 assert.equal(codexOverlays[0]?.strategy, "wordpress-scoped-bundle")
+assert.ok(agentCodeSource.includes("wp_codebox_validate_requested_provider"))
+assert.ok(agentCodeSource.includes("WordPress\\\\AiClient\\\\Providers\\\\ProviderRegistry"))
+assert.ok(agentCodeSource.includes("wp_codebox_provider_not_registered"))
+assert.ok(!agentTaskRunSource.includes("CodexProvider"))
 
 async function promiseMustSettle<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeout: NodeJS.Timeout | undefined
