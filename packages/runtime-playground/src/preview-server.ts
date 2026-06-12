@@ -23,6 +23,8 @@ interface PlaygroundPreviewProxy {
   dispose(): Promise<void>
 }
 
+type PreviewProxyServer = ReturnType<typeof createHttpServer>
+
 export class PlaygroundPreviewPortUnavailableError extends Error {
   readonly code = "wp-codebox-preview-port-in-use"
 
@@ -53,7 +55,38 @@ export async function withPreviewProxy(server: PlaygroundCliServer, port: number
 
 async function startPreviewProxy(targetUrl: string, port: number, bind: string): Promise<PlaygroundPreviewProxy> {
   const target = new URL(targetUrl)
-  const proxy = createHttpServer((incoming, outgoing) => {
+  const proxy = previewProxyServer(target)
+  const servers = [proxy]
+
+  await listenPreviewProxy(proxy, port, bind)
+
+  if (bind === "127.0.0.1") {
+    const ipv6Proxy = previewProxyServer(target)
+    try {
+      await listenPreviewProxy(ipv6Proxy, port, "::1")
+      servers.push(ipv6Proxy)
+    } catch (error) {
+      if (!errorHasCode(error, "EADDRNOTAVAIL")) {
+        await closePreviewProxyServers(servers)
+        throw error
+      }
+    }
+  }
+
+  const address = proxy.address()
+  const resolvedPort = address && typeof address === "object" ? address.port : port
+  const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
+
+  return {
+    serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
+    async dispose() {
+      await closePreviewProxyServers(servers)
+    },
+  }
+}
+
+function previewProxyServer(target: URL): PreviewProxyServer {
+  return createHttpServer((incoming, outgoing) => {
     const targetRequest = httpRequest(
       {
         protocol: target.protocol,
@@ -74,27 +107,24 @@ async function startPreviewProxy(targetUrl: string, port: number, bind: string):
     incoming.on("error", () => targetRequest.destroy())
     incoming.pipe(targetRequest)
   })
+}
 
+async function listenPreviewProxy(proxy: PreviewProxyServer, port: number, bind: string): Promise<void> {
   await new Promise<void>((resolveListen, rejectListen) => {
     proxy.once("error", rejectListen)
     proxy.listen(port, bind, () => resolveListen())
   })
+}
 
-  const address = proxy.address()
-  const resolvedPort = address && typeof address === "object" ? address.port : port
-  const reportedHost = bind === "0.0.0.0" ? "127.0.0.1" : bind
+async function closePreviewProxyServers(servers: PreviewProxyServer[]): Promise<void> {
+  for (const proxy of servers) {
+    if (!proxy.listening) {
+      continue
+    }
 
-  return {
-    serverUrl: `http://${formatPreviewHost(reportedHost)}:${resolvedPort}`,
-    async dispose() {
-      if (!proxy.listening) {
-        return
-      }
-
-      await new Promise<void>((resolveClose, rejectClose) => {
-        proxy.close((error) => error ? rejectClose(error) : resolveClose())
-      })
-    },
+    await new Promise<void>((resolveClose, rejectClose) => {
+      proxy.close((error) => error ? rejectClose(error) : resolveClose())
+    })
   }
 }
 
