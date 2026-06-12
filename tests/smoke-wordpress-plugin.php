@@ -529,8 +529,8 @@ $dmc_status_ability = new WP_Codebox_Smoke_Ability(
 		'repo'    => 'Automattic/wp-codebox',
 		'branch'  => 'runner/docs',
 		'commit'  => 'abc123def456',
-		'dirty'   => 2,
-		'files'   => array( 'docs/architecture.md', 'docs/skill-contracts.md' ),
+		'dirty'   => 3,
+		'files'   => array( ' M docs/architecture.md', '?? .ci/wp-codebox/package.json', 'docs/skill-contracts.md' ),
 	)
 );
 $dmc_diff_ability = new WP_Codebox_Smoke_Ability(
@@ -538,7 +538,7 @@ $dmc_diff_ability = new WP_Codebox_Smoke_Ability(
 		'success' => true,
 		'backend' => 'github_api',
 		'name'    => 'wp-codebox@runner-docs',
-		'diff'    => "diff --git a/docs/architecture.md b/docs/architecture.md\n",
+		'diff'    => "diff --git a/docs/architecture.md b/docs/architecture.md\n+docs\ndiff --git a/.ci/wp-codebox/package.json b/.ci/wp-codebox/package.json\n+runtime\n",
 	)
 );
 $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-status'] = $dmc_status_ability;
@@ -550,10 +550,11 @@ $capture_result = call_user_func(
 		'workspace_backend' => 'github_api',
 		'repo'              => 'Automattic/wp-codebox',
 		'from'              => 'main',
+		'exclude_paths'     => array( '.ci/**' ),
 	)
 );
 $assert( 'runner workspace capture delegates to DMC status and diff', 'wp-codebox@runner-docs' === ( $dmc_status_ability->calls[0]['name'] ?? '' ) && 'wp-codebox@runner-docs' === ( $dmc_diff_ability->calls[0]['name'] ?? '' ) && 'main' === ( $dmc_diff_ability->calls[0]['from'] ?? '' ) );
-$assert( 'runner workspace capture normalizes status and diff', ! is_wp_error( $capture_result ) && true === ( $capture_result['success'] ?? false ) && true === ( $capture_result['changed'] ?? false ) && 'github_api' === ( $capture_result['backend'] ?? '' ) && 2 === ( $capture_result['status']['dirty'] ?? 0 ) && array( 'docs/architecture.md', 'docs/skill-contracts.md' ) === ( $capture_result['status']['files'] ?? array() ) && str_contains( (string) ( $capture_result['diff']['diff'] ?? '' ), 'docs/architecture.md' ) );
+$assert( 'runner workspace capture normalizes status and diff', ! is_wp_error( $capture_result ) && true === ( $capture_result['success'] ?? false ) && true === ( $capture_result['changed'] ?? false ) && 'github_api' === ( $capture_result['backend'] ?? '' ) && 2 === ( $capture_result['status']['dirty'] ?? 0 ) && array( 'docs/architecture.md', 'docs/skill-contracts.md' ) === ( $capture_result['status']['files'] ?? array() ) && str_contains( (string) ( $capture_result['diff']['diff'] ?? '' ), 'docs/architecture.md' ) && ! str_contains( (string) ( $capture_result['diff']['diff'] ?? '' ), '.ci/wp-codebox' ) );
 unset( $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-status'], $GLOBALS['wp_codebox_mock_abilities']['datamachine-code/workspace-git-diff'] );
 
 $command_ability = $GLOBALS['wp_codebox_registered_abilities']['wp-codebox/run-runner-workspace-command'] ?? null;
