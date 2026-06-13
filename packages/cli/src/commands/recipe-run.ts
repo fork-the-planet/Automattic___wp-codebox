@@ -138,7 +138,16 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
+  let runtimeDestroyed = false
   const phaseTracker = new RecipePhaseTracker(serializeRecipeRunError, isRecipeRunTimeoutError)
+  const destroyActiveRuntime = async (): Promise<void> => {
+    if (!runtime || runtimeDestroyed) {
+      return
+    }
+
+    runtimeDestroyed = true
+    await bestEffortTimeout(runtime.destroy(), 2_000)
+  }
   const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs = remainingRecipeTimeoutMs(startedAtMs, options.timeoutMs)): Promise<T> => {
     return artifactPointer.update({ command: operation, commandStatus: "running", phases: phaseTracker.list() })
       .then(() => {
@@ -151,6 +160,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         return result
       })
       .catch(async (error: unknown) => {
+        if (isRecipeRunTimeoutError(error) || interruption?.metadata) {
+          await destroyActiveRuntime()
+        }
         await artifactPointer.update({ command: operation, commandStatus: "failed", failure: serializeRecipeRunError(error), phases: phaseTracker.list() })
         throw error
       })
@@ -539,11 +551,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
 
       if (error instanceof RecipeRunTimeoutError) {
-        await bestEffortTimeout(activeRuntime.destroy(), 2_000)
+        await destroyActiveRuntime()
       } else {
         await runRecipeCleanup(runRegistry, runRecord, async () => {
           try {
-            await bestEffortTimeout(activeRuntime.destroy(), 2_000)
+            await destroyActiveRuntime()
           } catch {
             // Preserve the original failure as the CLI result.
           }

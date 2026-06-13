@@ -79,6 +79,8 @@ class PlaygroundRuntime implements Runtime {
   private readonly artifactRoot: string
   private readonly hostTools?: HostToolRegistry
   private cliServerPromise?: Promise<PlaygroundCliServer>
+  private readonly activeExecutionAbortControllers = new Set<AbortController>()
+  private activeExecutionSignal?: AbortSignal
 
   private constructor(private readonly spec: RuntimeCreateSpec, private readonly backendOptions: PlaygroundRuntimeBackendOptions = {}) {
     this.artifactRoot = resolve(spec.artifactsDirectory ?? "artifacts", this.runtimeId)
@@ -168,6 +170,9 @@ class PlaygroundRuntime implements Runtime {
       cwd: spec.cwd ?? null,
       timeoutMs: spec.timeoutMs ?? null,
     })
+    const abortController = new AbortController()
+    this.activeExecutionAbortControllers.add(abortController)
+    this.activeExecutionSignal = abortController.signal
     try {
       const result: ExecutionResult = {
         id: commandId,
@@ -210,6 +215,11 @@ class PlaygroundRuntime implements Runtime {
         finishedAt: result.finishedAt,
       })
       throw error
+    } finally {
+      this.activeExecutionAbortControllers.delete(abortController)
+      if (this.activeExecutionSignal === abortController.signal) {
+        this.activeExecutionSignal = undefined
+      }
     }
   }
 
@@ -336,7 +346,7 @@ class PlaygroundRuntime implements Runtime {
   }
 
   async collectArtifacts(spec: ArtifactSpec = {}): Promise<ArtifactBundle> {
-    if (this.cliServerPromise) {
+    if (this.status !== "destroyed" && this.cliServerPromise) {
       const materialization = await materializePlaygroundMountsFromVfs(await this.cliServerPromise, this.mounts)
       if (materialization.materialized > 0 || materialization.deleted > 0 || materialization.skipped > 0) {
         this.recordEvent("runtime.mounts.materialized", { ...materialization })
@@ -373,6 +383,9 @@ class PlaygroundRuntime implements Runtime {
     }
 
     this.status = "destroyed"
+    for (const controller of this.activeExecutionAbortControllers) {
+      controller.abort()
+    }
     try {
       const cliServer = await this.cliServerPromise
       await cliServer?.[Symbol.asyncDispose]()
@@ -437,7 +450,7 @@ class PlaygroundRuntime implements Runtime {
     const server = await this.bootPlayground()
     let result: Awaited<ReturnType<typeof runBrowserProbeCommand>>
     try {
-      result = await runBrowserProbeCommand({ artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
+      result = await runBrowserProbeCommand({ abortSignal: this.activeExecutionSignal, artifactRoot: this.artifactRoot, runtimeSpec: this.spec, runPlaygroundCommand: (command, targetServer, options) => this.runPlaygroundCommand(command, targetServer, options), server, spec, onProgress: (event) => this.recordEvent("runtime.browser-command-progress", { ...event, specCommand: spec.command }) })
     } catch (error) {
       if (isBrowserCommandArtifactError(error)) {
         this.browserProbes.push(error.artifact)
@@ -697,7 +710,7 @@ class PlaygroundRuntime implements Runtime {
 
   private async runPlaygroundCommand(command: string, server: PlaygroundCliServer, options: { code: string } | { scriptPath: string }): Promise<PlaygroundRunResponse> {
     try {
-      return await server.playground.run(options)
+      return await abortable(server.playground.run(options), this.activeExecutionSignal)
     } catch (error) {
       throw new PlaygroundCommandCrashError(command, error)
     }
@@ -819,4 +832,21 @@ export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackend
 
 function sha256(contents: Buffer): string {
   return createHash("sha256").update(contents).digest("hex")
+}
+
+function abortable<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) {
+    return operation
+  }
+  operation.catch(() => undefined)
+  if (signal.aborted) {
+    return Promise.reject(new Error("Runtime execution was aborted during cleanup"))
+  }
+
+  return Promise.race([
+    operation,
+    new Promise<T>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("Runtime execution was aborted during cleanup")), { once: true })
+    }),
+  ])
 }
