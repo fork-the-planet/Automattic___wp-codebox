@@ -264,6 +264,7 @@ export function isBrowserCommandArtifactError(error: unknown): error is BrowserC
 }
 
 export async function runBrowserProbeCommand({
+  abortSignal,
   artifactRoot,
   command = "wordpress.browser-probe",
   plan,
@@ -273,6 +274,7 @@ export async function runBrowserProbeCommand({
   spec,
   onProgress,
 }: {
+  abortSignal?: AbortSignal
   artifactRoot: string
   command?: string
   plan?: BrowserProbeRunPlan
@@ -283,7 +285,7 @@ export async function runBrowserProbeCommand({
   onProgress?: (event: BrowserCommandProgressEvent) => void
 }): Promise<{ artifact: BrowserProbeArtifact; artifacts?: BrowserProbeArtifact[]; output: string }> {
   if (plan) {
-    return runSingleBrowserProbeCommand({ artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, plan, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
   }
 
   const profileIds = browserProbeProfileIds(spec.args ?? [])
@@ -295,6 +297,7 @@ export async function runBrowserProbeCommand({
         throw new Error(`wordpress.browser-probe profile ${profile.id} requests ${profile.browser}, but this runner currently supports Chromium profiles only. Supported Chromium profiles: desktop-chrome, mobile-chrome, low-end-mobile-slow-4g.`)
       }
       return runSingleBrowserProbeCommand({
+        abortSignal,
         artifactRoot,
         command,
         runtimeSpec,
@@ -306,7 +309,7 @@ export async function runBrowserProbeCommand({
         onProgress,
       })
     }
-    return runSingleBrowserProbeCommand({ artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
+    return runSingleBrowserProbeCommand({ abortSignal, artifactRoot, command, runtimeSpec, runPlaygroundCommand, server, spec, browserFilesDirectory: "files/browser", onProgress })
   }
 
   const profiles = profileIds.map((profileId) => browserProbeProfile(profileId))
@@ -320,6 +323,7 @@ export async function runBrowserProbeCommand({
   const outputs: unknown[] = []
   for (const profile of profiles) {
     const result = await runSingleBrowserProbeCommand({
+      abortSignal,
       artifactRoot,
       command,
       runtimeSpec,
@@ -354,6 +358,7 @@ export async function runBrowserProbeCommand({
 }
 
 async function runSingleBrowserProbeCommand({
+  abortSignal,
   artifactRoot,
   command,
   plan,
@@ -365,6 +370,7 @@ async function runSingleBrowserProbeCommand({
   profileId,
   onProgress,
 }: {
+  abortSignal?: AbortSignal
   artifactRoot: string
   command: string
   plan?: BrowserProbeRunPlan
@@ -466,8 +472,19 @@ async function runSingleBrowserProbeCommand({
   let pendingError: Error | undefined
   let artifact: BrowserProbeArtifact | undefined
   let wordpressDiagnosticsReady = false
+  const abortHandler = () => {
+    pendingError = pendingError ?? new Error("Browser command aborted during runtime cleanup")
+    void page?.close().catch(() => undefined)
+    void context?.close().catch(() => undefined)
+    void browser.close().catch(() => undefined)
+  }
+  abortSignal?.addEventListener("abort", abortHandler, { once: true })
 
   try {
+    if (abortSignal?.aborted) {
+      abortHandler()
+      throw pendingError
+    }
     context = browserPreviewNeedsContextRouting(networkPolicy) || requestedContext.device || requestedContext.locale || requestedContext.timezone || requestedContext.userAgent || (requestedContext.permissions?.length ?? 0) > 0
       ? await browser.newContext({
         ...(deviceProfile ?? {}),
@@ -594,6 +611,11 @@ async function runSingleBrowserProbeCommand({
     progress.fail("probe-error", pendingError)
     errors.push(serializeBrowserError("probe-error", error))
   } finally {
+    if (abortSignal?.aborted) {
+      await closeBrowserBestEffort(browser)
+      abortSignal.removeEventListener("abort", abortHandler)
+      throw pendingError ?? new Error("Browser command aborted during runtime cleanup")
+    }
     if (page) {
       finalUrl = page.url()
       windowLocationOrigin = windowLocationOrigin ?? await page.evaluate(() => window.location.origin).catch(() => undefined)
@@ -808,6 +830,7 @@ async function runSingleBrowserProbeCommand({
     }, null, 2)}\n`)
   }
 
+  abortSignal?.removeEventListener("abort", abortHandler)
   if (pendingError) {
     if (!artifact) {
       throw pendingError
@@ -817,7 +840,6 @@ async function runSingleBrowserProbeCommand({
   if (!artifact) {
     throw new Error("wordpress.browser-probe did not produce a browser artifact")
   }
-
   return {
     artifact,
     output: `${JSON.stringify({
@@ -831,6 +853,16 @@ async function runSingleBrowserProbeCommand({
       summary: artifact.summary,
     }, null, 2)}\n`,
   }
+}
+
+async function closeBrowserBestEffort(browser: import("playwright").Browser): Promise<void> {
+  await Promise.race([
+    browser.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 1_000)
+      timeout.unref()
+    }),
+  ])
 }
 
 function browserProbeProfileIds(args: string[]): string[] {
