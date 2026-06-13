@@ -3,6 +3,7 @@
  * Plugin Name: Bench Dependency
  * Description: Fixture dependency for WP Codebox bench command smoke tests.
  * Version: 0.1.0
+ * Requires Plugins: bench-plugin
  */
 
 defined( 'ABSPATH' ) || exit;

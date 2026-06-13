@@ -504,14 +504,14 @@ function wp_codebox_bench_assert_plugin_autoload_ready(string $plugin_basename):
 $plugins_to_activate = array();
 $plugin_roles = array();
 $activated_plugins = array();
+$plugin_file = wp_codebox_bench_plugin_file_for_slug($plugin_slug, 'component');
+$plugins_to_activate[] = $plugin_file;
+$plugin_roles[$plugin_file] = 'component';
 foreach (is_array($dependency_slugs) ? $dependency_slugs : array() as $dependency_slug) {
     $dependency_file = wp_codebox_bench_plugin_file_for_slug((string) $dependency_slug, 'dependency');
     $plugins_to_activate[] = $dependency_file;
     $plugin_roles[$dependency_file] = 'dependency';
 }
-$plugin_file = wp_codebox_bench_plugin_file_for_slug($plugin_slug, 'component');
-$plugins_to_activate[] = $plugin_file;
-$plugin_roles[$plugin_file] = 'component';
 $plugins_to_activate = array_values(array_unique($plugins_to_activate));
 foreach ($plugins_to_activate as $plugin_to_activate) {
     wp_codebox_bench_assert_plugin_autoload_ready($plugin_to_activate);
