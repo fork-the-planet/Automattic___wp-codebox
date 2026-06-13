@@ -555,7 +555,7 @@ async function runSingleBrowserProbeCommand({
       throw previewReadinessError
     }
 
-    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs), livenessPolicy, "navigation")
+    await withBrowserProbeLiveness(page, progress, failFast, navigateBrowserProbe(page, targetUrl, waitFor, durationMs, wallTimeoutMs), livenessPolicy, "navigation")
     progress.mark("navigation")
     const browserLocation = await page.evaluate(() => ({ origin: window.location.origin, secureContext: window.isSecureContext })).catch(() => undefined)
     windowLocationOrigin = browserLocation?.origin

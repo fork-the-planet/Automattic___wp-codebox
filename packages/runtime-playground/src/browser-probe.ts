@@ -212,24 +212,24 @@ function now(): string {
   return new Date().toISOString()
 }
 
-export async function navigateBrowserProbe(page: Page, url: string, waitFor: string, durationMs: number): Promise<void> {
+export async function navigateBrowserProbe(page: Page, url: string, waitFor: string, durationMs: number, navigationTimeoutMs = 30_000): Promise<void> {
   if (["domcontentloaded", "load", "networkidle"].includes(waitFor)) {
-    await page.goto(url, { waitUntil: waitFor as "domcontentloaded" | "load" | "networkidle", timeout: 30_000 })
+    await page.goto(url, { waitUntil: waitFor as "domcontentloaded" | "load" | "networkidle", timeout: navigationTimeoutMs })
     return
   }
 
   if (waitFor.startsWith("selector:")) {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs })
     const selector = waitFor.slice("selector:".length).trim()
     if (!selector) {
       throw new Error("wordpress.browser-probe wait-for=selector:<selector> requires a selector")
     }
-    await page.locator(selector).first().waitFor({ timeout: 30_000 })
+    await page.locator(selector).first().waitFor({ timeout: navigationTimeoutMs })
     return
   }
 
   if (waitFor === "duration") {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: navigationTimeoutMs })
     await page.waitForTimeout(durationMs > 0 ? durationMs : 1000)
     return
   }
