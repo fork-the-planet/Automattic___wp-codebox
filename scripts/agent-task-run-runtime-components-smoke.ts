@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
@@ -140,6 +140,27 @@ for (const slug of preparedComponentSlugs) {
 const preparedComponentRecipePath = join(mkdtempSync(join(tmpdir(), "wp-codebox-prepared-component-recipe-")), "recipe.json")
 writeFileSync(preparedComponentRecipePath, `${JSON.stringify(preparedComponentRecipe, null, 2)}\n`)
 assert.deepEqual(await validateWorkspaceRecipe(preparedComponentRecipe, preparedComponentRecipePath), [], "prepared runtime component recipe should validate after staging plugins")
+
+const agentBundleWorkspace = mkdtempSync(join(tmpdir(), "wp-codebox-agent-bundle-workspace-"))
+const agentBundleSource = join(agentBundleWorkspace, "bundles", "website-idea-agent")
+mkdirSync(agentBundleSource, { recursive: true })
+writeFileSync(join(agentBundleSource, "manifest.json"), `${JSON.stringify({ schema_version: 1, bundle_slug: "website-idea-agent" }, null, 2)}\n`)
+const previousCwd = process.cwd()
+process.chdir(agentBundleWorkspace)
+try {
+  const bundleRecipe = buildAgentTaskRecipe({
+    goal: "Import a caller-local bundle into the sandbox",
+    agent_bundles: [{ source: "/workspace/wp-site-generator/bundles/website-idea-agent", slug: "website-idea-agent" }],
+  }, normalizeTaskInput({
+    goal: "Import a caller-local bundle into the sandbox",
+    agent_bundles: [{ source: "/workspace/wp-site-generator/bundles/website-idea-agent", slug: "website-idea-agent" }],
+  }), "trunk")
+  assert.equal(bundleRecipe.inputs?.agent_bundles?.[0]?.source, "/workspace/wp-site-generator/bundles/website-idea-agent", "bundle import keeps the sandbox source contract")
+  assert.equal(bundleRecipe.inputs?.stagedFiles?.[0]?.source, realpathSync(agentBundleSource), "local bundle source should be staged from the caller checkout")
+  assert.equal(bundleRecipe.inputs?.stagedFiles?.[0]?.target, "/workspace/wp-site-generator/bundles/website-idea-agent", "local bundle source should mount at the sandbox import path")
+} finally {
+  process.chdir(previousCwd)
+}
 
 // Without verify_steps, no after phase is emitted (back-compat with current runs).
 const noVerifyRecipe = buildAgentTaskRecipe(input, normalizeTaskInput(input), "trunk")
