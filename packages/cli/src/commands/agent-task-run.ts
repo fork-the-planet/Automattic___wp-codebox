@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
-import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeTaskInput, stripUndefined, type SandboxToolPolicySnapshot, type StructuredArtifactPayload, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipeStagedFile } from "@automattic/wp-codebox-core"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
 export interface AgentTaskRunOptions {
@@ -34,6 +34,7 @@ export interface AgentTaskRunInput {
   runtime_stack_mounts?: WorkspaceRecipeMount[]
   runtime_overlays?: Array<Record<string, unknown>>
   agent_bundles?: Array<Record<string, unknown>>
+  stagedFiles?: WorkspaceRecipeStagedFile[]
   runtime_task?: Record<string, unknown>
   agent_bundle?: Record<string, unknown>
   sandbox_tool_policy?: SandboxToolPolicySnapshot
@@ -216,6 +217,8 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
   const artifacts = stringValue(input.artifacts_path)
   const profile = runtimeOverlayProfileDefaults(input)
   const runtimeMounts = runtimeStateMounts(input)
+  const agentBundleStagedFiles = stagedAgentBundleSources(input.agent_bundles)
+  const stagedFiles = [...(Array.isArray(input.stagedFiles) ? input.stagedFiles : []), ...agentBundleStagedFiles]
   const providerPlugins = uniqueStrings(stringList(input.provider_plugin_paths))
     .map((plugin) => {
       const slug = slugFromComposerPackage(plugin) || slugFromPath(plugin)
@@ -269,6 +272,7 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       ].filter(Boolean),
       runtimeEnv: runtimeEnv(input),
       secretEnv: stringList(input.secret_env),
+      stagedFiles: stagedFiles.length > 0 ? stagedFiles : undefined,
       agent_bundles: Array.isArray(input.agent_bundles) && input.agent_bundles.length > 0 ? input.agent_bundles : undefined,
     }),
     workflow: stripUndefined({
@@ -280,6 +284,39 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: Return
       after: Array.isArray(input.verify_steps) && input.verify_steps.length > 0 ? input.verify_steps : undefined,
     }),
   }) as WorkspaceRecipe
+}
+
+function stagedAgentBundleSources(agentBundles: AgentTaskRunInput["agent_bundles"]): WorkspaceRecipeStagedFile[] {
+  if (!Array.isArray(agentBundles)) return []
+
+  const stagedFiles: WorkspaceRecipeStagedFile[] = []
+  const seenTargets = new Set<string>()
+  for (const bundle of agentBundles) {
+    const source = stringValue(bundle.source)
+    if (!source || bundle.bundle || seenTargets.has(source)) continue
+    const localSource = localAgentBundleSource(source)
+    if (!localSource) continue
+    stagedFiles.push({
+      source: localSource,
+      target: source,
+    })
+    seenTargets.add(source)
+  }
+  return stagedFiles
+}
+
+function localAgentBundleSource(source: string): string {
+  const direct = resolve(source)
+  if (existsSync(direct)) return direct
+
+  const workspacePrefix = "/workspace/"
+  if (!source.startsWith(workspacePrefix)) return ""
+
+  const relativeToWorkspace = source.slice(workspacePrefix.length).split("/").filter(Boolean).slice(1).join("/")
+  if (!relativeToWorkspace) return ""
+
+  const fromCwd = resolve(process.cwd(), relativeToWorkspace)
+  return existsSync(fromCwd) ? fromCwd : ""
 }
 
 interface RuntimeOverlayProfileDefaults {
