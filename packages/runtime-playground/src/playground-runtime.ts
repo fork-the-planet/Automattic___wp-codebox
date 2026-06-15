@@ -33,6 +33,7 @@ import type {
   ObservationSpec,
   Runtime,
   RuntimeBackend,
+  RuntimeBackendProvider,
   BrowserStartupProgressEvent,
   RuntimeCreateSpec,
   RuntimeRestoreSpec,
@@ -1045,6 +1046,13 @@ echo json_encode(array('command' => 'inspect-mounted-inputs', 'mounts' => $inspe
 
 export function createPlaygroundRuntimeBackend(options: PlaygroundRuntimeBackendOptions = {}): RuntimeBackend {
   return new PlaygroundRuntimeBackend(options)
+}
+
+export const playgroundRuntimeBackendProvider: RuntimeBackendProvider = {
+  kind: "wordpress-playground",
+  createBackend(context = {}) {
+    return createPlaygroundRuntimeBackend({ cliModule: context.cliModule as PlaygroundCliModule | undefined })
+  },
 }
 
 function sha256(contents: Buffer): string {
