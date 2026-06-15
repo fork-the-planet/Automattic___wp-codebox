@@ -64,6 +64,20 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runCaptureStateBundle" },
   },
   {
+    id: "wordpress.export-replay-package",
+    description: "Export the current imported WordPress runtime as a replay package with a compact blueprint, external runtime snapshot, notes, manifest, and metrics.",
+    acceptedArgs: [
+      { name: "label", description: "Optional human-readable export label recorded in the command output and package source metadata.", format: "string" },
+      { name: "output-dir", description: "Optional package directory relative to the runtime artifact root; defaults to files/replay-package.", format: "relative path" },
+      { name: "landing-page", description: "Optional replay landing page recorded in blueprint.after.json.", format: "path" },
+      { name: "import-ms", description: "Optional importer duration supplied by the caller so replay export metrics can include the preceding import phase.", format: "non-negative integer" },
+    ],
+    outputShape: "wp-codebox/wordpress-replay-export/v1 JSON with import/materialization/snapshot/export metrics and manifest, blueprint.after.json, blueprint.after-notes.json, and files/runtime-snapshot.json artifact paths.",
+    policyRequirement: "Runtime policy commands must include wordpress.export-replay-package.",
+    recipe: true,
+    handler: { kind: "playground", method: "runExportReplayPackage" },
+  },
+  {
     id: "wordpress.ability",
     description: "Execute a registered WordPress Ability in the sandbox.",
     acceptedArgs: [

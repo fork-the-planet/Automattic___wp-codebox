@@ -142,6 +142,7 @@ export class ArtifactBundleBuilder {
         .filter((ref): ref is typeof ref & { path: string } => typeof ref.path === "string" && ref.path.length > 0)
         .map((ref) => artifactManifestFile(join(source.artifactRoot, ref.path), "runtime-snapshot", "application/json")),
     )
+    const replayExportPackageFiles = replayExportPackageManifestFiles(source.artifactRoot, source.commands)
     const capturedMounts = await source.captureMountedFiles(filesDirectory, redactor)
     const { mountDiffs, changedFiles, patch, diagnostics: mountDiffDiagnostics } = await source.captureMountDiffs(filesDirectory, redactor)
     const changedFilesJson = redactor.redact("files/changed-files.json", `${JSON.stringify(changedFiles, null, 2)}\n`)
@@ -323,6 +324,7 @@ export class ArtifactBundleBuilder {
       ...source.pluginCheckManifestFiles(),
       ...source.themeCheckManifestFiles(),
       ...runtimeSnapshotFiles,
+      ...replayExportPackageFiles,
       ...mountDiffs.map((diff) => artifactManifestFile(join(source.artifactRoot, diff.artifactPath), "diff", "text/x-diff")),
       ...capturedMounts.files.map((file) =>
         artifactManifestFile(join(source.artifactRoot, file.artifactPath), "file", file.contentType),
@@ -1085,6 +1087,50 @@ function artifactPreviewContentType(path: string): string {
   }
 
   return "application/octet-stream"
+}
+
+function replayExportPackageManifestFiles(artifactRoot: string, commands: ExecutionResult[]): ArtifactManifestFile[] {
+  return commands.flatMap((command) => {
+    if (command.command !== "wordpress.export-replay-package" || command.exitCode !== 0) {
+      return []
+    }
+
+    let output: unknown
+    try {
+      output = JSON.parse(command.stdout.trim() || "{}")
+    } catch {
+      return []
+    }
+
+    const envelope = asRecord(output)
+    const artifacts = asRecord(envelope?.artifacts)
+    const directory = stringValue(envelope?.directory)
+    if (envelope?.schema !== "wp-codebox/wordpress-replay-export/v1" || !directory || !artifacts) {
+      return []
+    }
+
+    const refs: Array<{ key: string; kind: string; contentType: string }> = [
+      { key: "manifest", kind: "replay-package-manifest", contentType: "application/json" },
+      { key: "blueprint", kind: "blueprint-after", contentType: "application/json" },
+      { key: "snapshot", kind: "runtime-snapshot", contentType: "application/json" },
+      { key: "notes", kind: "blueprint-after-notes", contentType: "application/json" },
+    ]
+
+    return refs.flatMap((ref) => {
+      const artifactPath = stringValue(artifacts[ref.key])
+      if (!artifactPath) {
+        return []
+      }
+
+      const absolutePath = join(directory, artifactPath)
+      const manifestPath = relative(artifactRoot, absolutePath).replace(/\\/g, "/")
+      if (manifestPath.startsWith("..") || manifestPath.startsWith("/")) {
+        return []
+      }
+
+      return [artifactManifestFile(join(artifactRoot, manifestPath), ref.kind, ref.contentType)]
+    })
+  })
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

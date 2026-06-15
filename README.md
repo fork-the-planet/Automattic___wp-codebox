@@ -1081,6 +1081,17 @@ Current bundles include:
 - `files/diffs/<mount>.patch`: unified text diff from the mount baseline (a seeded baseline directory, or the git `HEAD` of a git work-tree mount) to the sandbox output.
 - `files/mounts/<index>/...`: copied file contents from readwrite mounts.
 
+Recipes that import a generated site into a clean runtime can export replay evidence before final artifact collection with a workflow step:
+
+```json
+{
+  "command": "wordpress.export-replay-package",
+  "args": ["label=studio-web-replay", "landing-page=/"]
+}
+```
+
+The step writes `files/replay-package/manifest.json`, `blueprint.after.json`, `blueprint.after-notes.json`, and `files/runtime-snapshot.json` under the runtime artifact root. Its stdout is a `wp-codebox/wordpress-replay-export/v1` envelope with `importMs`, `materializeMs`, `snapshotMs`, `exportMs`, `databaseTables`, `wpContentFiles`, `snapshotBytes`, and `blueprintBytes`. The exported `blueprint.after.json` keeps the runtime snapshot as a referenced package file instead of embedding the full snapshot as one large `runPHP` string.
+
 `metadata.json` points to the canonical changed-files, patch, test-results, review, and mount-diff artifact paths under `artifacts`. It also includes `provenance` derived from data WP Codebox already has: task input/context where available, WP Codebox runtime version, WordPress version, mounted component/mount metadata, and agent/provider/model fields passed to the sandbox runner. `files/diffs/<mount>.patch` remains available for per-mount detail; `files/patch.diff` is the combined review/apply-back patch surface.
 
 ### `files/test-results.json`
