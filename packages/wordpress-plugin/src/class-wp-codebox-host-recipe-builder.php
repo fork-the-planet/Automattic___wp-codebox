@@ -9,6 +9,8 @@ defined( 'ABSPATH' ) || exit;
 
 final class WP_Codebox_Host_Recipe_Builder {
 
+	private const AGENT_RUNTIME_ENV = array( 'WP_CODEBOX_AGENT_RUNTIME' => '1' );
+
 	/**
 	 * @param array<int,array<string,mixed>> $paths Component contracts.
 	 * @param array<string,mixed> $input Ability input.
@@ -97,7 +99,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 			'inherit'       => $adapters['inheritance_request']( $input ),
 			'inheritance'   => $inheritance,
 			'extra_plugins' => array_merge( $adapters['component_plugins']( $paths ), $provider_plugins ),
-			'runtimeEnv'    => $adapters['runtime_env']( $input ),
+			'runtimeEnv'    => array_merge( $adapters['runtime_env']( $input ), self::AGENT_RUNTIME_ENV ),
 			'secretEnv'     => $adapters['secret_env_names']( $input, $inheritance ),
 		);
 		if ( ! empty( $agent_bundles ) ) {

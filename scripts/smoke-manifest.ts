@@ -78,6 +78,7 @@ export const smokeGroups = {
     description: "Agent task, fanout, and delegation contract smoke checks.",
     commands: [
       tsxSmoke("agent-runtime-workload-normalizer-smoke"),
+      tsxSmoke("agent-runtime-signal-smoke"),
       tsxSmoke("agent-sandbox-incomplete-scope-smoke"),
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
