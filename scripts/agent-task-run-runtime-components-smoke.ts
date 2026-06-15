@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { artifactManifestFile, normalizeTaskInput, type ArtifactBundle, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
-import { buildAgentTaskRecipe, runAgentTask } from "../packages/cli/src/commands/agent-task-run.js"
+import { artifactManifestFile, buildAgentTaskRecipe, normalizeTaskInput, type ArtifactBundle, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { runAgentTask } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
@@ -50,6 +50,7 @@ assert.ok(!muPluginInstallCode?.includes("DATAMACHINE_WORKSPACE_PATH"))
 assert.ok(!muPluginInstallCode?.includes("datamachine_should_load_full_runtime"))
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
+const agentTaskRecipeSource = readFileSync(new URL("../packages/runtime-core/src/agent-task-recipe.ts", import.meta.url), "utf8")
 const recipeRunSource = readFileSync(new URL("../packages/cli/src/commands/recipe-run.ts", import.meta.url), "utf8")
 const agentCodeSource = readFileSync(new URL("../packages/cli/src/agent-code.ts", import.meta.url), "utf8")
 const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
@@ -64,8 +65,12 @@ assert.ok(
   "successful normalized agent-bundle workloads should filter stale agent-task failure diagnostics",
 )
 assert.ok(
-  agentTaskRunSource.includes('runtime: { environment: "control_plane", capability_scope: "control_plane" }'),
+  agentTaskRecipeSource.includes('runtime: { environment: "control_plane", capability_scope: "control_plane" }'),
   "default deny-all sandbox policy should satisfy required runtime metadata",
+)
+assert.ok(
+  agentTaskRunSource.includes("buildAgentTaskRecipe(input, taskInput, wpVersion)"),
+  "agent-task CLI should delegate recipe construction to the core API",
 )
 assert.ok(
   recipeEvidenceSource.includes("reconcileAgentSandboxResult("),
@@ -503,12 +508,12 @@ assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[0]?.target, "/home/wp
 assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[1]?.source, runtimeStateDir)
 assert.equal(genericRuntimeRecipe.runtime?.stack?.mounts?.[1]?.target, "/home/wp/.local/state/generic-provider")
 assert.ok(
-  agentTaskRunSource.includes("runtime_config_mounts") && agentTaskRunSource.includes("runtime_state_mounts"),
-  "agent-task-run should expose generic runtime config/state mount fields without provider special cases",
+  agentTaskRecipeSource.includes("runtime_config_mounts") && agentTaskRecipeSource.includes("runtime_state_mounts"),
+  "agent-task recipe API should expose generic runtime config/state mount fields without provider special cases",
 )
 assert.ok(
-  agentTaskRunSource.includes("runtimeEnv: runtimeEnv(input)"),
-  "agent-task-run should emit non-secret runtime env separately from secretEnv",
+  agentTaskRecipeSource.includes("runtimeEnv: runtimeEnv(input)"),
+  "agent-task recipe API should emit non-secret runtime env separately from secretEnv",
 )
 
 const runtimeStackMountIndex = recipeRunSource.indexOf("runtime.stack.mount")
