@@ -12,6 +12,10 @@
       "types": "./packages/runtime-core/dist/recipe-builders.d.ts",
       "import": "./packages/runtime-core/dist/recipe-builders.js"
     },
+    "./agent-task-recipe": {
+      "types": "./packages/runtime-core/dist/agent-task-recipe.d.ts",
+      "import": "./packages/runtime-core/dist/agent-task-recipe.js"
+    },
     "./playground": {
       "types": "./packages/runtime-playground/dist/index.d.ts",
       "import": "./packages/runtime-playground/dist/index.js"
