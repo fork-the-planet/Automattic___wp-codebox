@@ -130,6 +130,7 @@ export const smokeGroups = {
       tsxSmoke("recipe-run-summary-smoke"),
       tsxSmoke("fanout-contract-smoke"),
       tsxSmoke("host-delegation-contract-smoke"),
+      tsxSmoke("claude-code-agent-recipe-smoke"),
       tsxSmoke("fanout-aggregation-contract-smoke"),
       tsxSmoke("agent-fanout-execution-smoke"),
       tsxSmoke("agent-task-run-runtime-components-smoke"),
