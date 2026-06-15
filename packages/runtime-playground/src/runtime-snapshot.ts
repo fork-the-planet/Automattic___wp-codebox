@@ -113,6 +113,8 @@ export interface RuntimeSnapshotExportOptions {
   excludedWpContentPaths?: string[]
 }
 
+export type RuntimeSnapshotArtifactBody = Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">
+
 interface RuntimeSnapshotExportManifest {
   schema: "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1"
   compatibility: RuntimeSnapshotArtifact["compatibility"]
@@ -130,13 +132,10 @@ interface RuntimeSnapshotExportManifest {
   }
 }
 
-export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, responseText: string): Promise<Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">> {
-  const manifest = JSON.parse(responseText || "{}") as RuntimeSnapshotExportManifest
-  if (manifest.schema !== "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1") {
-    throw new PlaygroundSnapshotRestoreError("Runtime snapshot export did not return a supported manifest.")
-  }
-
-  if (!server.playground.readFileAsText) {
+export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, responseText: string): Promise<RuntimeSnapshotArtifactBody> {
+  const manifest = parseRuntimeSnapshotExportManifest(responseText)
+  const readFileAsText = server.playground.readFileAsText
+  if (!readFileAsText) {
     throw new PlaygroundSnapshotRestoreError("Runtime snapshot export requires Playground readFileAsText support.")
   }
 
@@ -144,7 +143,7 @@ export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, 
   for (const table of manifest.database.tables) {
     const rows = []
     for (const chunkPath of table.chunks) {
-      const chunkRows = JSON.parse(await server.playground.readFileAsText(chunkPath))
+      const chunkRows = JSON.parse(await readFileAsText(chunkPath))
       if (Array.isArray(chunkRows)) {
         rows.push(...chunkRows)
       }
@@ -153,7 +152,7 @@ export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, 
   }
 
   const files = []
-  const fileLines = (await server.playground.readFileAsText(manifest.files.ndjsonPath)).split("\n")
+  const fileLines = (await readFileAsText(manifest.files.ndjsonPath)).split("\n")
   for (const line of fileLines) {
     if (line.trim().length === 0) {
       continue
@@ -172,6 +171,36 @@ export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, 
     database: { tables },
     files,
   }
+}
+
+function parseRuntimeSnapshotExportManifest(responseText: string): RuntimeSnapshotExportManifest {
+  const manifest = JSON.parse(responseText || "{}") as RuntimeSnapshotExportManifest
+  if (!isRuntimeSnapshotExportManifest(manifest)) {
+    throw new PlaygroundSnapshotRestoreError("Runtime snapshot export did not return a supported manifest.")
+  }
+
+  return manifest
+}
+
+function isRuntimeSnapshotExportManifest(value: unknown): value is RuntimeSnapshotExportManifest {
+  if (!isRecord(value) || value.schema !== "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1") {
+    return false
+  }
+
+  if (!isRecord(value.compatibility) || value.compatibility.backend !== "wordpress-playground") {
+    return false
+  }
+
+  if (!isRecord(value.metadata) || !isRecord(value.database) || !Array.isArray(value.database.tables) || !isRecord(value.files) || typeof value.files.ndjsonPath !== "string") {
+    return false
+  }
+
+  return value.database.tables.every((table) => isRecord(table)
+    && typeof table.name === "string"
+    && typeof table.createSql === "string"
+    && typeof table.rowCount === "number"
+    && Array.isArray(table.chunks)
+    && table.chunks.every((chunkPath) => typeof chunkPath === "string"))
 }
 
 export function runtimeSnapshotExportPhp(options: RuntimeSnapshotExportOptions = {}): string {
@@ -339,27 +368,7 @@ if ( ! is_array( $payload ) || ( $payload['schema'] ?? '' ) !== 'wp-codebox/word
 
 global $wpdb;
 
-function wp_codebox_snapshot_delete_tree( string $path ): void {
-    if ( ! file_exists( $path ) ) {
-        return;
-    }
-
-    if ( is_file( $path ) || is_link( $path ) ) {
-        unlink( $path );
-        return;
-    }
-
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator( $path, FilesystemIterator::SKIP_DOTS ),
-        RecursiveIteratorIterator::CHILD_FIRST
-    );
-
-    foreach ( $iterator as $item ) {
-        $item->isDir() ? rmdir( $item->getPathname() ) : unlink( $item->getPathname() );
-    }
-}
-
-function wp_codebox_snapshot_relative_path_for_restore( string $base, string $path ): string {
+function wp_codebox_snapshot_restore_relative_path( string $base, string $path ): string {
     $base = rtrim( str_replace( '\\', '/', realpath( $base ) ?: $base ), '/' ) . '/';
     $path = str_replace( '\\', '/', $path );
     return ltrim( substr( $path, strlen( $base ) ), '/' );
@@ -395,7 +404,7 @@ function wp_codebox_snapshot_clear_wp_content( string $root, array $preserved_pa
 
     foreach ( $iterator as $item ) {
         $path = $item->getPathname();
-        $relative = wp_codebox_snapshot_relative_path_for_restore( $root, $path );
+        $relative = wp_codebox_snapshot_restore_relative_path( $root, $path );
         if ( wp_codebox_snapshot_restore_should_preserve_path( $relative, $preserved_paths ) ) {
             continue;
         }
