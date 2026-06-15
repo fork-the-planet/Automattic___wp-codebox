@@ -298,7 +298,7 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, rout
         maxRedirects: 0,
       })
     } catch (error) {
-      if (!isBrowserPreviewRouteFetchRequestContextDisposedError(error)) {
+      if (!isBrowserPreviewRouteFetchRecoverableError(error)) {
         throw error
       }
 
@@ -324,6 +324,14 @@ async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, rout
 
 export function isBrowserPreviewRouteFetchRequestContextDisposedError(error: unknown): boolean {
   return error instanceof Error && /\broute\.fetch:\s*Request context disposed\.?/i.test(error.message)
+}
+
+export function isBrowserPreviewRouteFetchRecoverableError(error: unknown): boolean {
+  return isBrowserPreviewRouteFetchRequestContextDisposedError(error) || isBrowserPreviewRouteFetchContentDecodingError(error)
+}
+
+export function isBrowserPreviewRouteFetchContentDecodingError(error: unknown): boolean {
+  return error instanceof Error && /\broute\.fetch:\s*failed to decompress\b/i.test(error.message)
 }
 
 function urlProtocol(url: string): string | undefined {

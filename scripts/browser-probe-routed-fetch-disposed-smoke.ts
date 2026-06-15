@@ -20,6 +20,13 @@ assert.equal(disposedRoute.fulfillCalls, 0, "disposed request context should not
 assert.equal(disposedRoute.continueCalls, 0, "disposed request context should not continue")
 assert.equal(policy.stats.get("wordpress.com")?.routed, 1)
 
+const deflateRoute = createRoute(new Error("route.fetch: failed to decompress 'deflate' encoding: Error: incorrect header check"))
+await handler(deflateRoute as Route)
+assert.equal(deflateRoute.abortCalls, 1, "routed content decoding failures should abort the routed request")
+assert.equal(deflateRoute.fulfillCalls, 0, "routed content decoding failures should not fulfill")
+assert.equal(deflateRoute.continueCalls, 0, "routed content decoding failures should not continue")
+assert.equal(policy.stats.get("wordpress.com")?.routed, 2)
+
 const otherFetchError = new Error("route.fetch: socket hang up")
 const failingRoute = createRoute(otherFetchError)
 await assert.rejects(handler(failingRoute as Route), otherFetchError, "other route.fetch errors should still surface")
