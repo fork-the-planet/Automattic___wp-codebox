@@ -16,7 +16,7 @@ import type { PlaygroundCliServer } from "./preview-server.js"
 import { collectPlaygroundArtifacts } from "./runtime-artifact-helpers.js"
 import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
-import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
+import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact, type RuntimeSnapshotExportOptions } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
 import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
@@ -344,10 +344,10 @@ class PlaygroundRuntime implements Runtime {
     return observation
   }
 
-  async snapshot(): Promise<Snapshot> {
+  async snapshot(options: RuntimeSnapshotExportOptions = {}): Promise<Snapshot> {
     const snapshotId = id("snapshot")
     const createdAt = now()
-    const payload = await this.captureRuntimeSnapshotArtifact(snapshotId, createdAt)
+    const payload = await this.captureRuntimeSnapshotArtifact(snapshotId, createdAt, options)
     const artifactPath = `files/runtime-snapshots/${snapshotId}.json`
     const absoluteArtifactPath = join(this.artifactRoot, artifactPath)
     const artifactJson = `${JSON.stringify(payload, null, 2)}\n`
@@ -398,10 +398,10 @@ class PlaygroundRuntime implements Runtime {
     return snapshot
   }
 
-  private async captureRuntimeSnapshotArtifact(snapshotId: string, createdAt: string): Promise<RuntimeSnapshotArtifact> {
+  private async captureRuntimeSnapshotArtifact(snapshotId: string, createdAt: string, options: RuntimeSnapshotExportOptions = {}): Promise<RuntimeSnapshotArtifact> {
     const server = await this.bootPlayground()
     const response = await this.runPlaygroundCommand("runtime.snapshot", server, {
-      code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp({ excludedWpContentPaths: this.snapshotExcludedWpContentPaths() }), []),
+      code: bootstrapPhpCode(this.spec, runtimeSnapshotExportPhp({ ...options, excludedWpContentPaths: [...this.snapshotExcludedWpContentPaths(), ...(options.excludedWpContentPaths ?? [])] }), []),
     })
     assertPlaygroundResponseOk("runtime.snapshot", response)
     const captured = await runtimeSnapshotExportPayload(server, response.text)
@@ -800,7 +800,9 @@ class PlaygroundRuntime implements Runtime {
 
   async runCaptureStateBundle(spec: ExecutionSpec): Promise<string> {
     const label = stringArg(spec.args ?? [], "label")
-    const snapshot = await this.snapshot()
+    const snapshotOptions = snapshotOptionsFromArgs(spec.args ?? [])
+    const snapshot = await this.snapshot(snapshotOptions)
+    const snapshotOptionsMetadata = hasSnapshotOptions(snapshotOptions) ? { snapshotOptions } : {}
     const summary = snapshot.metadata.summary && typeof snapshot.metadata.summary === "object" && !Array.isArray(snapshot.metadata.summary)
       ? snapshot.metadata.summary as Record<string, unknown>
       : {}
@@ -820,6 +822,7 @@ class PlaygroundRuntime implements Runtime {
       summary: {
         databaseTables: summary.databaseTables ?? 0,
         wpContentFiles: summary.wpContentFiles ?? 0,
+        ...snapshotOptionsMetadata,
       },
     }, null, 2)}\n`
   }
@@ -829,6 +832,8 @@ class PlaygroundRuntime implements Runtime {
     const landingPage = stringArg(spec.args ?? [], "landing-page")
     const outputDirectory = replayExportOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
     const importMs = nonNegativeIntegerStringArg(spec.args ?? [], "import-ms") ?? 0
+    const snapshotOptions = snapshotOptionsFromArgs(spec.args ?? [])
+    const snapshotOptionsMetadata = hasSnapshotOptions(snapshotOptions) ? { snapshotOptions } : {}
 
     const materializeStartedAtMs = Date.now()
     let materialization: Awaited<ReturnType<typeof materializePlaygroundMountsFromVfs>> | undefined
@@ -841,7 +846,7 @@ class PlaygroundRuntime implements Runtime {
     const materializeMs = Date.now() - materializeStartedAtMs
 
     const snapshotStartedAtMs = Date.now()
-    const snapshot = await this.snapshot()
+    const snapshot = await this.snapshot(snapshotOptions)
     const snapshotMs = Date.now() - snapshotStartedAtMs
     const payload = await runtimeSnapshotPayload(snapshot)
 
@@ -857,6 +862,7 @@ class PlaygroundRuntime implements Runtime {
         command: "wordpress.export-replay-package",
         runtimeId: this.runtimeId,
         snapshotId: snapshot.id,
+        ...snapshotOptionsMetadata,
         artifactRoot: this.artifactRoot,
         ...(materialization ? { materialization } : {}),
       },
@@ -882,6 +888,7 @@ class PlaygroundRuntime implements Runtime {
         contentDigest: replayPackage.manifest.contentDigest,
         createdAt: replayPackage.manifest.createdAt,
       },
+      ...snapshotOptionsMetadata,
     }, null, 2)}\n`
   }
 
@@ -1135,6 +1142,39 @@ function nonNegativeIntegerStringArg(args: string[], name: string): number | und
 
   const parsed = Number.parseInt(value, 10)
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+function stringListArg(args: string[], name: string): string[] | undefined {
+  const value = stringArg(args, name)
+  if (!value) {
+    return undefined
+  }
+
+  const values = value.split(",").map((item) => item.trim()).filter((item) => item.length > 0)
+  return values.length > 0 ? values : undefined
+}
+
+function snapshotOptionsFromArgs(args: string[]): RuntimeSnapshotExportOptions {
+  const options: RuntimeSnapshotExportOptions = {}
+  const includedWpContentPaths = stringListArg(args, "snapshot-include-wp-content")
+  const excludedWpContentPaths = stringListArg(args, "snapshot-exclude-wp-content")
+  const includedDatabaseTables = stringListArg(args, "snapshot-database-tables")
+  const excludedDatabaseTables = stringListArg(args, "snapshot-exclude-database-tables")
+  const includedOptionNames = stringListArg(args, "snapshot-option-names")
+  const includedPostTypes = stringListArg(args, "snapshot-post-types")
+
+  if (includedWpContentPaths) options.includedWpContentPaths = includedWpContentPaths
+  if (excludedWpContentPaths) options.excludedWpContentPaths = excludedWpContentPaths
+  if (includedDatabaseTables) options.includedDatabaseTables = includedDatabaseTables
+  if (excludedDatabaseTables) options.excludedDatabaseTables = excludedDatabaseTables
+  if (includedOptionNames) options.includedOptionNames = includedOptionNames
+  if (includedPostTypes) options.includedPostTypes = includedPostTypes
+
+  return options
+}
+
+function hasSnapshotOptions(options: RuntimeSnapshotExportOptions): boolean {
+  return Object.keys(options).length > 0
 }
 
 function replayExportOutputDirectory(artifactRoot: string, requested: string | undefined): string {

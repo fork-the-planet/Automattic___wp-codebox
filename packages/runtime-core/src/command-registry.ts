@@ -18,6 +18,15 @@ export interface CommandDefinition {
   handler: CommandHandlerBinding
 }
 
+const snapshotScopingAcceptedArgs: CommandDefinition["acceptedArgs"] = [
+  { name: "snapshot-include-wp-content", description: "Comma-separated wp-content-relative paths to include in the runtime snapshot. Defaults to all non-excluded paths.", format: "string" },
+  { name: "snapshot-exclude-wp-content", description: "Comma-separated wp-content-relative paths to exclude from the runtime snapshot.", format: "string" },
+  { name: "snapshot-database-tables", description: "Comma-separated database table base names to include, such as posts,postmeta,options.", format: "string" },
+  { name: "snapshot-exclude-database-tables", description: "Comma-separated database table base names to exclude from the runtime snapshot.", format: "string" },
+  { name: "snapshot-option-names", description: "Comma-separated option_name values or LIKE patterns using * for the options table.", format: "string" },
+  { name: "snapshot-post-types", description: "Comma-separated post types used to scope posts and postmeta table exports.", format: "string" },
+]
+
 export const commandRegistry = [
   {
     id: "inspect-mounted-inputs",
@@ -57,6 +66,7 @@ export const commandRegistry = [
     description: "Capture the current WordPress runtime state as a portable state bundle source for replayable Playground artifacts.",
     acceptedArgs: [
       { name: "label", description: "Optional human-readable capture label recorded in the command output.", format: "string" },
+      ...snapshotScopingAcceptedArgs,
     ],
     outputShape: "wp-codebox/wordpress-state-bundle-capture/v1 JSON with runtime snapshot id, artifact refs, replay status, and capture summary.",
     policyRequirement: "Runtime policy commands must include wordpress.capture-state-bundle.",
@@ -71,6 +81,7 @@ export const commandRegistry = [
       { name: "output-dir", description: "Optional package directory relative to the runtime artifact root; defaults to files/replay-package.", format: "relative path" },
       { name: "landing-page", description: "Optional replay landing page recorded in blueprint.after.json.", format: "path" },
       { name: "import-ms", description: "Optional importer duration supplied by the caller so replay export metrics can include the preceding import phase.", format: "non-negative integer" },
+      ...snapshotScopingAcceptedArgs,
     ],
     outputShape: "wp-codebox/wordpress-replay-export/v1 JSON with import/materialization/snapshot/export metrics and manifest, blueprint.after.json, blueprint.after-notes.json, and files/runtime-snapshot.json artifact paths.",
     policyRequirement: "Runtime policy commands must include wordpress.export-replay-package.",

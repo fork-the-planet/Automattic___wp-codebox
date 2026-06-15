@@ -112,6 +112,11 @@ export async function runtimeSnapshotPayload(snapshot: Snapshot): Promise<Runtim
 
 export interface RuntimeSnapshotExportOptions {
   excludedWpContentPaths?: string[]
+  includedWpContentPaths?: string[]
+  includedDatabaseTables?: string[]
+  excludedDatabaseTables?: string[]
+  includedOptionNames?: string[]
+  includedPostTypes?: string[]
 }
 
 export type RuntimeSnapshotArtifactBody = Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">
@@ -222,6 +227,11 @@ function isRuntimeSnapshotExportManifest(value: unknown): value is RuntimeSnapsh
 
 export function runtimeSnapshotExportPhp(options: RuntimeSnapshotExportOptions = {}): string {
   const excludedWpContentPaths = JSON.stringify(normalizeWpContentPathList(["database", ...(options.excludedWpContentPaths ?? [])]))
+  const includedWpContentPaths = JSON.stringify(normalizeWpContentPathList(options.includedWpContentPaths ?? []))
+  const includedDatabaseTables = JSON.stringify(normalizeStringList(options.includedDatabaseTables ?? []))
+  const excludedDatabaseTables = JSON.stringify(normalizeStringList(options.excludedDatabaseTables ?? []))
+  const includedOptionNames = JSON.stringify(normalizeStringList(options.includedOptionNames ?? []))
+  const includedPostTypes = JSON.stringify(normalizeStringList(options.includedPostTypes ?? []))
   return [String.raw`
 global $wpdb;
 
@@ -231,6 +241,46 @@ WP_CODEBOX_EXCLUDED_WP_CONTENT_PATHS
 , true );
 if ( ! is_array( $wp_codebox_snapshot_excluded_wp_content_paths ) ) {
     $wp_codebox_snapshot_excluded_wp_content_paths = array();
+}
+
+$wp_codebox_snapshot_included_wp_content_paths = json_decode(<<<'WP_CODEBOX_INCLUDED_WP_CONTENT_PATHS'
+`, includedWpContentPaths, String.raw`
+WP_CODEBOX_INCLUDED_WP_CONTENT_PATHS
+, true );
+if ( ! is_array( $wp_codebox_snapshot_included_wp_content_paths ) ) {
+    $wp_codebox_snapshot_included_wp_content_paths = array();
+}
+
+$wp_codebox_snapshot_included_database_tables = json_decode(<<<'WP_CODEBOX_INCLUDED_DATABASE_TABLES'
+`, includedDatabaseTables, String.raw`
+WP_CODEBOX_INCLUDED_DATABASE_TABLES
+, true );
+if ( ! is_array( $wp_codebox_snapshot_included_database_tables ) ) {
+    $wp_codebox_snapshot_included_database_tables = array();
+}
+
+$wp_codebox_snapshot_excluded_database_tables = json_decode(<<<'WP_CODEBOX_EXCLUDED_DATABASE_TABLES'
+`, excludedDatabaseTables, String.raw`
+WP_CODEBOX_EXCLUDED_DATABASE_TABLES
+, true );
+if ( ! is_array( $wp_codebox_snapshot_excluded_database_tables ) ) {
+    $wp_codebox_snapshot_excluded_database_tables = array();
+}
+
+$wp_codebox_snapshot_included_option_names = json_decode(<<<'WP_CODEBOX_INCLUDED_OPTION_NAMES'
+`, includedOptionNames, String.raw`
+WP_CODEBOX_INCLUDED_OPTION_NAMES
+, true );
+if ( ! is_array( $wp_codebox_snapshot_included_option_names ) ) {
+    $wp_codebox_snapshot_included_option_names = array();
+}
+
+$wp_codebox_snapshot_included_post_types = json_decode(<<<'WP_CODEBOX_INCLUDED_POST_TYPES'
+`, includedPostTypes, String.raw`
+WP_CODEBOX_INCLUDED_POST_TYPES
+, true );
+if ( ! is_array( $wp_codebox_snapshot_included_post_types ) ) {
+    $wp_codebox_snapshot_included_post_types = array();
 }
 
 function wp_codebox_snapshot_hash_file_contents( string $contents ): string {
@@ -265,7 +315,67 @@ function wp_codebox_snapshot_is_excluded_path( string $relative_path, array $exc
     return false;
 }
 
-function wp_codebox_snapshot_write_files( string $root, array $excluded_paths, string $target_path ): void {
+function wp_codebox_snapshot_is_included_path( string $relative_path, array $included_paths ): bool {
+    if ( empty( $included_paths ) ) {
+        return true;
+    }
+
+    $relative_path = trim( str_replace( '\\', '/', $relative_path ), '/' );
+    foreach ( $included_paths as $included_path ) {
+        if ( ! is_string( $included_path ) || '' === $included_path ) {
+            continue;
+        }
+        $included_path = trim( str_replace( '\\', '/', $included_path ), '/' );
+        if ( $relative_path === $included_path || str_starts_with( $relative_path, $included_path . '/' ) ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function wp_codebox_snapshot_table_base_name( string $table_name, string $prefix ): string {
+    return str_starts_with( $table_name, $prefix ) ? substr( $table_name, strlen( $prefix ) ) : $table_name;
+}
+
+function wp_codebox_snapshot_table_allowed( string $table_name, string $prefix, array $included_tables, array $excluded_tables ): bool {
+    $base_name = wp_codebox_snapshot_table_base_name( $table_name, $prefix );
+    if ( ! empty( $included_tables ) && ! in_array( $base_name, $included_tables, true ) && ! in_array( $table_name, $included_tables, true ) ) {
+        return false;
+    }
+    return ! in_array( $base_name, $excluded_tables, true ) && ! in_array( $table_name, $excluded_tables, true );
+}
+
+function wp_codebox_snapshot_sql_string_list( array $values ): string {
+    global $wpdb;
+    return implode( ', ', array_map( static fn( $value ) => $wpdb->prepare( '%s', (string) $value ), $values ) );
+}
+
+function wp_codebox_snapshot_where_clause( string $base_name, array $option_names, array $post_types ): string {
+    global $wpdb;
+    if ( 'options' === $base_name && ! empty( $option_names ) ) {
+        $clauses = array();
+        foreach ( $option_names as $name ) {
+            $name = (string) $name;
+            $clauses[] = str_contains( $name, '*' ) || str_contains( $name, '%' )
+                ? $wpdb->prepare( 'option_name LIKE %s', str_replace( '*', '%', $name ) )
+                : $wpdb->prepare( 'option_name = %s', $name );
+        }
+        return ' WHERE ' . implode( ' OR ', $clauses );
+    }
+
+    if ( 'posts' === $base_name && ! empty( $post_types ) ) {
+        return ' WHERE post_type IN (' . wp_codebox_snapshot_sql_string_list( $post_types ) . ')';
+    }
+
+    if ( 'postmeta' === $base_name && ! empty( $post_types ) ) {
+        $posts_table = $wpdb->posts;
+        return ' WHERE post_id IN (SELECT ID FROM ' . $posts_table . ' WHERE post_type IN (' . wp_codebox_snapshot_sql_string_list( $post_types ) . '))';
+    }
+
+    return '';
+}
+
+function wp_codebox_snapshot_write_files( string $root, array $included_paths, array $excluded_paths, string $target_path ): void {
     $handle = fopen( $target_path, 'wb' );
     if ( false === $handle ) {
         throw new RuntimeException( 'Failed to create runtime snapshot file manifest.' );
@@ -288,6 +398,9 @@ function wp_codebox_snapshot_write_files( string $root, array $excluded_paths, s
 
             $path = $file->getPathname();
             $relative = wp_codebox_snapshot_relative_path( $root, $path );
+            if ( ! wp_codebox_snapshot_is_included_path( $relative, $included_paths ) ) {
+                continue;
+            }
             if ( wp_codebox_snapshot_is_excluded_path( $relative, $excluded_paths ) ) {
                 continue;
             }
@@ -319,16 +432,22 @@ if ( ! mkdir( $export_dir, 0700, true ) && ! is_dir( $export_dir ) ) {
 
 $table_index = 0;
 foreach ( $wpdb->get_col( 'SHOW TABLES' ) as $table_name ) {
+    $base_name = wp_codebox_snapshot_table_base_name( $table_name, $wpdb->prefix );
+    if ( ! wp_codebox_snapshot_table_allowed( $table_name, $wpdb->prefix, $wp_codebox_snapshot_included_database_tables, $wp_codebox_snapshot_excluded_database_tables ) ) {
+        continue;
+    }
+
     $quoted_table = chr( 96 ) . str_replace( chr( 96 ), chr( 96 ) . chr( 96 ), $table_name ) . chr( 96 );
     $create_row = $wpdb->get_row( 'SHOW CREATE TABLE ' . $quoted_table, ARRAY_N );
-    $row_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $quoted_table );
+    $where = wp_codebox_snapshot_where_clause( $base_name, $wp_codebox_snapshot_included_option_names, $wp_codebox_snapshot_included_post_types );
+    $row_count = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $quoted_table . $where );
     $chunks = array();
     $offset = 0;
     $chunk_index = 0;
     $chunk_size = 100;
 
     while ( $offset < $row_count ) {
-        $rows = $wpdb->get_results( 'SELECT * FROM ' . $quoted_table . ' LIMIT ' . (int) $chunk_size . ' OFFSET ' . (int) $offset, ARRAY_A );
+        $rows = $wpdb->get_results( 'SELECT * FROM ' . $quoted_table . $where . ' LIMIT ' . (int) $chunk_size . ' OFFSET ' . (int) $offset, ARRAY_A );
         $chunk_path = $export_dir . '/table-' . $table_index . '-chunk-' . $chunk_index . '.json';
         file_put_contents( $chunk_path, wp_codebox_snapshot_json_encode( $rows ?: array() ) );
         $chunks[] = $chunk_path;
@@ -349,7 +468,7 @@ foreach ( $wpdb->get_col( 'SHOW TABLES' ) as $table_name ) {
 usort( $tables, fn( $left, $right ) => strcmp( $left['name'], $right['name'] ) );
 
 $files_path = $export_dir . '/files.ndjson';
-wp_codebox_snapshot_write_files( WP_CONTENT_DIR, $wp_codebox_snapshot_excluded_wp_content_paths, $files_path );
+wp_codebox_snapshot_write_files( WP_CONTENT_DIR, $wp_codebox_snapshot_included_wp_content_paths, $wp_codebox_snapshot_excluded_wp_content_paths, $files_path );
 
 echo wp_codebox_snapshot_json_encode( array(
     'schema' => 'wp-codebox/wordpress-runtime-snapshot-export-manifest/v1',
@@ -365,7 +484,12 @@ echo wp_codebox_snapshot_json_encode( array(
         'activeTheme' => wp_get_theme()->get_stylesheet(),
         'activePlugins' => array_values( (array) get_option( 'active_plugins', array() ) ),
         'wpContentPath' => WP_CONTENT_DIR,
+        'includedWpContentPaths' => array_values( $wp_codebox_snapshot_included_wp_content_paths ),
         'skippedWpContentPaths' => array_values( $wp_codebox_snapshot_excluded_wp_content_paths ),
+        'includedDatabaseTables' => array_values( $wp_codebox_snapshot_included_database_tables ),
+        'excludedDatabaseTables' => array_values( $wp_codebox_snapshot_excluded_database_tables ),
+        'includedOptionNames' => array_values( $wp_codebox_snapshot_included_option_names ),
+        'includedPostTypes' => array_values( $wp_codebox_snapshot_included_post_types ),
     ),
     'database' => array( 'tables' => $tables ),
     'files' => array( 'ndjsonPath' => $files_path ),
@@ -522,5 +646,12 @@ function normalizeWpContentPathList(paths: string[]): string[] {
   return [...new Set(paths
     .map((path) => path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""))
     .filter((path) => path.length > 0 && !path.includes("..")))]
+    .sort()
+}
+
+function normalizeStringList(values: string[]): string[] {
+  return [...new Set(values
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0))]
     .sort()
 }

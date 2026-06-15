@@ -859,7 +859,7 @@ export interface Runtime {
   mount(spec: MountSpec): Promise<void>
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
   observe(spec: ObservationSpec): Promise<ObservationResult>
-  snapshot(): Promise<Snapshot>
+  snapshot(options?: unknown): Promise<Snapshot>
   collectArtifacts(spec?: ArtifactSpec): Promise<ArtifactBundle>
   destroy(): Promise<void>
 }
