@@ -396,8 +396,9 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
   await mkdir(srcTarget, { recursive: true })
   await mkdir(thirdPartyTarget, { recursive: true })
 
-  const scopedRoot = await scopePhpAiClientSource(source, stagingRoot)
-  const packages = await composerInstalledPackagesFromSource(source)
+  const preparedSource = await preparePhpAiClientOverlaySource(source, stagingRoot)
+  const scopedRoot = await scopePhpAiClientSource(preparedSource, stagingRoot)
+  const packages = await composerInstalledPackagesFromSource(preparedSource)
   const namespacePrefixes = dependencyNamespacePrefixes(packages)
   await scopePhpAiClientSourceDependencyReferences(join(scopedRoot, "src"), namespacePrefixes)
   await cp(join(scopedRoot, "src"), srcTarget, { recursive: true })
@@ -426,6 +427,65 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
       digest: { sha256: digest },
       ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
     },
+  }
+}
+
+async function preparePhpAiClientOverlaySource(source: string, stagingRoot: string): Promise<string> {
+  if (await pathIsDirectory(join(source, "vendor"))) {
+    return source
+  }
+
+  if (!await pathIsFile(join(source, "composer.json"))) {
+    throw new Error(`php-ai-client runtime overlay source has no vendor directory and no composer.json for dependency hydration: ${source}`)
+  }
+
+  const composer = await resolveComposerCommand()
+  if (!composer) {
+    throw new Error(`php-ai-client runtime overlay source has no vendor directory, and Composer is not available to hydrate dependencies. Run composer install in ${source}, or install Composer on PATH before running WP Codebox.`)
+  }
+
+  const hydratedSource = join(stagingRoot, "source")
+  await cp(source, hydratedSource, {
+    recursive: true,
+    filter: (entry) => !workspaceSeedExcludeMatches(relative(source, entry), "vendor"),
+  })
+
+  try {
+    await execFileAsync(composer, ["install", "--working-dir", hydratedSource, "--no-dev", "--no-interaction", "--no-progress", "--prefer-dist", "--classmap-authoritative"])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`php-ai-client runtime overlay dependency hydration failed for ${source}. Run composer install in that checkout or inspect Composer output. ${message}`)
+  }
+
+  if (!await pathIsFile(join(hydratedSource, "vendor", "composer", "installed.json"))) {
+    throw new Error(`php-ai-client runtime overlay dependency hydration completed without vendor/composer/installed.json: ${source}`)
+  }
+
+  return hydratedSource
+}
+
+async function pathIsDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+async function pathIsFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile()
+  } catch {
+    return false
+  }
+}
+
+async function resolveComposerCommand(): Promise<string> {
+  try {
+    await execFileAsync("composer", ["--version"])
+    return "composer"
+  } catch {
+    return ""
   }
 }
 
