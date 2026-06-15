@@ -18,6 +18,7 @@ import { materializePlaygroundMountsFromVfs } from "./mount-materialization.js"
 import { runAbilityCommand, runBenchCommand, runCorePhpunitCommand, runPhpCommand, runPhpunitCommand, runPluginCheckCommand, runRestRequestCommand, runThemeCheckCommand } from "./wordpress-command-runners.js"
 import { PlaygroundSnapshotRestoreError, contentDigest, mountsFromSnapshot, runtimeSnapshotExportPayload, runtimeSnapshotExportPhp, runtimeSnapshotPayload, runtimeSnapshotRestorePhp, runtimeSpecFromSnapshot, snapshotDigest, type RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 import { createRuntimeWpCliBridge, type RuntimeWpCliBridge } from "./runtime-wp-cli-bridge.js"
+import { writeReplayExportPackage } from "./replayable-wordpress-site-bundle.js"
 import { preflightPhpWasmRuntimeAssets } from "./php-wasm-preflight.js"
 import { previewReviewerAccess } from "./preview-reviewer-access.js"
 import type {
@@ -823,6 +824,67 @@ class PlaygroundRuntime implements Runtime {
     }, null, 2)}\n`
   }
 
+  async runExportReplayPackage(spec: ExecutionSpec): Promise<string> {
+    const label = stringArg(spec.args ?? [], "label")
+    const landingPage = stringArg(spec.args ?? [], "landing-page")
+    const outputDirectory = replayExportOutputDirectory(this.artifactRoot, stringArg(spec.args ?? [], "output-dir"))
+    const importMs = nonNegativeIntegerStringArg(spec.args ?? [], "import-ms") ?? 0
+
+    const materializeStartedAtMs = Date.now()
+    let materialization: Awaited<ReturnType<typeof materializePlaygroundMountsFromVfs>> | undefined
+    if (this.status !== "destroyed" && this.cliServerPromise) {
+      materialization = await materializePlaygroundMountsFromVfs(await this.cliServerPromise, this.mounts)
+      if (materialization.materialized > 0 || materialization.deleted > 0 || materialization.skipped > 0) {
+        this.recordEvent("runtime.mounts.materialized", { ...materialization, source: "wordpress.export-replay-package" })
+      }
+    }
+    const materializeMs = Date.now() - materializeStartedAtMs
+
+    const snapshotStartedAtMs = Date.now()
+    const snapshot = await this.snapshot()
+    const snapshotMs = Date.now() - snapshotStartedAtMs
+    const payload = await runtimeSnapshotPayload(snapshot)
+
+    const exportStartedAtMs = Date.now()
+    const replayPackage = await writeReplayExportPackage(payload, {
+      directory: outputDirectory,
+      landingPage,
+      importMs,
+      materializeMs,
+      snapshotMs,
+      source: {
+        ...(label ? { label } : {}),
+        command: "wordpress.export-replay-package",
+        runtimeId: this.runtimeId,
+        snapshotId: snapshot.id,
+        artifactRoot: this.artifactRoot,
+        ...(materialization ? { materialization } : {}),
+      },
+    })
+    replayPackage.metrics.exportMs = Date.now() - exportStartedAtMs
+
+    this.recordEvent("runtime.replay-package.exported", {
+      directory: replayPackage.directory,
+      metrics: replayPackage.metrics,
+      artifacts: replayPackage.artifacts,
+    })
+
+    return `${JSON.stringify({
+      schema: "wp-codebox/wordpress-replay-export/v1",
+      status: replayPackage.status,
+      ...(label ? { label } : {}),
+      replayStatus: "replayable-runtime-state",
+      directory: replayPackage.directory,
+      metrics: replayPackage.metrics,
+      artifacts: replayPackage.artifacts,
+      manifest: {
+        id: replayPackage.manifest.id,
+        contentDigest: replayPackage.manifest.contentDigest,
+        createdAt: replayPackage.manifest.createdAt,
+      },
+    }, null, 2)}\n`
+  }
+
   async runPluginCheck(spec: ExecutionSpec): Promise<string> {
     const server = await this.bootPlayground()
     const result = await runPluginCheckCommand({
@@ -1063,6 +1125,25 @@ function stringArg(args: string[], name: string): string | undefined {
   const prefix = `${name}=`
   const value = args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length).trim()
   return value && value.length > 0 ? value : undefined
+}
+
+function nonNegativeIntegerStringArg(args: string[], name: string): number | undefined {
+  const value = stringArg(args, name)
+  if (!value) {
+    return undefined
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
+function replayExportOutputDirectory(artifactRoot: string, requested: string | undefined): string {
+  const relativePath = requested?.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "files/replay-package"
+  if (relativePath.length === 0 || relativePath.includes("..")) {
+    throw new Error("wordpress.export-replay-package output-dir must be a relative path inside the runtime artifact root")
+  }
+
+  return join(artifactRoot, relativePath)
 }
 
 function wpContentRelativePath(path: string): string | undefined {

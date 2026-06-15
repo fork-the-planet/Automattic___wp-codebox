@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { DEFAULT_WORDPRESS_VERSION, artifactBundleRunRef, artifactManifestFile, createBenchResultsJsonSchema, createRuntime, refreshArtifactManifestFileSha256s, upsertArtifactManifestFiles, type ArtifactBundle, type ArtifactManifest, type ArtifactManifestFile, type BenchmarkArtifactRef, type BenchResults, type ExecutionResult, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRecord, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
@@ -20,7 +20,7 @@ import { createRecipeRunContext } from "./recipe-run-context.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
 import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRunTimeout, exitAfterTerminalRecipePhaseFailure, isRecipeRunTimeoutError, printJsonFailureDiagnostic, recipeRunFailureStatus, RecipeDeclaredArtifactFailureError, RecipeProbeFailureError, RecipeRunTimeoutError, RecipeRuntimeCreateError, remainingRecipeTimeoutMs, serializeRecipeRunError, watchRecipeOperation, writeRecipeJsonOutput } from "./recipe-run-output.js"
 import { RecipePhaseError, RecipePhaseTracker } from "./recipe-run-phases.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -536,6 +536,24 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       run: runRecord,
     }
   } catch (error) {
+    const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
+    const failureDiagnostics = recipeFailureRuntimeEvidenceFile({
+      recipe,
+      recipePath,
+      extraPlugins,
+      dependencyOverlays,
+      workspaceMounts,
+      stagedFiles,
+      overlays,
+      executions,
+      fixtureDatabases,
+      probes,
+      declaredArtifacts,
+      phaseEvidence: phaseTracker.list(),
+      diagnostics: recipeRuntimeDiagnostics(recipe, executions, error) ?? [],
+      error: serializedError,
+    })
+    let diagnosticArtifacts: RecipeDiagnosticArtifactRef[] = []
     if (runtime) {
       const activeRuntime = runtime
       artifacts = await phaseTracker.run("collect_artifacts", { failureRecovery: true, includeLogs: true, includeObservations: true }, async () => await collectAndFinalizeFailedRecipeArtifacts({
@@ -550,13 +568,20 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         interruption,
       }))
       if (artifacts) {
+        const collectedArtifacts = artifacts
         browserEvidence = await recipeBrowserEvidence(artifacts, executions)
         await artifactPointer.update({ runtime: await activeRuntime.info(), artifacts, phases: phaseTracker.list(), browserEvidence })
         try {
           if (declaredArtifacts.length === 0) {
             declaredArtifacts = await collectRecipeDeclaredArtifacts(recipe, activeRuntime)
           }
-          await appendRecipeRuntimeEvidence(artifacts, recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts))
+          const evidenceFiles = await appendRecipeRuntimeEvidence(artifacts, [
+            ...recipeRuntimeEvidenceFiles(fixtureDatabases, probes, declaredArtifacts),
+            failureDiagnostics,
+          ])
+          diagnosticArtifacts = evidenceFiles
+            .filter((file) => file.kind === failureDiagnostics.kind)
+            .map((file) => ({ path: join(basename(collectedArtifacts.directory), file.path), kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
         } catch {
           // Preserve the original recipe failure; failure recovery already kept the base artifact bundle.
         }
@@ -576,12 +601,16 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       }
     }
 
+    if (diagnosticArtifacts.length === 0) {
+      const fallbackDiagnostic = await writeRecipeFailureDiagnosticArtifact(configuredArtifactsDirectory, failureDiagnostics.value)
+      diagnosticArtifacts = fallbackDiagnostic ? [fallbackDiagnostic] : []
+    }
+
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
     runRecord = await runRegistry.read(runRecord.runId)
-    const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     runRecord = await runRegistry.update(runRecord.runId, {
       status: recipeRunFailureStatus(error, interruption),
       ...(runtime ? { runtime: await runtime.info() } : {}),
@@ -589,7 +618,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs, status: recipeRunFailureStatus(error, interruption), startupDurationMs, cleanup: cleanupEvidence, artifacts, failure: serializedError, phaseEvidence: phaseTracker.list() }) },
       error: serializedError,
     })
-    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list(), browserEvidence })
+    await artifactPointer.update({ commandStatus: "failed", ...(runtime ? { runtime: await runtime.info() } : {}), ...(artifacts ? { artifacts } : {}), failure: serializedError, phases: phaseTracker.list(), browserEvidence, diagnosticArtifacts })
 
     return {
       success: false,
@@ -1529,6 +1558,72 @@ function recipeRuntimeEvidenceFiles(fixtureDatabases: RecipeRunFixtureDatabase[]
     ...(probes.length > 0 ? [{ filename: "recipe-probes.json", kind: "recipe-probe-results", value: { schema: "wp-codebox/recipe-probe-results/v1", passed: !recipeProbeFailure(probes), probes } }] : []),
     ...(declaredArtifacts.length > 0 ? [{ filename: "recipe-declared-artifacts.json", kind: "recipe-declared-artifact-results", value: { schema: "wp-codebox/recipe-declared-artifact-results/v1", passed: !recipeDeclaredArtifactFailure(declaredArtifacts), artifacts: declaredArtifacts } }] : []),
   ]
+}
+
+function recipeFailureRuntimeEvidenceFile(args: {
+  recipe: WorkspaceRecipe
+  recipePath: string
+  extraPlugins: PreparedExtraPlugin[]
+  dependencyOverlays: PreparedDependencyOverlay[]
+  workspaceMounts: PreparedWorkspaceMount[]
+  stagedFiles: PreparedStagedFile[]
+  overlays: PreparedRuntimeOverlay[]
+  executions: RecipeExecutionResult[]
+  fixtureDatabases: RecipeRunFixtureDatabase[]
+  probes: RecipeRunProbe[]
+  declaredArtifacts: RecipeRunDeclaredArtifact[]
+  phaseEvidence: RecipePhaseEvidence[]
+  diagnostics: RecipeRuntimeDiagnostic[]
+  error: RunOutput["error"]
+}): { filename: string; kind: string; value: unknown } {
+  return {
+    filename: "recipe-run-failure-diagnostics.json",
+    kind: "recipe-run-failure-diagnostics",
+    value: stripUndefined({
+      schema: "wp-codebox/recipe-run-failure-diagnostics/v1",
+      createdAt: new Date().toISOString(),
+      recipe: {
+        path: args.recipePath,
+        schema: args.recipe.schema,
+        runtime: args.recipe.runtime ?? {},
+        workflow: recipeWorkflowMetadata(args.recipe),
+        inputs: {
+          extra_plugins: args.extraPlugins.map(recipeRunExtraPlugin),
+          dependency_overlays: args.dependencyOverlays.map(recipeRunDependencyOverlay),
+          workspaces: args.workspaceMounts.map((workspace) => ({ target: workspace.target, mode: workspace.mode, metadata: workspace.metadata })),
+          stagedFiles: args.stagedFiles.map(recipeRunStagedFile),
+          secretEnv: args.recipe.inputs?.secretEnv ?? [],
+        },
+        artifacts: args.recipe.artifacts ?? {},
+      },
+      preparedRuntimeOverlays: args.overlays.map((overlay) => ({ target: overlay.target, type: overlay.type, mode: overlay.mode, metadata: overlay.metadata })),
+      executions: args.executions,
+      fixtureDatabases: args.fixtureDatabases,
+      probes: args.probes,
+      declaredArtifacts: args.declaredArtifacts,
+      phaseEvidence: args.phaseEvidence,
+      diagnostics: args.diagnostics,
+      error: args.error,
+    }),
+  }
+}
+
+async function writeRecipeFailureDiagnosticArtifact(artifactsDirectory: string | undefined, value: unknown): Promise<RecipeDiagnosticArtifactRef | undefined> {
+  if (!artifactsDirectory) {
+    return undefined
+  }
+
+  const directory = resolve(artifactsDirectory)
+  const path = join(directory, "recipe-run-failure-diagnostics.json")
+  const contents = `${JSON.stringify(value, null, 2)}\n`
+  await mkdir(directory, { recursive: true })
+  await writeFile(path, contents)
+  return {
+    path: "recipe-run-failure-diagnostics.json",
+    kind: "recipe-run-failure-diagnostics",
+    contentType: "application/json",
+    sha256: createHash("sha256").update(contents).digest("hex"),
+  }
 }
 
 function parseFixtureDatabaseImportResult(stdout: string): { counts: Record<string, number> } {
