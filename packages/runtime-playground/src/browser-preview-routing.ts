@@ -3,6 +3,8 @@ import type { BrowserProbeNetworkPolicySummary, BrowserProbePreviewMode, Browser
 import { argValue, commaListArg, strictBooleanArg } from "./commands.js"
 import type { Page, Route } from "playwright"
 
+const BROWSER_PREVIEW_ROUTE_DRAIN_TIMEOUT_MS = 5_000
+
 export interface BrowserPreviewNetworkPolicy {
   mode: "allow" | "block" | "record"
   allowHosts: Set<string>
@@ -11,6 +13,15 @@ export interface BrowserPreviewNetworkPolicy {
   firstPartyHosts: Set<string>
   recordExternal: boolean
   stats: Map<string, { requests: number; external: boolean; blocked: number; routed: number }>
+}
+
+export interface BrowserPreviewRouteTracker {
+  pending: Set<Promise<void>>
+  errors: unknown[]
+}
+
+export function createBrowserPreviewRouteTracker(): BrowserPreviewRouteTracker {
+  return { pending: new Set(), errors: [] }
 }
 
 export function browserPreviewRouting(args: string[], runtimeSpec: RuntimeCreateSpec | undefined, localPreviewOrigin: string): BrowserProbePreviewRouting {
@@ -137,12 +148,35 @@ export function browserPreviewNetworkPolicySummary(policy: BrowserPreviewNetwork
   }
 }
 
-export async function routeBrowserPreviewPageNetwork(page: Page, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string): Promise<void> {
-  await routeBrowserPreviewNetwork(page.route.bind(page), policy, localPreviewOrigin)
+export async function routeBrowserPreviewPageNetwork(page: Page, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
+  await routeBrowserPreviewNetwork(page.route.bind(page), policy, localPreviewOrigin, tracker)
 }
 
-export async function routeBrowserPreviewContextNetwork(context: import("playwright").BrowserContext, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string): Promise<void> {
-  await routeBrowserPreviewNetwork(context.route.bind(context), policy, localPreviewOrigin)
+export async function routeBrowserPreviewContextNetwork(context: import("playwright").BrowserContext, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
+  await routeBrowserPreviewNetwork(context.route.bind(context), policy, localPreviewOrigin, tracker)
+}
+
+export async function drainBrowserPreviewRouteTracker(tracker: BrowserPreviewRouteTracker, timeoutMs = BROWSER_PREVIEW_ROUTE_DRAIN_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (tracker.pending.size > 0) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      throw new Error(`wordpress.browser-probe route-host timed out waiting for ${tracker.pending.size} routed request(s) to finish`)
+    }
+
+    const result = await Promise.race([
+      Promise.allSettled([...tracker.pending]).then(() => "drained" as const),
+      wait(remainingMs).then(() => "timeout" as const),
+    ])
+    if (result === "timeout") {
+      throw new Error(`wordpress.browser-probe route-host timed out waiting for ${tracker.pending.size} routed request(s) to finish`)
+    }
+  }
+
+  if (tracker.errors.length > 0) {
+    const error = tracker.errors[0]
+    throw error instanceof Error ? error : new Error(String(error))
+  }
 }
 
 function browserPreviewMode(args: string[], publicOrigin: string | undefined): BrowserProbePreviewMode {
@@ -154,7 +188,7 @@ function browserPreviewMode(args: string[], publicOrigin: string | undefined): B
   throw new Error(`wordpress.browser-probe preview-mode supports local, public, secure: ${raw}`)
 }
 
-async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string): Promise<void> {
+async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (route: Route) => Promise<void>) => Promise<unknown>, policy: BrowserPreviewNetworkPolicy, localPreviewOrigin: string, tracker?: BrowserPreviewRouteTracker): Promise<void> {
   if (!browserPreviewNeedsContextRouting(policy)) {
     return
   }
@@ -187,9 +221,22 @@ async function routeBrowserPreviewNetwork(routePattern: (url: string, handler: (
     }
 
     stat.routed += 1
-    const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, policy.routeHosts, localOrigin)
-    await route.fulfill({ response })
+    const task = fulfillBrowserPreviewRoutedHost(route, requestUrl, policy.routeHosts, localOrigin)
+    tracker?.pending.add(task)
+    try {
+      await task
+    } catch (error) {
+      tracker?.errors.push(error)
+      throw error
+    } finally {
+      tracker?.pending.delete(task)
+    }
   })
+}
+
+async function fulfillBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<void> {
+  const response = await fetchBrowserPreviewRoutedHost(route, requestUrl, routedHosts, localOrigin)
+  await route.fulfill({ response })
 }
 
 function browserPreviewNetworkPolicyMode(args: string[]): BrowserPreviewNetworkPolicy["mode"] {
@@ -220,6 +267,10 @@ function browserPreviewUrlHostname(url: string): string | undefined {
 
 function normalizeBrowserPreviewHost(host: string): string {
   return host.trim().toLowerCase().replace(/:\d+$/, "")
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function fetchBrowserPreviewRoutedHost(route: Route, requestUrl: URL, routedHosts: Set<string>, localOrigin: URL): Promise<Awaited<ReturnType<Route["fetch"]>>> {
