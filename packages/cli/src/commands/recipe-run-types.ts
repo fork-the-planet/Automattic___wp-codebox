@@ -119,6 +119,14 @@ export interface RecipeArtifactPointerState {
   failure?: RunOutput["error"]
   phases?: RecipePhaseEvidence[]
   browserEvidence?: RecipeBrowserEvidence[]
+  diagnosticArtifacts?: RecipeDiagnosticArtifactRef[]
+}
+
+export interface RecipeDiagnosticArtifactRef {
+  path: string
+  kind: string
+  contentType: string
+  sha256?: string
 }
 
 export type RecipePhaseName = "runtime_startup" | "mount_plugins" | "activate_plugins" | "run_blueprint_steps" | "import_fixture_databases" | "run_workloads" | "run_probes" | "collect_artifacts"
