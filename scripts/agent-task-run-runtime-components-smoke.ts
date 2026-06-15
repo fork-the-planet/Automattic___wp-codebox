@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { artifactManifestFile, buildAgentTaskRecipe, normalizeTaskInput, type ArtifactBundle, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { runAgentTask } from "../packages/cli/src/commands/agent-task-run.js"
-import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
+import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { installMuPluginsCode } from "../packages/cli/src/recipe-sources.js"
 import { buildAgentTaskSingleResult, finalizeAgentSandboxEvidence } from "../packages/cli/src/recipe-evidence.js"
@@ -44,8 +44,10 @@ assert.equal(recipe.inputs?.dependency_overlays?.[0]?.consumer, "caller-runtime"
 assert.equal(recipe.inputs?.dependency_overlays?.[0]?.package, "acme/dependency")
 
 const muPluginInstallCode = installMuPluginsCode(extraPlugins)
-assert.ok(muPluginInstallCode?.includes("define( 'DATAMACHINE_WORKSPACE_PATH', '/workspace' );"))
-assert.ok(!muPluginInstallCode?.includes('define( \'DATAMACHINE_WORKSPACE_PATH\', "/workspace" );'))
+assert.ok(muPluginInstallCode?.includes("WP Codebox Runtime Loader"))
+assert.ok(muPluginInstallCode?.includes("wp-codebox-runtime"))
+assert.ok(!muPluginInstallCode?.includes("DATAMACHINE_WORKSPACE_PATH"))
+assert.ok(!muPluginInstallCode?.includes("datamachine_should_load_full_runtime"))
 
 const agentTaskRunSource = readFileSync(new URL("../packages/cli/src/commands/agent-task-run.ts", import.meta.url), "utf8")
 const agentTaskRecipeSource = readFileSync(new URL("../packages/runtime-core/src/agent-task-recipe.ts", import.meta.url), "utf8")
@@ -53,6 +55,7 @@ const recipeRunSource = readFileSync(new URL("../packages/cli/src/commands/recip
 const agentCodeSource = readFileSync(new URL("../packages/cli/src/agent-code.ts", import.meta.url), "utf8")
 const recipeEvidenceSource = readFileSync(new URL("../packages/cli/src/recipe-evidence.ts", import.meta.url), "utf8")
 const sandboxCode = agentSandboxRunCode("Run a bundle", "echo json_encode(array('ok' => true));", [])
+const runtimeProbeCode = agentRuntimeProbeCode([])
 assert.ok(
   agentTaskRunSource.includes("diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence)"),
   "successful normalized agent-bundle workloads should not keep stale recipe-run failure diagnostics",
@@ -84,6 +87,14 @@ assert.ok(
 assert.ok(
   sandboxCode.includes("runtime_payload_json_encode_failed"),
   "sandbox runtime payload encoding failures should surface as structured diagnostics",
+)
+assert.ok(
+  !sandboxCode.includes("data-machine/data-machine.php") && !sandboxCode.includes("data-machine-code/data-machine-code.php"),
+  "sandbox run code should not hardcode Data Machine runtime plugins",
+)
+assert.ok(
+  !runtimeProbeCode.includes("data-machine/data-machine.php") && !runtimeProbeCode.includes("data-machine-code/data-machine-code.php"),
+  "runtime probe code should not hardcode Data Machine runtime plugins",
 )
 assert.ok(
   agentCodeSource.includes("wp_codebox_json_encode_agent_runtime_payload"),
