@@ -114,6 +114,8 @@ export interface RuntimeSnapshotExportOptions {
 }
 
 export type RuntimeSnapshotArtifactBody = Omit<RuntimeSnapshotArtifact, "schema" | "version" | "id" | "createdAt" | "hashes">
+type RuntimeSnapshotTable = RuntimeSnapshotArtifact["database"]["tables"][number]
+type RuntimeSnapshotFile = RuntimeSnapshotArtifact["files"][number]
 
 interface RuntimeSnapshotExportManifest {
   schema: "wp-codebox/wordpress-runtime-snapshot-export-manifest/v1"
@@ -139,25 +141,30 @@ export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, 
     throw new PlaygroundSnapshotRestoreError("Runtime snapshot export requires Playground readFileAsText support.")
   }
 
-  const tables = []
+  const tables: RuntimeSnapshotTable[] = []
   for (const table of manifest.database.tables) {
-    const rows = []
+    const rows: RuntimeSnapshotTable["rows"] = []
     for (const chunkPath of table.chunks) {
       const chunkRows = JSON.parse(await readFileAsText(chunkPath))
-      if (Array.isArray(chunkRows)) {
-        rows.push(...chunkRows)
+      if (!Array.isArray(chunkRows)) {
+        throw new PlaygroundSnapshotRestoreError(`Runtime snapshot table chunk is not an array: ${chunkPath}`)
       }
+      rows.push(...chunkRows.filter(isRecord))
     }
     tables.push({ name: table.name, createSql: table.createSql, rows, rowCount: table.rowCount })
   }
 
-  const files = []
+  const files: RuntimeSnapshotFile[] = []
   const fileLines = (await readFileAsText(manifest.files.ndjsonPath)).split("\n")
   for (const line of fileLines) {
     if (line.trim().length === 0) {
       continue
     }
-    files.push(JSON.parse(line))
+    const file = JSON.parse(line)
+    if (!isRuntimeSnapshotFile(file)) {
+      throw new PlaygroundSnapshotRestoreError("Runtime snapshot file manifest contains an invalid file entry.")
+    }
+    files.push(file)
   }
 
   return {
@@ -171,6 +178,15 @@ export async function runtimeSnapshotExportPayload(server: PlaygroundCliServer, 
     database: { tables },
     files,
   }
+}
+
+function isRuntimeSnapshotFile(value: unknown): value is RuntimeSnapshotFile {
+  return isRecord(value)
+    && value.scope === "wp-content"
+    && typeof value.path === "string"
+    && typeof value.bytes === "number"
+    && typeof value.sha256 === "string"
+    && typeof value.base64 === "string"
 }
 
 function parseRuntimeSnapshotExportManifest(responseText: string): RuntimeSnapshotExportManifest {
@@ -443,7 +459,13 @@ foreach ( $payload['files'] as $file ) {
     }
     $target = WP_CONTENT_DIR . '/' . $relative;
     wp_mkdir_p( dirname( $target ) );
-    file_put_contents( $target, base64_decode( $file['base64'], true ) );
+    $contents = base64_decode( $file['base64'], true );
+    if ( false === $contents ) {
+        throw new RuntimeException( 'Snapshot file payload is not valid base64: ' . $relative );
+    }
+    if ( false === file_put_contents( $target, $contents ) ) {
+        throw new RuntimeException( 'Failed to restore snapshot file: ' . $relative );
+    }
 }
 
 echo wp_json_encode( array(
