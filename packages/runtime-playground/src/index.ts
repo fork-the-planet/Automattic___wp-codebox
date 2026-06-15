@@ -4,6 +4,6 @@ export { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./bro
 export { createHostCommandTool, type HostCommandToolConfig } from "./host-command-tool.js"
 export { PlaygroundRuntimeBackend, createPlaygroundRuntimeBackend, playgroundRuntimeBackendProvider } from "./playground-runtime.js"
 export { preflightPhpWasmRuntimeAssets, PhpWasmRuntimeAssetIntegrityError, type PhpWasmRuntimeAssetPreflight, type PhpWasmRuntimeAssetPreflightOptions } from "./php-wasm-preflight.js"
-export { buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations, writeReplayableWordPressSiteBundle, type ReplayableWordPressSiteBundle, type ReplayableWordPressSiteBundleManifest, type ReplayableWordPressSiteBundleOptions } from "./replayable-wordpress-site-bundle.js"
+export { buildReplayExportBlueprint, buildReplayableWordPressSiteBlueprint, buildReplayableWordPressSiteLimitations, writeReplayExportPackage, writeReplayableWordPressSiteBundle, type ReplayExportPackage, type ReplayExportPackageOptions, type ReplayableWordPressSiteBundle, type ReplayableWordPressSiteBundleManifest, type ReplayableWordPressSiteBundleOptions } from "./replayable-wordpress-site-bundle.js"
 export type { RuntimeSnapshotArtifact } from "./runtime-snapshot.js"
 export type { PlaygroundCliModule } from "./playground-cli-runner.js"
