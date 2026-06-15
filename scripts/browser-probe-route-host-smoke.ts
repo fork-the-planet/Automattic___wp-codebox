@@ -11,11 +11,37 @@ const workspace = await mkdtemp(join(tmpdir(), "wp-codebox-browser-probe-route-h
 let server: Server | undefined
 
 try {
+  let adminAjaxRequest: { host: string; forwardedHost: string; forwardedPort: string; forwardedProto: string } | undefined
   server = createServer((request, response) => {
     const host = request.headers.host ?? ""
     const forwardedHost = request.headers["x-forwarded-host"] ?? ""
     const forwardedPort = request.headers["x-forwarded-port"] ?? ""
     const forwardedProto = request.headers["x-forwarded-proto"] ?? ""
+    if (request.url === "/wp-admin/") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+      response.end(`<!doctype html>
+        <title>Dashboard</title>
+        <div id="wpadminbar">Admin Bar</div>
+        <script>
+          fetch('/wp-admin/admin-ajax.php?action=rest-nonce')
+            .then((response) => response.json())
+            .then((payload) => console.log('rest nonce', payload.ok));
+        </script>`)
+      return
+    }
+    if (request.url === "/wp-admin/admin-ajax.php?action=rest-nonce") {
+      adminAjaxRequest = {
+        host,
+        forwardedHost: Array.isArray(forwardedHost) ? forwardedHost.join(",") : forwardedHost,
+        forwardedPort: Array.isArray(forwardedPort) ? forwardedPort.join(",") : forwardedPort,
+        forwardedProto: Array.isArray(forwardedProto) ? forwardedProto.join(",") : forwardedProto,
+      }
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ ok: true }))
+      }, 250)
+      return
+    }
     if (request.url === "/redirect-to-https/") {
       response.writeHead(301, { location: `https://${host}/redirected/` })
       response.end("redirect")
@@ -93,6 +119,34 @@ try {
   assert.match(redirectedHtml, /data-path="\/redirected\/"/)
   assert.match(redirectedHtml, /data-host="example\.test"/)
   assert.match(redirectedHtml, /data-forwarded-proto="https"/)
+
+  const adminHost = "wpcom-codebox.wordpress.com"
+  const adminProbe = await runBrowserProbeCommand({
+    artifactRoot: join(workspace, "admin"),
+    runtimeSpec,
+    server: serverRef,
+    spec: {
+      command: "wordpress.browser-probe",
+      args: [
+        `url=http://${adminHost}/wp-admin/`,
+        `route-host=${adminHost}`,
+        "wait-for=selector:#wpadminbar",
+        "capture=console,errors,network,html,screenshot,performance",
+      ],
+    },
+  })
+
+  assert.equal(adminProbe.artifact.requestedUrl, `http://${adminHost}/wp-admin/`)
+  assert.equal(adminProbe.artifact.summary.finalUrl, `http://${adminHost}/wp-admin/`)
+  assert.equal(adminProbe.artifact.summary.windowLocationOrigin, `http://${adminHost}`)
+  assert.ok((adminProbe.artifact.networkPolicy?.hosts[adminHost]?.routed ?? 0) >= 2)
+  assert.equal(adminAjaxRequest?.host, adminHost)
+  assert.equal(adminAjaxRequest?.forwardedHost, adminHost)
+  assert.equal(adminAjaxRequest?.forwardedPort, "80")
+  assert.equal(adminAjaxRequest?.forwardedProto, "http")
+
+  const adminNetworkLog = await readFile(join(workspace, "admin", "files", "browser", "network.jsonl"), "utf8")
+  assert.match(adminNetworkLog, /wp-admin\/admin-ajax\.php\?action=rest-nonce/)
 
   console.log("Browser probe route-host smoke passed")
 } finally {

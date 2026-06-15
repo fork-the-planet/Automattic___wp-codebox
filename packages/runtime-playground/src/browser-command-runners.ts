@@ -11,7 +11,7 @@ import { browserAssertionsSummary, browserStepRecord, executeBrowserInteractionS
 import { browserCommandLivenessPolicy, isBrowserCommandLivenessError, withBrowserCommandLiveness, type BrowserCommandLivenessPolicy } from "./browser-liveness.js"
 import { browserProbeLifecycleArtifact, browserProbeLifecycleInitScript, collectBrowserProbeLifecycle } from "./browser-lifecycle.js"
 import { browserProbeBenchMetrics, jsonLines, serializeBrowserError } from "./browser-metrics.js"
-import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
+import { browserPreviewNetworkPolicy, browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, createBrowserPreviewRouteTracker, drainBrowserPreviewRouteTracker, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork, routeBrowserPreviewPageNetwork } from "./browser-preview-routing.js"
 import { BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_PERFORMANCE_INIT_SCRIPT, BROWSER_PROBE_STATE_INIT_SCRIPT, browserProbeAssertionsFromArgs, browserProbeAssertionsNeedMetrics, browserProbeAssertionsNeedNetwork, browserProbeCheckpoint, browserProbeMemoryArtifact, browserProbePendingCheckpoints, browserProbePerformanceArtifact, browserProbeReplayability, browserProbeViewport, executeBrowserProbeAssertions, navigateBrowserProbe } from "./browser-probe.js"
 import { argValue, cleanWpCliOutput, commaListArg, durationArg, jsonArrayArg, strictBooleanArg, viewportArg } from "./commands.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, type EditorActionStep } from "./editor-actions.js"
@@ -418,6 +418,7 @@ async function runSingleBrowserProbeCommand({
   const prePageScriptMetadata = prePageScript ? browserProbeScriptMetadata(prePageScript) : undefined
   const preview = browserPreviewRouting(args, runtimeSpec, server.serverUrl)
   const networkPolicy = browserPreviewNetworkPolicy(args, routedHosts, preview)
+  const routeTracker = createBrowserPreviewRouteTracker()
   const previewOrigins = browserPreviewOrigins(preview)
   const targetUrl = resolveBrowserPreviewUrl(runPlan.url, preview.effectiveOrigin)
   const browserDirectory = join(artifactRoot, browserFilesDirectory)
@@ -497,7 +498,7 @@ async function runSingleBrowserProbeCommand({
       await context.grantPermissions(requestedContext.permissions)
     }
     if (context && browserPreviewNeedsContextRouting(networkPolicy)) {
-      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin)
+      await routeBrowserPreviewContextNetwork(context, networkPolicy, preview.localOrigin, routeTracker)
     }
     page = context ? await context.newPage() : await browser.newPage()
     if (onProgress) {
@@ -520,7 +521,7 @@ async function runSingleBrowserProbeCommand({
       await applyBrowserProbeThrottleProfile(page, throttleProfile)
     }
     if (!context && browserPreviewNeedsContextRouting(networkPolicy)) {
-      await routeBrowserPreviewPageNetwork(page, networkPolicy, preview.localOrigin)
+      await routeBrowserPreviewPageNetwork(page, networkPolicy, preview.localOrigin, routeTracker)
     }
     await page.addInitScript(BROWSER_PROBE_STATE_INIT_SCRIPT)
     if (lifecycleSelectors.length > 0) {
@@ -615,6 +616,16 @@ async function runSingleBrowserProbeCommand({
       await closeBrowserBestEffort(browser)
       abortSignal.removeEventListener("abort", abortHandler)
       throw pendingError ?? new Error("Browser command aborted during runtime cleanup")
+    }
+    try {
+      await drainBrowserPreviewRouteTracker(routeTracker)
+    } catch (error) {
+      const routeError = error instanceof Error ? error : new Error(String(error))
+      if (!pendingError) {
+        pendingError = routeError
+        progress.fail("probe-error", routeError)
+      }
+      errors.push(serializeBrowserError("probe-error", error))
     }
     if (page) {
       finalUrl = page.url()
