@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { createRuntime } from "../packages/runtime-core/src/index.js"
+import { bootstrapPhpCode } from "../packages/runtime-playground/src/php-bootstrap.js"
 import { PlaygroundCommandCrashError, PlaygroundCommandError } from "../packages/runtime-playground/src/playground-command-errors.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundCliModule } from "../packages/runtime-playground/src/index.js"
 
@@ -31,7 +32,7 @@ assert.match(hiddenFatalMessage, /Local wp-admin auth fixture user could not be 
 assert.doesNotMatch(hiddenFatalMessage, /--- Playground stdout ---\n\s*---/)
 assert.doesNotMatch(hiddenFatalMessage, /--- Playground stderr ---\n\s*---/)
 
-const emptyWpcomFatal = new Error("PHP.run() failed with exit code 255") as Error & {
+const emptyStructuredFatal = new Error("PHP.run() failed with exit code 255") as Error & {
   httpStatusCode?: number
   exitCode?: number
   stdout?: string
@@ -39,11 +40,11 @@ const emptyWpcomFatal = new Error("PHP.run() failed with exit code 255") as Erro
   response?: { headers?: Record<string, string> }
 }
 
-emptyWpcomFatal.httpStatusCode = 500
-emptyWpcomFatal.exitCode = 255
-emptyWpcomFatal.stdout = ""
-emptyWpcomFatal.stderr = ""
-emptyWpcomFatal.response = {
+emptyStructuredFatal.httpStatusCode = 500
+emptyStructuredFatal.exitCode = 255
+emptyStructuredFatal.stdout = ""
+emptyStructuredFatal.stderr = ""
+emptyStructuredFatal.response = {
   headers: {
     "content-type": "text/html; charset=UTF-8",
     "x-powered-by": "PHP/8.4.21",
@@ -51,16 +52,16 @@ emptyWpcomFatal.response = {
   },
 }
 
-const emptyWpcomFatalMessage = new PlaygroundCommandCrashError("wordpress.run-php", emptyWpcomFatal).message
+const emptyStructuredFatalMessage = new PlaygroundCommandCrashError("wordpress.run-php", emptyStructuredFatal).message
 
-assert.match(emptyWpcomFatalMessage, /wordpress\.run-php crashed before producing a structured response/)
-assert.match(emptyWpcomFatalMessage, /PHP\.run\(\) failed with exit code 255/)
-assert.match(emptyWpcomFatalMessage, /httpStatusCode=500/)
-assert.match(emptyWpcomFatalMessage, /exitCode=255/)
-assert.match(emptyWpcomFatalMessage, /--- Playground response headers ---/)
-assert.match(emptyWpcomFatalMessage, /x-powered-by: PHP\/8\.4\.21/)
-assert.match(emptyWpcomFatalMessage, /No Playground stdout, stderr, or response body was captured\./)
-assert.doesNotMatch(emptyWpcomFatalMessage, /wordpress_test_cookie/)
+assert.match(emptyStructuredFatalMessage, /wordpress\.run-php crashed before producing a structured response/)
+assert.match(emptyStructuredFatalMessage, /PHP\.run\(\) failed with exit code 255/)
+assert.match(emptyStructuredFatalMessage, /httpStatusCode=500/)
+assert.match(emptyStructuredFatalMessage, /exitCode=255/)
+assert.match(emptyStructuredFatalMessage, /--- Playground response headers ---/)
+assert.match(emptyStructuredFatalMessage, /x-powered-by: PHP\/8\.4\.21/)
+assert.match(emptyStructuredFatalMessage, /No Playground stdout, stderr, or response body was captured\./)
+assert.doesNotMatch(emptyStructuredFatalMessage, /wordpress_test_cookie/)
 
 const nestedResponseError = new Error("Playground request failed") as Error & {
   response?: { status?: number; text?: string }
@@ -97,6 +98,36 @@ assert.match(nonEnumerableFatalMessage, /wp_codebox_hidden_fixture/)
 assert.doesNotMatch(nonEnumerableFatalMessage, /No Playground stdout, stderr, or response body was captured/)
 assert.doesNotMatch(nonEnumerableFatalMessage, /authorization/)
 assert.doesNotMatch(nonEnumerableFatalMessage, /secret/)
+
+const emptyPhpExecutionFailureMessage = new PlaygroundCommandError("wordpress.run-php", {
+  originalErrorClassName: "PHPExecutionFailureError",
+  httpStatusCode: 500,
+  exitCode: 255,
+  bytes: {},
+  errors: "",
+  text: "",
+  cause: { message: "Comlink method call failed" },
+}).message
+
+assert.match(emptyPhpExecutionFailureMessage, /wordpress\.run-php failed with exit code 255/)
+assert.match(emptyPhpExecutionFailureMessage, /originalErrorClassName=PHPExecutionFailureError/)
+assert.match(emptyPhpExecutionFailureMessage, /httpStatusCode=500/)
+assert.match(emptyPhpExecutionFailureMessage, /exitCode=255/)
+assert.match(emptyPhpExecutionFailureMessage, /cause=Comlink method call failed/)
+assert.match(emptyPhpExecutionFailureMessage, /No Playground response bytes, errors, or text were captured\./)
+assert.match(emptyPhpExecutionFailureMessage, /PHP fatal payload was absent from the wordpress\.run-php response/)
+assert.doesNotMatch(emptyPhpExecutionFailureMessage, /--- Playground response bytes ---/)
+
+const wpCodeboxFatalDiagnostic = 'WP_CODEBOX_PHP_FATAL_DIAGNOSTIC:{"schema":"wp-codebox/php-fatal-diagnostic/v1","message":"Uncaught RuntimeException: Local wp-admin auth fixture user could not be loaded.","file":"/wordpress/wp-content/plugins/auth-fixture/auth-fixture.php","line":17,"type":1}'
+const wpCodeboxFatalMessage = new PlaygroundCommandError("wordpress.run-php", {
+  exitCode: 255,
+  bytes: Object.fromEntries(Array.from(Buffer.from(wpCodeboxFatalDiagnostic, "utf8")).map((byte, index) => [String(index), byte])),
+  text: "",
+}).message
+
+assert.match(wpCodeboxFatalMessage, /PHP fatal: Uncaught RuntimeException: Local wp-admin auth fixture user could not be loaded\./)
+assert.match(wpCodeboxFatalMessage, /Location: \/wordpress\/wp-content\/plugins\/auth-fixture\/auth-fixture\.php:17/)
+assert.doesNotMatch(wpCodeboxFatalMessage, /WP_CODEBOX_PHP_FATAL_DIAGNOSTIC/)
 
 const htmlFatal = "<br />\n<b>Fatal error</b>:  Uncaught Error: Call to a member function is_sandbox() on null in <b>/wordpress/wp-content/plugins/woocommerce-square/includes/Gateway/Cash_App_Pay_Gateway.php</b>:283\nStack trace:\n#0 {main}\n  thrown in <b>/wordpress/wp-content/plugins/woocommerce-square/includes/Gateway/Cash_App_Pay_Gateway.php</b> on line <b>283</b><br />"
 const byteMap = Object.fromEntries(Array.from(Buffer.from(htmlFatal, "utf8")).map((byte, index) => [String(index), byte]))
@@ -156,5 +187,10 @@ await assert.rejects(
 
 assert.match(receivedRunPhpCode, /RuntimeException/)
 await runtime.destroy()
+
+const bootstrappedRunPhp = bootstrapPhpCode({ kind: "wordpress", name: "fatal-diagnostic", version: "7.0", blueprint: { steps: [] } }, "throw new RuntimeException('boom');", [])
+assert.match(bootstrappedRunPhp, /register_shutdown_function/)
+assert.match(bootstrappedRunPhp, /WP_CODEBOX_PHP_FATAL_DIAGNOSTIC/)
+assert.match(bootstrappedRunPhp, /wp-codebox\/php-fatal-diagnostic\/v1/)
 
 console.log("playground command errors smoke passed")
