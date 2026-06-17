@@ -58,6 +58,7 @@ echo json_encode( array(
 		'event_sink' => substr_count( $runner_php, 'function wp_codebox_browser_runtime_event_sink' ),
 		'capture_file' => substr_count( $runner_php, 'function wp_codebox_browser_capture_file' ),
 		'provider_proxy' => substr_count( $runner_php, 'function wp_codebox_browser_install_provider_proxy' ),
+		'execution_metrics' => substr_count( $runner_php, 'function wp_codebox_browser_execution_metrics' ),
 	),
 	'contains' => array(
 		'event_schema' => str_contains( $runner_php, 'wp-codebox/browser-agent-event/v1' ),
@@ -75,11 +76,12 @@ echo json_encode( array(
 assert.equal(php.status, 0, php.stderr)
 const result = JSON.parse(php.stdout)
 
-assert.equal(result.sha256, "13f4c791af25d4a17926f9f7916ee0383c7224bf0362bf077724a25384b53b4f")
+assert.equal(result.sha256, "5109f53a794c0c3db5c710fa81d2310fa71a92b950762bce4b5a2878843c5432")
 assert.deepEqual(result.function_counts, {
   event_sink: 1,
   capture_file: 1,
   provider_proxy: 1,
+  execution_metrics: 1,
 })
 assert.deepEqual(result.contains, {
   event_schema: true,
