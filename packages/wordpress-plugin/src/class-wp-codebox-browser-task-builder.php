@@ -10,6 +10,64 @@ defined( 'ABSPATH' ) || exit;
 final class WP_Codebox_Browser_Task_Builder {
 
 	/**
+	 * Applies portable defaults for browser-local Playground tasks.
+	 *
+	 * Callers keep ownership of product-specific context, artifacts, and phases;
+	 * this method only fills the generic execution placement, mode, target,
+	 * playground scope, and browser runner defaults used by local browser tasks.
+	 *
+	 * @param array<string,mixed> $input    Caller task input.
+	 * @param array<string,mixed> $defaults Optional caller defaults to apply before generic defaults.
+	 * @return array<string,mixed>
+	 */
+	public static function local_browser_task_input( array $input, array $defaults = array() ): array {
+		$session_id = trim( (string) ( $input['sandbox_session_id'] ?? $input['session_id'] ?? $defaults['sandbox_session_id'] ?? $defaults['session_id'] ?? '' ) );
+		$scope      = trim( (string) ( $input['playground']['scope'] ?? $defaults['playground']['scope'] ?? $session_id ) );
+
+		$generic_defaults = array(
+			'mode'       => 'sandbox',
+			'placement'  => self::browser_execution_placement(),
+			'target'     => array_filter(
+				array(
+					'kind' => 'browser-playground',
+					'ref'  => '' !== $session_id ? $session_id : $scope,
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			),
+			'context'    => array(
+				'execution' => 'wp-codebox-browser-playground',
+			),
+			'playground' => array_filter(
+				array(
+					'scope' => $scope,
+				),
+				static fn( mixed $value ): bool => '' !== $value
+			),
+			'browser_runner' => array(
+				'task_path'   => '/tmp/wp-codebox-browser-task.json',
+				'result_path' => '/tmp/wp-codebox-browser-result.json',
+				'invocation'  => array(
+					'type' => 'ability',
+					'name' => 'agents/chat',
+				),
+			),
+		);
+
+		$merged    = self::merge_defaults( self::merge_defaults( $input, $defaults ), $generic_defaults );
+		$placement = is_array( $merged['placement'] ?? null ) ? $merged['placement'] : $generic_defaults['placement'];
+		$placement['required_capabilities'] = self::string_list_lower(
+			array_merge(
+				$generic_defaults['placement']['required_capabilities'],
+				is_array( $defaults['placement']['required_capabilities'] ?? null ) ? $defaults['placement']['required_capabilities'] : array(),
+				is_array( $input['placement']['required_capabilities'] ?? null ) ? $input['placement']['required_capabilities'] : array()
+			)
+		);
+		$merged['placement'] = $placement;
+
+		return $merged;
+	}
+
+	/**
 	 * Normalizes caller input into the canonical WP Codebox task input contract.
 	 *
 	 * @param array<string,mixed> $input Ability or caller input.
@@ -18,6 +76,17 @@ final class WP_Codebox_Browser_Task_Builder {
 	 */
 	public static function normalize_task_input( array $input, ?callable $allowed_tools_validator = null ): array|WP_Error {
 		return WP_Codebox_Agent_Task::normalize_input( $input, $allowed_tools_validator, true );
+	}
+
+	/** @param array<int,string> $required_capabilities Additional required browser capabilities. @return array<string,mixed> */
+	public static function browser_execution_placement( array $required_capabilities = array() ): array {
+		return array(
+			'schema'                => 'agents-api/execution-placement/v1',
+			'preferred_target'      => 'browser',
+			'allowed_targets'       => array( 'browser' ),
+			'resource_class'        => 'interactive',
+			'required_capabilities' => self::string_list_lower( array_merge( array( 'wordpress.playground', 'browser.preview' ), $required_capabilities ) ),
+		);
 	}
 
 	/**
@@ -126,6 +195,44 @@ final class WP_Codebox_Browser_Task_Builder {
 		foreach ( $value as $item ) {
 			$item = trim( (string) $item );
 			if ( '' !== $item && 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $item ) && ! in_array( $item, $items, true ) ) {
+				$items[] = $item;
+			}
+		}
+
+		return $items;
+	}
+
+	/** @param array<string,mixed> $input Caller input. @param array<string,mixed> $defaults Defaults. @return array<string,mixed> */
+	private static function merge_defaults( array $input, array $defaults ): array {
+		foreach ( $defaults as $key => $value ) {
+			if ( ! array_key_exists( $key, $input ) ) {
+				$input[ $key ] = $value;
+				continue;
+			}
+
+			if ( is_array( $input[ $key ] ) && is_array( $value ) && self::is_assoc( $input[ $key ] ) && self::is_assoc( $value ) ) {
+				$input[ $key ] = self::merge_defaults( $input[ $key ], $value );
+			}
+		}
+
+		return $input;
+	}
+
+	/** @param array<mixed> $value Value to inspect. */
+	private static function is_assoc( array $value ): bool {
+		return array_keys( $value ) !== range( 0, count( $value ) - 1 );
+	}
+
+	/** @param mixed $value Values to normalize. @return string[] */
+	private static function string_list_lower( mixed $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$items = array();
+		foreach ( $value as $item ) {
+			$item = strtolower( trim( (string) $item ) );
+			if ( '' !== $item && ! in_array( $item, $items, true ) ) {
 				$items[] = $item;
 			}
 		}
