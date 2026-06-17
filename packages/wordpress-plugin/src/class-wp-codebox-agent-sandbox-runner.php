@@ -31,10 +31,9 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @var array<string, callable> */
 	private array $callbacks;
-	private WP_Codebox_Host_Request_Normalizer $request_normalizer;
 	private WP_Codebox_Host_Tool_Policy_Validator $tool_policy_validator;
 	private WP_Codebox_Host_Preview_Args_Builder $preview_args_builder;
-	private WP_Codebox_Host_Runtime_Config_Builder $runtime_config_builder;
+	private WP_Codebox_Agent_Runtime_Config_Resolver $runtime_config_resolver;
 	private WP_Codebox_Host_Recipe_Builder $recipe_builder;
 	private WP_Codebox_Host_Run_Result_Normalizer $run_result_normalizer;
 	private WP_Codebox_Agent_Run_Result_Builder $result_builder;
@@ -46,21 +45,16 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 * @param array<string, callable> $callbacks Test seams for pure-PHP smoke coverage.
 	 */
 	public function __construct( array $callbacks = array() ) {
-		$this->callbacks              = $callbacks;
-		$this->tool_policy_validator  = new WP_Codebox_Host_Tool_Policy_Validator();
-		$this->preview_args_builder   = new WP_Codebox_Host_Preview_Args_Builder();
-		$this->runtime_config_builder = new WP_Codebox_Host_Runtime_Config_Builder();
-		$this->request_normalizer     = new WP_Codebox_Host_Request_Normalizer(
-			fn( string $path ): string => $this->clean_path( $path ),
-			fn( array $paths ): array => $this->runtime_config_builder->existing_host_directories( $paths ),
-			fn( array $input ): array => $this->runtime_config_builder->runtime_env( $input )
-		);
-		$this->recipe_builder         = new WP_Codebox_Host_Recipe_Builder();
-		$this->run_result_normalizer  = new WP_Codebox_Host_Run_Result_Normalizer();
-		$this->site_seed_exporter     = new WP_Codebox_Parent_Site_Seed_Exporter();
-		$this->run_plan               = new WP_Codebox_Run_Plan();
-		$this->process_runner         = new WP_Codebox_Agent_Process_Runner( $callbacks );
-		$this->result_builder         = new WP_Codebox_Agent_Run_Result_Builder( $this->run_plan );
+		$this->callbacks               = $callbacks;
+		$this->tool_policy_validator   = new WP_Codebox_Host_Tool_Policy_Validator();
+		$this->preview_args_builder    = new WP_Codebox_Host_Preview_Args_Builder();
+		$this->runtime_config_resolver = new WP_Codebox_Agent_Runtime_Config_Resolver();
+		$this->recipe_builder          = new WP_Codebox_Host_Recipe_Builder();
+		$this->run_result_normalizer   = new WP_Codebox_Host_Run_Result_Normalizer();
+		$this->site_seed_exporter      = new WP_Codebox_Parent_Site_Seed_Exporter();
+		$this->run_plan                = new WP_Codebox_Run_Plan();
+		$this->process_runner          = new WP_Codebox_Agent_Process_Runner( $callbacks );
+		$this->result_builder          = new WP_Codebox_Agent_Run_Result_Builder( $this->run_plan );
 	}
 
 	/**
@@ -223,7 +217,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			return $preview_args;
 		}
 
-		$inheritance_payload = $this->request_normalizer->inheritance_resolution_payload( $input );
+		$inheritance_payload = $this->runtime_config_resolver->inheritance_resolution_payload( $input );
 		$recipe_payload      = $this->write_agent_recipe( $paths, $input, array( $task_prompt ), $wp_version, $inheritance_payload['inheritance_audit'] );
 		if ( is_wp_error( $recipe_payload ) ) {
 			return $recipe_payload;
@@ -615,7 +609,7 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	private function normalize_parent_task_request( array $input ): array|WP_Error {
-		return $this->request_normalizer->normalize( $input );
+		return $this->runtime_config_resolver->normalize_parent_task_request( $input );
 	}
 
 
@@ -1101,31 +1095,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 		return $default;
 	}
 
-	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
-	private function recipe_mounts( array $input ): array|WP_Error {
-		return $this->runtime_config_builder->recipe_mounts( $input );
-	}
-
-	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
-	private function recipe_workspaces( array $input ): array|WP_Error {
-		return $this->runtime_config_builder->recipe_workspaces( $input );
-	}
-
-	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
-	private function recipe_runtime( array $input, string $wp_version, ?WP_Codebox_Runtime_Dependency_Plan $dependency_plan = null ): array|WP_Error {
-		return $this->runtime_config_builder->recipe_runtime( $input, $wp_version, $dependency_plan );
-	}
-
-	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>>|WP_Error */
-	private function runtime_stack_mounts( array $input ): array|WP_Error {
-		return $this->runtime_config_builder->runtime_stack_mounts( $input );
-	}
-
-	/** @param array<string,mixed> $input Ability input. @return array<string,string> */
-	private function runtime_env( array $input ): array {
-		return $this->runtime_config_builder->runtime_env( $input );
-	}
-
 	private function command_prefix( string $bin ): string|WP_Error {
 		$is_node_script = 1 === preg_match( '/\.m?js$/', $bin );
 		$is_path_like   = str_contains( $bin, '/' ) || str_contains( $bin, '\\' ) || str_starts_with( $bin, '.' );
@@ -1237,28 +1206,11 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$task_prompts,
 			$wp_version,
 			$inheritance,
-			array(
-				'inheritance_resolution'     => fn( array $input ): array => $this->request_normalizer->inheritance_resolution( $input ),
-				'connector_credentials_error' => fn( array $inheritance ): WP_Error|null => $this->request_normalizer->connector_credentials_error( $inheritance ),
-				'runtime_dependency_plan'     => fn( array $input, array $inheritance, array $component_plugins ): WP_Codebox_Runtime_Dependency_Plan => $this->request_normalizer->runtime_dependency_plan( $input, $inheritance, $component_plugins ),
-				'provider_plugin_paths'       => fn( array $input, array $inheritance ): array => $this->request_normalizer->provider_plugin_paths( $input, $inheritance ),
-				'agent_bundles'               => fn( array $input ): array => $this->request_normalizer->agent_bundles( $input ),
-				'runtime_task'                => fn( array $input ): array => $this->request_normalizer->runtime_task( $input ),
-				'task_input'                  => fn( array $input ): array|WP_Error => $this->task_input( $input ),
-				'agent_slug'                  => fn( array $input ): string => $this->request_normalizer->agent_slug( $input ),
-				'mode'                        => fn( array $input ): string => $this->request_normalizer->mode( $input ),
-				'provider'                    => fn( array $input, array $inheritance ): string => $this->request_normalizer->provider( $input, $inheritance ),
-				'model'                       => fn( array $input, array $inheritance ): string => $this->request_normalizer->model( $input, $inheritance ),
-				'json_encode'                 => fn( mixed $value ): string => $this->json_encode( $value ),
-				'task_timeout_seconds'        => fn( array $input ): int => $this->task_timeout_seconds( $input ),
-				'recipe_mounts'               => fn( array $input ): array|WP_Error => $this->recipe_mounts( $input ),
-				'recipe_workspaces'           => fn( array $input ): array|WP_Error => $this->recipe_workspaces( $input ),
-				'recipe_runtime'              => fn( array $input, string $wp_version, WP_Codebox_Runtime_Dependency_Plan $dependency_plan ): array|WP_Error => $this->recipe_runtime( $input, $wp_version, $dependency_plan ),
-				'site_seed_recipe_entries'    => fn( array $input ): array|WP_Error => $this->parent_site_seed_recipe_entries( $input ),
-				'inheritance_request'         => fn( array $input ): array => $this->request_normalizer->inheritance_request( $input ),
-				'component_plugins'           => fn( array $paths ): array => $this->component_plugins( $paths ),
-				'runtime_env'                 => fn( array $input ): array => $this->request_normalizer->runtime_env( $input ),
-				'secret_env_names'            => fn( array $input, array $inheritance ): array => $this->request_normalizer->secret_env_names( $input, $inheritance ),
+			$this->runtime_config_resolver->recipe_adapters(
+				fn( array $input ): array|WP_Error => $this->task_input( $input ),
+				fn( mixed $value ): string => $this->json_encode( $value ),
+				fn( array $input ): int => $this->task_timeout_seconds( $input ),
+				fn( array $input ): array|WP_Error => $this->parent_site_seed_recipe_entries( $input )
 			)
 		);
 	}
@@ -1269,14 +1221,6 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 	 */
 	private function parent_site_seed_recipe_entries( array $input ): array|WP_Error {
 		return $this->site_seed_exporter->recipe_entries( $input );
-	}
-
-	/**
-	 * @param array<int,array<string,mixed>> $paths Component contracts.
-	 * @return array<int,array<string,mixed>>
-	 */
-	private function component_plugins( array $paths ): array {
-		return $this->runtime_config_builder->component_plugins( $paths );
 	}
 
 	private function generate_run_id(): string {
@@ -1367,8 +1311,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 				'schema'             => 'wp-codebox/agent-task-run-metadata/v1',
 				'sandbox_session_id' => $session_id,
 				'agent_session_id'   => (string) ( $input['session_id'] ?? '' ),
-				'provider'           => $this->request_normalizer->provider( $input ),
-				'model'              => $this->request_normalizer->model( $input ),
+				'provider'           => $this->runtime_config_resolver->provider( $input ),
+				'model'              => $this->runtime_config_resolver->model( $input ),
 				'orchestrator'       => is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array(),
 				'wp'                 => $wp_version,
 				'recipe_run_schema'  => (string) ( $run['schema'] ?? '' ),
