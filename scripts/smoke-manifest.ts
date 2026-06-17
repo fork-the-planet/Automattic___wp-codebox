@@ -42,6 +42,7 @@ export const smokeGroups = {
       tsxSmoke("host-command-tool-smoke"),
       tsxSmoke("runtime-env-smoke"),
       tsxSmoke("task-input-contract-smoke"),
+      tsxSmoke("status-taxonomy-smoke"),
       npmScript("test:schema-parity"),
       tsxSmoke("discovery-command-smoke"),
       tsxSmoke("doctor-command-smoke"),
