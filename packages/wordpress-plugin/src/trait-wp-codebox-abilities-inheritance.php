@@ -47,7 +47,7 @@ private static function browser_input_with_inheritance( array $input, array $inh
 }
 
 /** @param array<string,mixed> $input Ability input. @param array<string,mixed> $task_input Normalized task input. @param array<int,array<string,mixed>> $artifacts Browser artifact specs. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance @return array<string,mixed> */
-private static function browser_task_payload( array $input, array $task_input, string $session_id, array $artifacts, array $inheritance ): array {
+private static function browser_task_payload( array $input, array $task_input, string $session_id, array $artifacts, array $inheritance, ?WP_Codebox_Runtime_Dependency_Plan $dependency_plan = null ): array {
 	return WP_Codebox_Browser_Task_Builder::task_payload(
 		$input,
 		$task_input,
@@ -55,25 +55,29 @@ private static function browser_task_payload( array $input, array $task_input, s
 		$artifacts,
 		$inheritance,
 		array(
-			'runtime_dependency_plan' => static function ( array $input, array $task_input, array $inheritance ): WP_Codebox_Runtime_Dependency_Plan {
-				return new WP_Codebox_Runtime_Dependency_Plan(
-					array(
-						'agent'    => self::browser_agent_slug( $input ),
-						'mode'     => self::browser_mode( $input ),
-						'provider' => self::browser_provider( $input, $inheritance ),
-						'model'    => self::browser_model( $input, $inheritance ),
-					),
-					self::browser_provider_plugin_paths( $input ),
-					array(),
-					array(),
-					is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
-					$inheritance,
-					self::browser_inheritance_request( $input ),
-					self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
-					self::browser_secret_env_names( $input )
-				);
-			},
+			'runtime_dependency_plan' => static fn(): WP_Codebox_Runtime_Dependency_Plan => $dependency_plan ?? self::browser_runtime_dependency_plan( $input, $inheritance ),
 		)
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @param array{connectors:array<int,array<string,mixed>>,settings:array<int,array<string,mixed>>} $inheritance */
+private static function browser_runtime_dependency_plan( array $input, array $inheritance ): WP_Codebox_Runtime_Dependency_Plan {
+	return new WP_Codebox_Runtime_Dependency_Plan(
+		array(
+			'agent'    => self::browser_agent_slug( $input ),
+			'mode'     => self::browser_mode( $input ),
+			'provider' => self::browser_provider( $input, $inheritance ),
+			'model'    => self::browser_model( $input, $inheritance ),
+		),
+		self::browser_provider_plugin_paths( $input ),
+		array(),
+		array(),
+		is_array( $input['runtime_overlays'] ?? null ) ? $input['runtime_overlays'] : array(),
+		$inheritance,
+		self::browser_inheritance_request( $input ),
+		self::normalize_agent_bundles( $input['agent_bundles'] ?? array() ),
+		self::browser_secret_env_names( $input ),
+		self::browser_runtime_env( $input )
 	);
 }
 
@@ -135,6 +139,20 @@ private static function browser_provider_plugin_paths( array $input ): array {
 /** @param array<string,mixed> $input Ability input. @return string[] */
 private static function browser_secret_env_names( array $input ): array {
 	return array_values( array_unique( array_filter( self::string_list( $input['secret_env'] ?? array() ), static fn( string $name ): bool => 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) ) );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,string> */
+private static function browser_runtime_env( array $input ): array {
+	$raw = is_array( $input['runtime_env'] ?? null ) ? $input['runtime_env'] : ( is_array( $input['runtimeEnv'] ?? null ) ? $input['runtimeEnv'] : array() );
+	$env = array();
+	foreach ( $raw as $name => $value ) {
+		$name = trim( (string) $name );
+		if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) && is_scalar( $value ) ) {
+			$env[ $name ] = (string) $value;
+		}
+	}
+
+	return $env;
 }
 
 /** @return array<int,array<string,mixed>> */

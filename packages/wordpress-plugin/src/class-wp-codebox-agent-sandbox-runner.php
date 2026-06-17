@@ -1040,7 +1040,8 @@ final class WP_Codebox_Agent_Sandbox_Runner {
 			$inheritance,
 			$this->inheritance_request( $input ),
 			$this->agent_bundles( $input ),
-			$this->secret_env_names( $input, $inheritance )
+			$this->secret_env_names( $input, $inheritance ),
+			$this->runtime_env( $input )
 		);
 	}
 

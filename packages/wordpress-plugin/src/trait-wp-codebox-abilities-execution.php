@@ -54,12 +54,13 @@ public static function create_browser_playground_session( array $input ): array|
 	if ( is_wp_error( $input ) ) {
 		return $input;
 	}
+	$dependency_plan = self::browser_runtime_dependency_plan( $input, $inheritance_payload['inheritance'] );
 	$browser_runner  = is_array( $input['browser_runner'] ?? null ) ? $input['browser_runner'] : array();
 	$browser_plugins = self::browser_plugins( $input );
 	if ( is_wp_error( $browser_plugins ) ) {
 		return $browser_plugins;
 	}
-	$runtime = self::browser_runtime_dependencies( $input, $browser_plugins );
+	$runtime = self::browser_runtime_dependencies( $input, $browser_plugins, $dependency_plan );
 	if ( is_wp_error( $runtime ) ) {
 		return $runtime;
 	}
@@ -84,7 +85,7 @@ public static function create_browser_playground_session( array $input ): array|
 		return self::blocked_browser_playground_session( $session_id, $input, $task_input, $ready_to_code, $browser_plugins, $runtime, $artifacts, $playground, $blueprint, $site_blueprint_artifact );
 	}
 
-	$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'] );
+	$task_payload = self::browser_task_payload( $input, $task_input, $session_id, $artifacts, $inheritance_payload['inheritance'], $dependency_plan );
 	$recipe = self::browser_agent_recipe( $task_input, $session_id, $browser_runner, $blueprint, $playground, $task_payload );
 	if ( is_wp_error( $recipe ) ) {
 		return $recipe;

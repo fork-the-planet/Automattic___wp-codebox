@@ -322,9 +322,10 @@ private static function browser_plugins( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @param array<int,array<string,mixed>> $browser_plugins Browser plugin specs. @return array<string,mixed>|WP_Error */
-private static function browser_runtime_dependencies( array $input, array $browser_plugins ): array|WP_Error {
+private static function browser_runtime_dependencies( array $input, array $browser_plugins, ?WP_Codebox_Runtime_Dependency_Plan $dependency_plan = null ): array|WP_Error {
 	$runtime = is_array( $input['runtime'] ?? null ) ? $input['runtime'] : array();
-	$runtime_plugin_specs = self::browser_runtime_plugin_specs( array_merge( self::browser_provider_plugin_specs( $input ), is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array() ) );
+	$provider_plugin_specs = $dependency_plan instanceof WP_Codebox_Runtime_Dependency_Plan ? $dependency_plan->browser_provider_plugin_specs() : self::browser_provider_plugin_specs( $input );
+	$runtime_plugin_specs = self::browser_runtime_plugin_specs( array_merge( $provider_plugin_specs, is_array( $runtime['plugins'] ?? null ) ? $runtime['plugins'] : array() ) );
 	if ( is_wp_error( $runtime_plugin_specs ) ) {
 		return $runtime_plugin_specs;
 	}
