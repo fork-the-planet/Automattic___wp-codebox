@@ -23,7 +23,8 @@ $dependency_plan = new WP_Codebox_Runtime_Dependency_Plan(
 	array( 'connectors' => array( array( 'provider' => 'planned-provider', 'model' => 'planned-model' ) ), 'settings' => array() ),
 	array( 'connectors' => array( 'planned-connector' ), 'settings' => array() ),
 	array( array( 'source' => '/tmp/planned-bundle.zip', 'on_conflict' => 'skip' ) ),
-	array( 'PLANNED_SECRET' )
+	array( 'PLANNED_SECRET' ),
+	array( 'CUSTOM_ENV' => '1', 'bad-name' => 'ignored' )
 );
 
 $builder = new WP_Codebox_Host_Recipe_Builder();
@@ -79,6 +80,7 @@ assert.deepEqual(result.legacy_adapter_calls, [])
 assert.equal(result.recipe.schema, "wp-codebox/workspace-recipe/v1")
 assert.deepEqual(result.recipe.inputs.inherit, { connectors: ["planned-connector"], settings: [] })
 assert.deepEqual(result.recipe.inputs.secretEnv, ["PLANNED_SECRET"])
+assert.deepEqual(result.recipe.inputs.runtimeEnv, { CUSTOM_ENV: "1", WP_AGENT_RUNTIME: "1" })
 assert.deepEqual(result.recipe.inputs.agent_bundles, [{ source: "/tmp/planned-bundle.zip", on_conflict: "skip" }])
 assert.deepEqual(result.recipe.inputs.extra_plugins, [
   { source: "/components/demo-plugin", slug: "demo-plugin", activate: true, loadAs: "plugin" },

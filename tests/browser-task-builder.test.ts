@@ -75,6 +75,21 @@ $explicit_plan_payload = WP_Codebox_Browser_Task_Builder::task_payload(
 	)
 );
 
+$plan = new WP_Codebox_Runtime_Dependency_Plan(
+	array( 'agent' => 'contract-agent', 'mode' => 'sandbox', 'provider' => 'contract-provider', 'model' => 'contract-model' ),
+	array( '/tmp/contract-provider' ),
+	array( array( 'slug' => 'contract-provider', 'source' => '/tmp/contract-provider' ) ),
+	array(),
+	array(),
+	array( 'connectors' => array(), 'settings' => array() ),
+	array( 'connectors' => array(), 'settings' => array() ),
+	array(),
+	array( 'CONTRACT_SECRET' ),
+	array( 'CONTRACT_ENV' => '1', 'bad-name' => 'ignored' )
+);
+$plan_contract = $plan->to_contract();
+$plan_plugin_specs = $plan->browser_provider_plugin_specs();
+
 $intent_task = WP_Codebox_Browser_Task_Builder::browser_task_input_from_intent( array(
 	'product_intent' => array(
 		'product' => 'demo-product',
@@ -118,7 +133,7 @@ $fanout_request = WP_Codebox_Browser_Task_Builder::fanout_request( array(
 	'orchestrator' => array( 'id' => 'demo-orchestrator' ),
 ) );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -137,6 +152,8 @@ assert.equal(result.explicit_plan_payload.provider, "planned-provider")
 assert.equal(result.explicit_plan_payload.model, "planned-model")
 assert.deepEqual(result.explicit_plan_payload.secret_env, ["PLANNED_SECRET"])
 assert.deepEqual(result.explicit_plan_payload.agent_bundles, [{ source: "/tmp/planned-bundle.zip" }])
+assert.deepEqual(result.plan_contract.runtime_env, { CONTRACT_ENV: "1" })
+assert.deepEqual(result.plan_plugin_specs, [{ slug: "contract-provider", path: "/tmp/contract-provider", activate: true, provenance: { source: "provider-plugin-path" } }])
 assert.equal(result.local_task.mode, "sandbox")
 assert.equal(result.local_task.target.kind, "browser-playground")
 assert.equal(result.local_task.target.ref, "session-123")

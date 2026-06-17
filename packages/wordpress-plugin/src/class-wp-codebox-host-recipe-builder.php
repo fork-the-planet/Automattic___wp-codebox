@@ -98,7 +98,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 			'inheritance'        => $dependency_plan->inheritance(),
 			'extra_plugins'      => array_merge( $dependency_plan->component_plugins(), $dependency_plan->provider_plugins() ),
 			'component_manifest' => $component_manifest,
-			'runtimeEnv'         => array_merge( $adapters['runtime_env']( $input ), self::AGENT_RUNTIME_ENV ),
+			'runtimeEnv'         => $dependency_plan->runtime_env_with_defaults( self::AGENT_RUNTIME_ENV ),
 			'secretEnv'          => $dependency_plan->secret_env_names(),
 		);
 		if ( ! empty( $dependency_plan->agent_bundles() ) ) {
@@ -166,7 +166,8 @@ final class WP_Codebox_Host_Recipe_Builder {
 			$inheritance,
 			$adapters['inheritance_request']( $input ),
 			$adapters['agent_bundles']( $input ),
-			$adapters['secret_env_names']( $input, $inheritance )
+			$adapters['secret_env_names']( $input, $inheritance ),
+			$adapters['runtime_env']( $input )
 		);
 	}
 

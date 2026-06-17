@@ -36,6 +36,9 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 	/** @var string[] */
 	private array $secret_env_names;
 
+	/** @var array<string,string> */
+	private array $runtime_env;
+
 	/**
 	 * @param array<string,mixed> $selection Provider/model/runtime selection metadata.
 	 * @param string[] $provider_plugin_paths Resolved provider plugin paths.
@@ -46,8 +49,9 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 	 * @param array{connectors:string[],settings:string[]} $inheritance_request Requested inheritance metadata.
 	 * @param array<int,array<string,mixed>> $agent_bundles Agent bundle import specs.
 	 * @param string[] $secret_env_names Required secret env names.
+	 * @param array<string,mixed> $runtime_env Non-secret runtime environment values.
 	 */
-	public function __construct( array $selection, array $provider_plugin_paths, array $provider_plugins, array $component_plugins, array $runtime_overlays, array $inheritance, array $inheritance_request, array $agent_bundles, array $secret_env_names ) {
+	public function __construct( array $selection, array $provider_plugin_paths, array $provider_plugins, array $component_plugins, array $runtime_overlays, array $inheritance, array $inheritance_request, array $agent_bundles, array $secret_env_names, array $runtime_env = array() ) {
 		$this->selection             = $selection;
 		$this->provider_plugin_paths = self::string_list( $provider_plugin_paths );
 		$this->provider_plugins      = array_values( array_filter( $provider_plugins, 'is_array' ) );
@@ -63,6 +67,7 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 		);
 		$this->agent_bundles         = array_values( array_filter( $agent_bundles, 'is_array' ) );
 		$this->secret_env_names      = self::secret_env_list( $secret_env_names );
+		$this->runtime_env           = self::runtime_env_map( $runtime_env );
 	}
 
 	/** @return array<string,mixed> */
@@ -123,6 +128,31 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 		return $this->secret_env_names;
 	}
 
+	/** @return array<string,string> */
+	public function runtime_env(): array {
+		return $this->runtime_env;
+	}
+
+	/** @param array<string,string> $defaults @return array<string,string> */
+	public function runtime_env_with_defaults( array $defaults ): array {
+		return array_merge( $this->runtime_env, self::runtime_env_map( $defaults ) );
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	public function browser_provider_plugin_specs(): array {
+		return array_map(
+			static fn( string $path ): array => array(
+				'slug'       => self::safe_key( basename( $path ) ),
+				'path'       => $path,
+				'activate'   => true,
+				'provenance' => array(
+					'source' => 'provider-plugin-path',
+				),
+			),
+			$this->provider_plugin_paths
+		);
+	}
+
 	/** @return array<string,mixed> */
 	public function to_contract(): array {
 		return array_filter(
@@ -137,9 +167,14 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 				'inheritance'           => $this->inheritance,
 				'agent_bundles'         => $this->agent_bundles,
 				'secret_env'            => $this->secret_env_names,
+				'runtime_env'           => $this->runtime_env,
 			),
 			static fn( mixed $value ): bool => array() !== $value && '' !== $value
 		);
+	}
+
+	private static function safe_key( string $value ): string {
+		return trim( strtolower( preg_replace( '/[^a-zA-Z0-9_\-]+/', '-', $value ) ?? '' ), '-' );
 	}
 
 	/** @return string[] */
@@ -158,5 +193,18 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 	/** @return string[] */
 	private static function secret_env_list( mixed $value ): array {
 		return array_values( array_filter( self::string_list( $value ), static fn( string $name ): bool => 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) ) );
+	}
+
+	/** @return array<string,string> */
+	private static function runtime_env_map( mixed $value ): array {
+		$env = array();
+		foreach ( is_array( $value ) ? $value : array() as $name => $env_value ) {
+			$name = trim( (string) $name );
+			if ( 1 === preg_match( '/^[A-Z_][A-Z0-9_]*$/', $name ) && is_scalar( $env_value ) ) {
+				$env[ $name ] = (string) $env_value;
+			}
+		}
+
+		return $env;
 	}
 }
