@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
+import { commandArgValue, normalizeSandboxToolPolicySnapshot, normalizeStructuredArtifacts, parseCommandJson, parseCommandJsonArray, parseCommandJsonObject, type MountSpec, type RuntimePolicy, type SandboxToolPolicySnapshot, type SandboxWorkspaceContract, type SandboxWorkspaceMode, type StructuredArtifactPayload, type WorkspaceRecipe } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
@@ -119,25 +119,25 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
 
   if (step.command === "wp-codebox.agent-sandbox-run") {
     const args = step.args ?? []
-    const task = argValue(args, "task")
+    const task = commandArgValue(args, "task")
     if (!task) {
       throw new Error("wp-codebox.agent-sandbox-run requires task=<task>")
     }
 
-    const codeFile = argValue(args, "code-file")
-    const code = argValue(args, "code")
+    const codeFile = commandArgValue(args, "code-file")
+    const code = commandArgValue(args, "code")
     if (code && codeFile) {
       throw new Error("Use either code=<php> or code-file=<path>, not both")
     }
     const body = codeFile ? await readFile(resolve(recipeDirectory, codeFile), "utf8") : (code ?? await resolveSandboxTaskCode({
       task,
-      agent: argValue(args, "agent"),
-      mode: argValue(args, "mode"),
-      provider: argValue(args, "provider"),
-      model: argValue(args, "model"),
-      sessionId: argValue(args, "session-id"),
-      maxTurns: argValue(args, "max-turns"),
-      timeoutSeconds: argValue(args, "timeout-seconds"),
+      agent: commandArgValue(args, "agent"),
+      mode: commandArgValue(args, "mode"),
+      provider: commandArgValue(args, "provider"),
+      model: commandArgValue(args, "model"),
+      sessionId: commandArgValue(args, "session-id"),
+      maxTurns: commandArgValue(args, "max-turns"),
+      timeoutSeconds: commandArgValue(args, "timeout-seconds"),
       agentBundles: parseAgentBundles(args),
       runtimeTask: parseRuntimeTask(args),
       structuredArtifacts: parseStructuredArtifacts(args),
@@ -312,7 +312,7 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
         options.structuredArtifacts = parseStructuredArtifactsValue(value)
         break
       case "--sandbox-tool-policy-json":
-        options.sandboxToolPolicy = normalizeSandboxToolPolicySnapshot(JSON.parse(value))
+        options.sandboxToolPolicy = normalizeSandboxToolPolicySnapshot(parseCommandJson(value, "sandbox-tool-policy-json"))
         break
       case "--workspace-context-json":
         options.sandboxWorkspace = parseSandboxWorkspaceValue(value)
@@ -332,53 +332,46 @@ export function parseAgentSandboxRunOptions(args: string[], parseMount: (value: 
 }
 
 function parseAgentBundles(args: string[]): AgentBundleSpec[] {
-  return parseAgentBundleList(argValue(args, "agent-bundles-json") ?? "[]")
+  return parseAgentBundleList(commandArgValue(args, "agent-bundles-json") ?? "[]")
 }
 
 function parseRuntimeTask(args: string[]): Record<string, unknown> | undefined {
-  const value = argValue(args, "runtime-task-json")
+  const value = commandArgValue(args, "runtime-task-json")
   return value ? parseRuntimeTaskValue(value) : undefined
 }
 
 function parseStructuredArtifacts(args: string[]): StructuredArtifactPayload[] {
-  const value = argValue(args, "structured-artifacts-json")
+  const value = commandArgValue(args, "structured-artifacts-json")
   return value ? parseStructuredArtifactsValue(value) : []
 }
 
 function parseStructuredArtifactsValue(value: string): StructuredArtifactPayload[] {
   if (!value.trim()) return []
-  return normalizeStructuredArtifacts(JSON.parse(value), "input")
+  return normalizeStructuredArtifacts(parseCommandJson(value, "structured-artifacts-json"), "input")
 }
 
 function parseRuntimeTaskValue(value: string): Record<string, unknown> | undefined {
   if (!value.trim()) return undefined
-  const parsed = JSON.parse(value)
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("runtime-task-json must be an object")
-  }
-  return parsed as Record<string, unknown>
+  return parseCommandJsonObject(value, "runtime-task-json")
 }
 
 function parseSandboxWorkspace(args: string[]): SandboxWorkspaceContract | undefined {
-  const value = argValue(args, "workspace-context-json")
+  const value = commandArgValue(args, "workspace-context-json")
   return value ? parseSandboxWorkspaceValue(value) : undefined
 }
 
 function parseSandboxWorkspaceValue(value: string): SandboxWorkspaceContract | undefined {
   if (!value.trim()) return undefined
-  const parsed = JSON.parse(value)
+  const parsed = parseCommandJsonObject(value, "workspace-context-json")
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || parsed.schema !== "wp-codebox/sandbox-workspace/v1") {
     throw new Error("workspace-context-json must be a wp-codebox/sandbox-workspace/v1 object")
   }
-  return parsed as SandboxWorkspaceContract
+  return parsed as unknown as SandboxWorkspaceContract
 }
 
 function parseAgentBundleList(value: string): AgentBundleSpec[] {
   if (!value.trim()) return []
-  const parsed = JSON.parse(value)
-  if (!Array.isArray(parsed)) {
-    throw new Error("agent-bundles-json must be an array")
-  }
+  const parsed = parseCommandJsonArray(value, "agent-bundles-json")
   return parsed.filter((entry): entry is AgentBundleSpec => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
 }
 
@@ -489,12 +482,12 @@ export function sandboxWorkspaceContract(workspaceMounts: PreparedWorkspaceMount
 }
 
 function parseSandboxToolPolicy(args: string[]): SandboxToolPolicySnapshot | undefined {
-  const raw = argValue(args, "sandbox-tool-policy-json")
+  const raw = commandArgValue(args, "sandbox-tool-policy-json")
   if (!raw) {
     return undefined
   }
 
-  return normalizeSandboxToolPolicySnapshot(JSON.parse(raw))
+  return normalizeSandboxToolPolicySnapshot(parseCommandJson(raw, "sandbox-tool-policy-json"))
 }
 
 function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntimeComponent[] {
@@ -511,13 +504,8 @@ function agentRuntimeComponents(options: AgentRuntimeProbeOptions): AgentRuntime
   return [...bySlug.values()]
 }
 
-function argValue(args: string[], name: string): string | undefined {
-  const prefix = `${name}=`
-  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
-}
-
 function providerPluginSlugs(args: string[]): string[] {
-  const csv = argValue(args, "provider-plugin-slugs") ?? ""
+  const csv = commandArgValue(args, "provider-plugin-slugs") ?? ""
   return csv.split(",").map((slug) => slug.trim()).filter(Boolean)
 }
 
@@ -561,12 +549,9 @@ function parseComponentOption(raw: string, kind: AgentRuntimeComponent["kind"]):
 }
 
 function providerPluginContracts(args: string[]): Array<{ slug: string; pluginFile?: string; loadAs?: ComponentLoadMode }> {
-  const explicit = argValue(args, "provider-plugin-contracts-json")
+  const explicit = commandArgValue(args, "provider-plugin-contracts-json")
   if (explicit) {
-    const parsed = JSON.parse(explicit)
-    if (!Array.isArray(parsed)) {
-      throw new Error("provider-plugin-contracts-json must be a JSON array")
-    }
+    const parsed = parseCommandJsonArray(explicit, "provider-plugin-contracts-json")
     return parsed
       .filter((plugin) => plugin && typeof plugin === "object" && !Array.isArray(plugin))
       .map((plugin) => plugin as { slug: string; pluginFile?: string; loadAs?: ComponentLoadMode })
@@ -579,10 +564,7 @@ function pluginTarget(slug: string, loadAs: ComponentLoadMode): string {
 }
 
 function parseTaskList(raw: string): string[] {
-  const parsed = JSON.parse(raw)
-  if (!Array.isArray(parsed)) {
-    throw new Error("Task list must be a JSON array")
-  }
+  const parsed = parseCommandJsonArray(raw, "Task list")
 
   return parsed.map((task) => {
     if (typeof task === "string") {

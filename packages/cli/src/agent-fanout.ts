@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
+import { commandArgValue, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract } from "@automattic/wp-codebox-core"
 import { aggregateFanoutOutputs, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
@@ -203,16 +203,12 @@ export async function executeAgentFanoutFromArgs(args: string[], options: AgentF
 }
 
 async function fanoutRequestFromArgs(args: string[], recipeDirectory: string): Promise<FanoutRequestContract> {
-  const raw = argValue(args, "fanout-json") || argValue(args, "request-json")
+  const raw = commandArgValue(args, "fanout-json") || commandArgValue(args, "request-json")
   if (!raw) {
     throw new Error("wp-codebox.agent-fanout requires fanout-json=<json-or-@file>")
   }
   const text = raw.startsWith("@") ? await readFile(join(recipeDirectory, raw.slice(1)), "utf8") : raw
-  const parsed = JSON.parse(text) as unknown
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("wp-codebox.agent-fanout fanout-json must be a JSON object")
-  }
-  return parsed as FanoutRequestContract
+  return parseCommandJsonObject(text, "wp-codebox.agent-fanout fanout-json") as FanoutRequestContract
 }
 
 function workerInput(request: FanoutRequestContract, worker: Record<string, unknown>, childSessionId: string, artifactsPath: string): AgentTaskRunInput {
@@ -310,11 +306,6 @@ function safeArtifactNamespace(value: unknown, fallback: string): string {
     throw new Error(`wp-codebox.agent-fanout artifact namespace must contain safe path segments: ${namespace}`)
   }
   return namespace
-}
-
-function argValue(args: string[], name: string): string | undefined {
-  const prefix = `${name}=`
-  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

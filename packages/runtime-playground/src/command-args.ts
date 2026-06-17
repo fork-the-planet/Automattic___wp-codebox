@@ -1,52 +1,23 @@
-import { parseCommandJsonArray, parseCommandJsonObject, parseCommandStringList } from "@automattic/wp-codebox-core"
+import { booleanCommandArg, commandArgValue, nonNegativeIntegerCommandArg, parseCommandJsonArray, parseCommandJsonObject, parseCommandStringList, positiveIntegerCommandArg, strictBooleanCommandArg } from "@automattic/wp-codebox-core"
 
 export function argValue(args: string[], name: string): string | undefined {
-  const prefix = `${name}=`
-  const match = args.find((arg) => arg.startsWith(prefix))
-  return match?.slice(prefix.length)
+  return commandArgValue(args, name)
 }
 
 export function positiveIntegerArg(args: string[], name: string, fallback: number): number {
-  const raw = argValue(args, name)
-  if (!raw) {
-    return fallback
-  }
-
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+  return positiveIntegerCommandArg(args, name, fallback)
 }
 
 export function nonNegativeIntegerArg(args: string[], name: string, fallback: number): number {
-  const raw = argValue(args, name)
-  if (!raw) {
-    return fallback
-  }
-
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+  return nonNegativeIntegerCommandArg(args, name, fallback)
 }
 
 export function booleanArg(args: string[], name: string, fallback = false): boolean {
-  const raw = argValue(args, name)
-  if (!raw) {
-    return fallback
-  }
-
-  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase())
+  return booleanCommandArg(args, name, fallback)
 }
 
 export function strictBooleanArg(args: string[], name: string, fallback: boolean): boolean {
-  const raw = argValue(args, name)?.trim().toLowerCase()
-  if (!raw) {
-    return fallback
-  }
-  if (["1", "true", "yes", "on"].includes(raw)) {
-    return true
-  }
-  if (["0", "false", "no", "off"].includes(raw)) {
-    return false
-  }
-  throw new Error(`${name} must be true or false`)
+  return strictBooleanCommandArg(args, name, fallback)
 }
 
 export function durationArg(args: string[], name: string, fallbackMs: number): number {
