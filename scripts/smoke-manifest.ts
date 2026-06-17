@@ -54,6 +54,8 @@ export const smokeGroups = {
     commands: [
       tsxSmoke("policy-validation-smoke"),
       tsxSmoke("workspace-policy-smoke"),
+      tsxSmoke("source-policy-smoke"),
+      tsxSmoke("overlay-preparer-registry-smoke"),
     ],
   },
   artifact: {
