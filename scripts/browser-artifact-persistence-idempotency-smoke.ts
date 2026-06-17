@@ -78,6 +78,10 @@ $input = array(
 			'path' => 'website/index.html',
 			'content' => '<!doctype html><title>Smoke</title>',
 			'encoding' => 'utf-8',
+			'roles' => array('entrypoint'),
+			'metadata' => array('label' => 'Home'),
+			'provenance' => array('source' => 'smoke'),
+			'description' => 'Smoke home page',
 		),
 	),
 );
@@ -91,6 +95,13 @@ try {
 	smoke_assert('' !== (string) ($created['content_digest'] ?? ''), 'first persistence should return content_digest');
 	smoke_assert('wp-codebox/browser-artifact-ref/v1' === ($created['artifact_ref']['schema'] ?? ''), 'first persistence should return a normalized artifact_ref');
 	smoke_assert(($created['artifact_id'] ?? '') === ($created['artifact_ref']['artifact_id'] ?? ''), 'artifact_ref should carry the persisted artifact id');
+	smoke_assert('wp-codebox/browser-persisted-artifact-bundle/v1' === ($created['persisted_bundle']['schema'] ?? ''), 'first persistence should return a canonical persisted bundle result');
+	smoke_assert(($created['artifact_id'] ?? '') === ($created['persisted_bundle']['artifact_id'] ?? ''), 'persisted bundle should carry the persisted artifact id');
+	smoke_assert('website/index.html' === ($created['persisted_bundle']['files'][0]['path'] ?? ''), 'persisted bundle should carry browser file paths');
+	smoke_assert('files/browser/website/index.html' === ($created['persisted_bundle']['files'][0]['artifact_path'] ?? ''), 'persisted bundle should carry canonical artifact paths');
+	smoke_assert('Home' === ($created['persisted_bundle']['files'][0]['metadata']['label'] ?? ''), 'persisted bundle should preserve per-file metadata');
+	smoke_assert('smoke' === ($created['persisted_bundle']['files'][0]['provenance']['source'] ?? ''), 'persisted bundle should preserve per-file provenance');
+	smoke_assert('entrypoint' === ($created['persisted_bundle']['files'][0]['roles'][0] ?? ''), 'persisted bundle should preserve per-file roles');
 	smoke_assert('wp-codebox/browser-artifact-grant/v1' === ($created['grant']['schema'] ?? ''), 'first persistence should return a scoped artifact grant');
 	smoke_assert('artifact:write' === ($created['grant']['authorization']['scope'] ?? ''), 'artifact grant should carry artifact write authorization');
 
@@ -100,6 +111,8 @@ try {
 	smoke_assert($created['artifact_id'] === $existing['artifact_id'], 'duplicate persistence should return stable artifact_id');
 	smoke_assert($created['content_digest'] === $existing['content_digest'], 'duplicate persistence should return stable content_digest');
 	smoke_assert($created['artifact_ref']['artifact_id'] === $existing['artifact_ref']['artifact_id'], 'duplicate persistence should return stable artifact_ref');
+	smoke_assert($created['persisted_bundle']['artifact_id'] === $existing['persisted_bundle']['artifact_id'], 'duplicate persistence should return stable persisted bundle result');
+	smoke_assert('smoke' === ($existing['persisted_bundle']['files'][0]['provenance']['source'] ?? ''), 'duplicate persistence should preserve per-file provenance');
 	smoke_assert(is_array($existing['artifact'] ?? null), 'duplicate persistence should return existing artifact payload');
 } finally {
 	smoke_remove_tree($root);
