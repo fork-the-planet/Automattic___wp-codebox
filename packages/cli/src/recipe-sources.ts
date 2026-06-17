@@ -7,6 +7,9 @@ import { promisify } from "node:util"
 import type { MountSpec, WorkspaceRecipe, WorkspaceRecipeDependencyOverlay, WorkspaceRecipeExtraPlugin, WorkspaceRecipeRuntimeOverlay, WorkspaceRecipeStagedFile, WorkspaceRecipeWorkspace } from "@automattic/wp-codebox-core"
 import { resolvePluginEntrypointContract } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT } from "@automattic/wp-codebox-core/internals"
+import { registerRuntimeOverlayDescriptor, runtimeOverlayDescriptor } from "./runtime-overlay-registry.js"
+
+const PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET = "/wordpress/wp-includes/php-ai-client"
 
 export interface PreparedWorkspaceMount {
   source: string
@@ -429,11 +432,12 @@ export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDi
 export async function prepareRecipeRuntimeOverlays(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
   const overlays: PreparedRuntimeOverlay[] = []
   for (const [index, overlay] of (recipe.runtime?.overlays ?? []).entries()) {
-    if (overlay.kind !== "bundled-library" || overlay.library !== "php-ai-client" || overlay.strategy !== "wordpress-scoped-bundle") {
+    const descriptor = runtimeOverlayDescriptor(overlay)
+    if (!descriptor) {
       throw new Error(`Unsupported runtime overlay: ${overlay.kind}/${overlay.library}/${overlay.strategy}`)
     }
 
-    const prepared = await preparePhpAiClientOverlay(overlay, recipeDirectory, index)
+    const prepared = await descriptor.prepare(overlay, recipeDirectory, index)
     overlays.push(prepared)
   }
 
@@ -464,7 +468,7 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
 
   return {
     source: bundle,
-    target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+    target: overlay.target ?? PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET,
     type: "directory",
     mode: "readonly",
     cleanupPaths: [stagingRoot],
@@ -475,7 +479,7 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
       library: overlay.library,
       strategy: overlay.strategy,
       source: overlay.source,
-      target: overlay.target ?? "/wordpress/wp-includes/php-ai-client",
+      target: overlay.target ?? PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET,
       preparedPath: bundle,
       preparedPathKind: "ephemeral",
       digest: { sha256: digest },
@@ -483,6 +487,14 @@ async function preparePhpAiClientOverlay(overlay: WorkspaceRecipeRuntimeOverlay,
     },
   }
 }
+
+registerRuntimeOverlayDescriptor({
+  kind: "bundled-library",
+  library: "php-ai-client",
+  strategy: "wordpress-scoped-bundle",
+  defaultTarget: PHP_AI_CLIENT_RUNTIME_OVERLAY_TARGET,
+  prepare: preparePhpAiClientOverlay,
+})
 
 async function prepareComposerBackedSource(source: string, stagingRoot: string, label: string): Promise<string> {
   if (await pathIsDirectory(join(source, "vendor"))) {
