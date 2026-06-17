@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
+import { mkdtempSync, writeFileSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { mkdtempSync } from "node:fs"
 import {
   artifactFileDigest,
   artifactManifestRelativePath,
@@ -23,6 +24,7 @@ import {
   trustedBrowserSessionOrigins,
   writeArtifactPart,
 } from "../packages/runtime-core/src/index.js"
+import { benchRunCode } from "../packages/runtime-playground/src/bench-command-handlers.js"
 
 const storage = runtimeArtifactStorageDescriptor({
   root: "./artifacts",
@@ -162,3 +164,45 @@ const sensitiveCapture = await captureArtifactFile({
 })
 assert.equal(sensitiveCapture.status, "sensitive")
 assert.equal(sensitiveCapture.reason, "secret-like-value")
+
+const benchRunner = benchRunCode({
+  componentId: "component",
+  pluginSlug: "component",
+  iterations: 1,
+  warmupIterations: 0,
+  dependencySlugs: [],
+  env: {},
+  bootstrapFiles: [],
+  workloads: [{ id: "ability-step", run: [{ type: "ability", name: "example/run" }] }],
+  lifecycle: {},
+  resetPolicy: {},
+})
+
+assert.match(benchRunner, /function wp_codebox_bench_run_command_step\(array \$step, string \$type, callable \$runner\): array/)
+assert.match(benchRunner, /function wp_codebox_bench_run_ability_step\(array \$step\): array[\s\S]*wp_codebox_bench_run_command_step\(\$step, 'ability'/)
+assert.match(benchRunner, /'schema' => 'wp-codebox\/bench-command-step\/v1'/)
+assert.doesNotMatch(benchRunner, /\} elseif \(\$type === 'ability'\) \{[\s\S]{0,500}\$ability->execute/)
+
+const commandStepHelpers = benchRunner.match(/function wp_codebox_bench_metric_prefix[\s\S]*?\nfunction wp_codebox_bench_run_rest_request_step/)?.[0].replace(/\nfunction wp_codebox_bench_run_rest_request_step$/, "")
+assert.ok(commandStepHelpers, "bench command step helpers are emitted")
+
+const phpTestFile = join(mkdtempSync(join(tmpdir(), "wp-codebox-bench-step-")), "command-step.php")
+writeFileSync(
+  phpTestFile,
+  `<?php
+${commandStepHelpers}
+$execution = wp_codebox_bench_run_command_step(array('type' => 'ability', 'name' => 'example/run'), 'ability', static function (array $step): array {
+    return array('metrics' => array('custom_count' => 2), 'metadata' => array('called' => $step['name']));
+});
+$payload = wp_codebox_bench_command_step_payload($execution, 'ability');
+echo json_encode($payload, JSON_UNESCAPED_SLASHES);
+`,
+)
+const commandStepPayload = JSON.parse(execFileSync("php", [phpTestFile], { encoding: "utf8" }))
+assert.equal(commandStepPayload.steps[0].schema, "wp-codebox/bench-command-step/v1")
+assert.equal(commandStepPayload.steps[0].type, "ability")
+assert.equal(commandStepPayload.steps[0].name, "example/run")
+assert.equal(typeof commandStepPayload.steps[0].timing.duration_ms, "number")
+assert.equal(typeof commandStepPayload.metrics.ability_duration_ms, "number")
+assert.equal(commandStepPayload.metrics.custom_count, 2)
+assert.deepEqual(commandStepPayload.metadata, { called: "example/run" })

@@ -234,6 +234,54 @@ function wp_codebox_bench_metric_prefix(array $step, string $fallback): string {
     return $prefix !== '' ? $prefix : $fallback;
 }
 
+function wp_codebox_bench_command_step_record(array $step, string $type, float $duration_ms): array {
+    $record = array(
+        'schema' => 'wp-codebox/bench-command-step/v1',
+        'type' => $type,
+        'timing' => array('duration_ms' => $duration_ms),
+    );
+    foreach (array('name', 'ability', 'command', 'method', 'path', 'route') as $field) {
+        if (isset($step[$field]) && is_scalar($step[$field])) {
+            $record[$field] = (string) $step[$field];
+        }
+    }
+    return $record;
+}
+
+function wp_codebox_bench_run_command_step(array $step, string $type, callable $runner): array {
+    $started = hrtime(true);
+    $result = $runner($step);
+    $duration_ms = (hrtime(true) - $started) / 1000000;
+    return array(
+        'result' => $result,
+        'duration_ms' => $duration_ms,
+        'record' => wp_codebox_bench_command_step_record($step, $type, $duration_ms),
+    );
+}
+
+function wp_codebox_bench_command_step_payload(array $execution, string $prefix, array $metrics = array(), array $record = array()): array {
+    $duration_ms = isset($execution['duration_ms']) && is_numeric($execution['duration_ms']) ? (float) $execution['duration_ms'] : 0.0;
+    $payload = array(
+        'metrics' => array_merge(array($prefix . '_duration_ms' => $duration_ms), $metrics),
+        'steps' => array(array_merge(is_array($execution['record'] ?? null) ? $execution['record'] : array(), $record)),
+        'diagnostics' => array(),
+    );
+
+    $result = $execution['result'] ?? null;
+    if (is_array($result)) {
+        foreach (array('metrics', 'metadata', 'artifacts', 'diagnostics') as $field) {
+            if (isset($result[$field]) && is_array($result[$field])) {
+                $payload[$field] = array_merge(isset($payload[$field]) && is_array($payload[$field]) ? $payload[$field] : array(), $result[$field]);
+            }
+        }
+        if (isset($result['steps']) && is_array($result['steps'])) {
+            $payload['steps'] = array_merge($payload['steps'], $result['steps']);
+        }
+    }
+
+    return $payload;
+}
+
 function wp_codebox_bench_run_rest_request_step(array $step): array {
     if (!class_exists('WP_REST_Request') || !function_exists('rest_do_request')) {
         throw new RuntimeException('The WordPress REST API is not available in this runtime.');
@@ -275,35 +323,38 @@ function wp_codebox_bench_run_rest_request_step(array $step): array {
         $request->set_body($body);
     }
 
-    $started = hrtime(true);
-    $response = rest_do_request($request);
-    $duration_ms = (hrtime(true) - $started) / 1000000;
+    $execution = wp_codebox_bench_run_command_step($step, 'rest-request', static fn(array $_step) => rest_do_request($request));
+    $response = $execution['result'];
     if (is_wp_error($response)) {
         throw new RuntimeException('REST bench workload step failed: ' . $response->get_error_message());
     }
 
     $status = method_exists($response, 'get_status') ? (int) $response->get_status() : 0;
     $prefix = wp_codebox_bench_metric_prefix($step, 'rest');
-    $record = array(
-        'type' => 'rest-request',
-        'method' => $method,
-        'path' => $path,
-        'route' => $route,
-        'status' => $status,
-        'timing' => array('duration_ms' => $duration_ms),
-    );
+    $record = array('method' => $method, 'path' => $path, 'route' => $route, 'status' => $status);
     if (!empty($step['capture-response'])) {
         $record['response'] = rest_get_server()->response_to_data($response, false);
     }
 
-    return array(
-        'metrics' => array(
-            $prefix . '_duration_ms' => $duration_ms,
-            $prefix . '_status' => $status,
-        ),
-        'steps' => array($record),
-        'diagnostics' => array(),
-    );
+    return wp_codebox_bench_command_step_payload($execution, $prefix, array($prefix . '_status' => $status), $record);
+}
+
+function wp_codebox_bench_run_ability_step(array $step): array {
+    if (!function_exists('wp_get_ability')) {
+        throw new RuntimeException('The WordPress Abilities API is not available in this runtime.');
+    }
+    $ability_name = isset($step['name']) ? (string) $step['name'] : (isset($step['ability']) ? (string) $step['ability'] : '');
+    $ability = wp_get_ability($ability_name);
+    if (!$ability) {
+        throw new RuntimeException('Ability is not registered: ' . $ability_name);
+    }
+
+    $execution = wp_codebox_bench_run_command_step($step, 'ability', static fn(array $_step) => $ability->execute(isset($step['input']) && is_array($step['input']) ? $step['input'] : array()));
+    if (is_wp_error($execution['result'] ?? null)) {
+        throw new RuntimeException($execution['result']->get_error_message());
+    }
+
+    return wp_codebox_bench_command_step_payload($execution, wp_codebox_bench_metric_prefix($step, 'ability'), array(), array('name' => $ability_name));
 }
 
 function wp_codebox_bench_snapshot_wordpress_hook_callbacks(string $hook_name): array {
@@ -600,18 +651,7 @@ function wp_codebox_bench_run_configured_workload(array $workload, string $plugi
                 }
             }
         } elseif ($type === 'ability') {
-            if (!function_exists('wp_get_ability')) {
-                throw new RuntimeException('The WordPress Abilities API is not available in this runtime.');
-            }
-            $ability_name = isset($step['name']) ? (string) $step['name'] : (isset($step['ability']) ? (string) $step['ability'] : '');
-            $ability = wp_get_ability($ability_name);
-            if (!$ability) {
-                throw new RuntimeException('Ability is not registered: ' . $ability_name);
-            }
-            $result = $ability->execute(isset($step['input']) && is_array($step['input']) ? $step['input'] : array());
-            if (is_wp_error($result)) {
-                throw new RuntimeException($result->get_error_message());
-            }
+            $result = wp_codebox_bench_run_ability_step($step);
         } elseif ($type === 'wp-cli') {
             $result = wp_codebox_bench_run_wp_cli_step($step);
         } elseif ($type === 'rest-request' || $type === 'rest') {
