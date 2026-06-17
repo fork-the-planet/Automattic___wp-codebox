@@ -176,6 +176,25 @@ artifact bundle and returns after recipe work finishes. Use
 `--preview-hold-blocking` only for operator workflows that need the CLI process
 to keep a live preview server open for the hold duration.
 
+## Generic Host Command Primitive
+
+Hosts that expose recipe/task runner commands through WP Codebox should use the
+core `executeHostCommand()` primitive instead of hand-rolled process wrappers. It
+runs one command without shell expansion, enforces allowed working-directory and
+environment policy, times out long-running work, terminates the spawned process
+group, samples process-tree RSS, and returns a structured result with:
+
+- `failureClassification`: `none`, `timeout`, `non_zero_exit`, or `signal`.
+- `commandSummary`: a compact command line for human diagnostics.
+- Bounded `stdout` and `stderr` fields plus `outputTruncated`.
+- `memorySamples` and `peakRssBytes` for runner watchdog evidence.
+- Optional `artifacts.stdout`, `artifacts.stderr`, and `artifacts.summary` refs
+  when `artifactsDirectory` is provided.
+
+The summary artifact uses `wp-codebox/host-command-summary/v1`. Product-specific
+orchestrators can wrap this primitive, but should keep WPCOM, CI-provider, and
+deployment semantics outside the generic runner layer.
+
 ## WordPress PHPUnit Runtime
 
 `wordpress.phpunit` is the lightweight WP Codebox equivalent of plugin PHPUnit

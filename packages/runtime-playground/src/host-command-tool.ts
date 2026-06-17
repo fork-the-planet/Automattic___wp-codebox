@@ -37,7 +37,7 @@ export function createHostCommandTool(config: HostCommandToolConfig): HostToolDe
     },
     outputSchema: {
       type: "object",
-      required: ["command", "args", "cwd", "exitCode", "signal", "stdout", "stderr", "durationMs", "timedOut", "outputTruncated"],
+      required: ["command", "args", "cwd", "exitCode", "signal", "stdout", "stderr", "durationMs", "timedOut", "outputTruncated", "failureClassification", "commandSummary", "memorySamples", "peakRssBytes"],
       properties: {
         command: { type: "string" },
         args: { type: "array", items: { type: "string" } },
@@ -49,6 +49,30 @@ export function createHostCommandTool(config: HostCommandToolConfig): HostToolDe
         durationMs: { type: "integer" },
         timedOut: { type: "boolean" },
         outputTruncated: { type: "boolean" },
+        failureClassification: { type: "string" },
+        commandSummary: { type: "string" },
+        memorySamples: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["elapsedMs", "rssBytes"],
+            properties: {
+              elapsedMs: { type: "integer" },
+              rssBytes: { type: "integer" },
+            },
+            additionalProperties: false,
+          },
+        },
+        peakRssBytes: { type: "integer" },
+        artifacts: {
+          type: "object",
+          properties: {
+            stdout: hostCommandArtifactSchema(),
+            stderr: hostCommandArtifactSchema(),
+            summary: hostCommandArtifactSchema(),
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
@@ -59,6 +83,18 @@ export function createHostCommandTool(config: HostCommandToolConfig): HostToolDe
       description: "Runs one explicitly registered host command without shell expansion.",
     },
     handler: (input) => executeHostCommand(config, normalizeHostCommandInput(input)),
+  }
+}
+
+function hostCommandArtifactSchema(): JsonObject {
+  return {
+    type: "object",
+    required: ["path", "bytes"],
+    properties: {
+      path: { type: "string" },
+      bytes: { type: "integer" },
+    },
+    additionalProperties: false,
   }
 }
 
