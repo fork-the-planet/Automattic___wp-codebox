@@ -1,5 +1,4 @@
-import { argValue } from "./command-args.js"
-import { createRuntimeCommandResultEnvelope, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
+import { commandArgValue, createRuntimeCommandResultEnvelope, parseCommandJson, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
 
 export const WORDPRESS_ABILITY_RESULT_SCHEMA = "wp-codebox/wordpress-ability-result/v1" as const
 
@@ -18,16 +17,12 @@ interface WordPressAbilityResult {
 }
 
 export function abilityInputFromArgs(args: string[]): unknown {
-  const raw = argValue(args, "input")
+  const raw = commandArgValue(args, "input")
   if (!raw) {
     return {}
   }
 
-  try {
-    return JSON.parse(raw)
-  } catch (error) {
-    throw new Error(`wordpress.ability input must be valid JSON: ${error instanceof Error ? error.message : String(error)}`)
-  }
+  return parseCommandJson(raw, "wordpress.ability input")
 }
 
 export function abilityPhpCode(name: string, input: unknown): string {

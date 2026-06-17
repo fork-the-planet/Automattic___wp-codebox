@@ -1,7 +1,18 @@
 import assert from "node:assert/strict"
-import { commandArg, commandJsonArg, commandStringListArg, parseCommandJsonArray, parseCommandJsonObject, parseCommandOptions, parseCommandStringList } from "@automattic/wp-codebox-core"
+import { booleanCommandArg, commandArg, commandArgValue, commandJsonArg, commandStringListArg, nonNegativeIntegerCommandArg, parseCommandJsonArray, parseCommandJsonObject, parseCommandOptions, parseCommandStringList, positiveIntegerCommandArg, strictBooleanCommandArg } from "@automattic/wp-codebox-core"
 
 assert.equal(commandArg("name", "value=with=equals"), "name=value=with=equals")
+assert.equal(commandArgValue(["name=value=with=equals"], "name"), "value=with=equals")
+assert.equal(commandArgValue([], "missing"), undefined)
+assert.equal(positiveIntegerCommandArg(["count=3"], "count", 1), 3)
+assert.equal(positiveIntegerCommandArg(["count=0"], "count", 1), 1)
+assert.equal(nonNegativeIntegerCommandArg(["count=0"], "count", 1), 0)
+assert.equal(nonNegativeIntegerCommandArg([], "count", 1), 1)
+assert.equal(booleanCommandArg(["enabled=yes"], "enabled"), true)
+assert.equal(booleanCommandArg(["enabled=false"], "enabled", true), false)
+assert.equal(strictBooleanCommandArg(["enabled=off"], "enabled", true), false)
+assert.equal(strictBooleanCommandArg([], "enabled", true), true)
+assert.throws(() => strictBooleanCommandArg(["enabled=maybe"], "enabled", false), /enabled must be true or false/)
 assert.equal(commandJsonArg("payload-json", { ok: true, nested: ["a=b"] }), 'payload-json={"ok":true,"nested":["a=b"]}')
 assert.equal(commandStringListArg("items", [" a ", "", "b"]), "items=a,b")
 assert.deepEqual(parseCommandStringList(" a, ,b "), ["a", "b"])

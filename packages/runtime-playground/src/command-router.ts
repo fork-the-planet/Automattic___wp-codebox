@@ -1,7 +1,6 @@
-import { createHostToolTransportError, createRuntimeCommandResultEnvelope, executeHostTool, type HostToolRegistry, type JsonValue, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
+import { commandArgValue, createHostToolTransportError, createRuntimeCommandResultEnvelope, executeHostTool, parseCommandJson, type HostToolRegistry, type JsonValue, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
 import { getCommandDefinition, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core/contracts"
 import type { ExecutionSpec } from "@automattic/wp-codebox-core"
-import { argValue } from "./command-args.js"
 
 export type PlaygroundCommandOutput = string | RuntimeCommandResultEnvelope
 
@@ -87,9 +86,9 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
 }
 
 function hostToolInput(args: string[]): JsonValue {
-  const explicit = argValue(args, "input-json")
+  const explicit = commandArgValue(args, "input-json")
   if (explicit !== undefined) {
-    const parsed = JSON.parse(explicit) as JsonValue
+    const parsed = parseCommandJson(explicit, "input-json") as JsonValue
     return parsed
   }
 

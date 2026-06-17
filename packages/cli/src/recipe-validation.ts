@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
+import { assertWorkspaceRecipeJsonSchema, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_THROTTLE_PROFILE_IDS, commandArgValue, parseCommandJson, validateBrowserInteractionScript, workspaceRecipeRuntimeCollectedArtifacts, type MountSpec, type RuntimeAssetSpec, type RuntimePolicy, type RuntimePreviewSpec, type WorkspaceRecipe, type WorkspaceRecipeDeclaredArtifact, type WorkspaceRecipeDependencyOverlay, type WorkspaceRecipeDistribution, type WorkspaceRecipeDistributionStartupProbe, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntime, type WorkspaceRecipePluginRuntimeHealthProbe, type WorkspaceRecipeProbe, type WorkspaceRecipeRuntimeBackendPackage, type WorkspaceRecipeRuntimeOverlay, type WorkspaceRecipeSiteSeed } from "@automattic/wp-codebox-core"
 import { composerPackageVendorPath, evaluateRecipeSourcePolicy, isComposerPackageName, pluginTarget, recipeExtraPluginSlug, recipeExtraPlugins, recipeSource, resolveRecipeExtraPluginFile } from "./recipe-sources.js"
 import { registeredRuntimeOverlayDescriptors, runtimeOverlayDescriptor, runtimeOverlayTarget } from "./runtime-overlay-registry.js"
 import { cliRuntimeBackendRecipePolicy, listCliRecipeCommandIds, listCliRuntimeBackendKinds } from "./runtime-backends.js"
@@ -50,7 +50,7 @@ export function parseWorkspaceRecipe(raw: string, recipePath: string): Workspace
 }
 
 export function parseWorkspaceRecipeJson(raw: string): WorkspaceRecipe {
-  return JSON.parse(raw) as WorkspaceRecipe
+  return parseCommandJson(raw, "workspace recipe") as WorkspaceRecipe
 }
 
 export function normalizeWorkspaceRecipeCompatibility(recipe: WorkspaceRecipe): WorkspaceRecipe {
@@ -860,8 +860,7 @@ export function pluginRuntimeHealthProbeStep(probe: WorkspaceRecipePluginRuntime
 }
 
 export function recipeStepArgValue(args: string[], key: string): string | undefined {
-  const prefix = `${key}=`
-  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
+  return commandArgValue(args, key)
 }
 
 export function recipeWpCliCommandFromArgs(args: string[]): string {
@@ -1435,12 +1434,12 @@ echo wp_json_encode(array('command' => 'plugin-runtime.health', 'type' => 'plugi
 }
 
 function recipeBenchStepUsesWpCli(step: WorkspaceRecipe["workflow"]["steps"][number]): boolean {
-  const workloadsArg = (step.args ?? []).find((arg) => arg.startsWith("workloads-json="))
-  const lifecycleArg = (step.args ?? []).find((arg) => arg.startsWith("lifecycle-json="))
+  const workloadsArg = recipeStepArgValue(step.args ?? [], "workloads-json")
+  const lifecycleArg = recipeStepArgValue(step.args ?? [], "lifecycle-json")
 
   try {
-    return Boolean(workloadsArg && recipeBenchWorkloadsUseWpCli(JSON.parse(workloadsArg.slice("workloads-json=".length))))
-      || Boolean(lifecycleArg && recipeBenchWorkloadsUseWpCli(JSON.parse(lifecycleArg.slice("lifecycle-json=".length))))
+    return Boolean(workloadsArg && recipeBenchWorkloadsUseWpCli(parseCommandJson(workloadsArg, "workloads-json")))
+      || Boolean(lifecycleArg && recipeBenchWorkloadsUseWpCli(parseCommandJson(lifecycleArg, "lifecycle-json")))
   } catch {
     return false
   }
@@ -1462,7 +1461,7 @@ function recipeStepUsesEvaluate(step: WorkspaceRecipe["workflow"]["steps"][numbe
   const scenarioRaw = recipeStepArgValue(step.args ?? [], "scenario-json")
   if (scenarioRaw && !scenarioRaw.startsWith("@")) {
     try {
-      const parsed = JSON.parse(scenarioRaw) as { steps?: unknown; assertions?: unknown }
+      const parsed = parseCommandJson(scenarioRaw, "scenario-json") as { steps?: unknown; assertions?: unknown }
       const steps = normalizeBrowserScenarioStepsForValidation(parsed.steps)
       const assertions = normalizeBrowserScenarioAssertionsForValidation(parsed.assertions)
       return [...steps, ...assertions].some((entry) => entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "evaluate")
@@ -1476,7 +1475,7 @@ function recipeStepUsesEvaluate(step: WorkspaceRecipe["workflow"]["steps"][numbe
     return false
   }
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = parseCommandJson(raw, "steps-json")
     return Array.isArray(parsed) && parsed.some((entry) => entry && typeof entry === "object" && (entry as { kind?: unknown }).kind === "evaluate")
   } catch {
     return false

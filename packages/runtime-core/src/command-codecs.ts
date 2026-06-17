@@ -17,6 +17,54 @@ export function commandStringListArg(name: string, values: readonly string[]): s
   return commandArg(name, encodeCommandStringList(values))
 }
 
+export function commandArgValue(args: readonly string[], name: string): string | undefined {
+  const prefix = `${name}=`
+  return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length)
+}
+
+export function positiveIntegerCommandArg(args: readonly string[], name: string, fallback: number): number {
+  const raw = commandArgValue(args, name)
+  if (!raw) {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export function nonNegativeIntegerCommandArg(args: readonly string[], name: string, fallback: number): number {
+  const raw = commandArgValue(args, name)
+  if (!raw) {
+    return fallback
+  }
+
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+export function booleanCommandArg(args: readonly string[], name: string, fallback = false): boolean {
+  const raw = commandArgValue(args, name)
+  if (!raw) {
+    return fallback
+  }
+
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase())
+}
+
+export function strictBooleanCommandArg(args: readonly string[], name: string, fallback: boolean): boolean {
+  const raw = commandArgValue(args, name)?.trim().toLowerCase()
+  if (!raw) {
+    return fallback
+  }
+  if (["1", "true", "yes", "on"].includes(raw)) {
+    return true
+  }
+  if (["0", "false", "no", "off"].includes(raw)) {
+    return false
+  }
+  throw new Error(`${name} must be true or false`)
+}
+
 export function encodeCommandJson(value: unknown): string {
   return JSON.stringify(value)
 }
