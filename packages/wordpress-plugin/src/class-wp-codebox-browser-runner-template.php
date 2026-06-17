@@ -228,6 +228,233 @@ return array_filter( $record, static fn( $value ) => array() !== $value && \'\' 
 ';
 	}
 
+	/** Builds the generated PHP execution metrics helpers fragment. */
+	public static function execution_metrics_fragment(): string {
+		return '
+function wp_codebox_browser_response_diagnostics( $response ) {
+if ( ! is_array( $response ) ) {
+	return array( \'type\' => is_object( $response ) ? get_class( $response ) : gettype( $response ) );
+}
+
+$metadata = is_array( $response[\'metadata\'] ?? null ) ? $response[\'metadata\'] : array();
+$tool_names = array();
+foreach ( is_array( $response[\'tool_calls\'] ?? null ) ? $response[\'tool_calls\'] : array() as $tool_call ) {
+	if ( is_array( $tool_call ) && is_scalar( $tool_call[\'name\'] ?? null ) ) {
+		$tool_names[] = (string) $tool_call[\'name\'];
+	}
+}
+$last_tool_names = array();
+foreach ( is_array( $response[\'last_tool_calls\'] ?? null ) ? $response[\'last_tool_calls\'] : array() as $tool_call ) {
+	if ( is_array( $tool_call ) && is_scalar( $tool_call[\'name\'] ?? null ) ) {
+		$last_tool_names[] = (string) $tool_call[\'name\'];
+	}
+}
+$tool_result_names = array();
+foreach ( is_array( $response[\'tool_execution_results\'] ?? null ) ? $response[\'tool_execution_results\'] : array() as $tool_result ) {
+	if ( is_array( $tool_result ) && is_scalar( $tool_result[\'tool_name\'] ?? null ) ) {
+		$tool_result_names[] = (string) $tool_result[\'tool_name\'];
+	}
+}
+
+return array_filter( array(
+	\'keys\' => array_slice( array_keys( $response ), 0, 20 ),
+	\'turn_count\' => isset( $response[\'turn_count\'] ) && is_scalar( $response[\'turn_count\'] ) ? (int) $response[\'turn_count\'] : null,
+	\'tool_call_count\' => is_array( $response[\'tool_calls\'] ?? null ) ? count( $response[\'tool_calls\'] ) : null,
+	\'last_tool_call_count\' => is_array( $response[\'last_tool_calls\'] ?? null ) ? count( $response[\'last_tool_calls\'] ) : null,
+	\'tool_execution_result_count\' => is_array( $response[\'tool_execution_results\'] ?? null ) ? count( $response[\'tool_execution_results\'] ) : null,
+	\'tool_names\' => array_values( array_unique( $tool_names ) ),
+	\'last_tool_names\' => array_values( array_unique( $last_tool_names ) ),
+	\'tool_execution_result_names\' => array_values( array_unique( $tool_result_names ) ),
+	\'completion_assertions_required\' => is_array( $metadata[\'completion_assertions_required\'] ?? null ) ? $metadata[\'completion_assertions_required\'] : null,
+	\'completion_assertions_missing\' => is_array( $metadata[\'completion_assertions_missing\'] ?? null ) ? $metadata[\'completion_assertions_missing\'] : null,
+	\'completion_assertions_satisfied\' => is_array( $metadata[\'completion_assertions_satisfied\'] ?? null ) ? $metadata[\'completion_assertions_satisfied\'] : null,
+	\'completion_assertions_complete\' => isset( $metadata[\'completion_assertions_complete\'] ) ? (bool) $metadata[\'completion_assertions_complete\'] : null,
+	\'text_bytes\' => isset( $response[\'response\'] ) && is_string( $response[\'response\'] ) ? strlen( $response[\'response\'] ) : null,
+	\'status\' => is_scalar( $response[\'status\'] ?? null ) ? (string) $response[\'status\'] : null,
+) );
+}
+
+function wp_codebox_browser_json_bytes( $value ): int {
+$encoded = wp_json_encode( $value, JSON_UNESCAPED_SLASHES );
+return is_string( $encoded ) ? strlen( $encoded ) : 0;
+}
+
+function wp_codebox_browser_failure_class( string $code ): string {
+if ( "" === $code ) {
+    return "";
+}
+if ( str_contains( $code, "timeout" ) ) {
+    return "timeout";
+}
+if ( str_contains( $code, "permission" ) || str_contains( $code, "authorization" ) || str_contains( $code, "not_playground" ) ) {
+    return "authorization";
+}
+if ( str_contains( $code, "unavailable" ) || str_contains( $code, "missing" ) ) {
+    return "dependency_unavailable";
+}
+if ( str_contains( $code, "invalid" ) ) {
+    return "invalid_request";
+}
+
+return "runtime_error";
+}
+
+function wp_codebox_browser_artifact_metrics( array $artifact_bundle ): array {
+$files = is_array( $artifact_bundle["files"] ?? null ) ? $artifact_bundle["files"] : array();
+$bytes = 0;
+foreach ( $files as $file ) {
+    if ( ! is_array( $file ) ) {
+        continue;
+    }
+    if ( is_string( $file["content"] ?? null ) ) {
+        $bytes += strlen( $file["content"] );
+    } elseif ( is_string( $file["content_base64"] ?? null ) ) {
+        $decoded = base64_decode( $file["content_base64"], true );
+        $bytes += is_string( $decoded ) ? strlen( $decoded ) : strlen( $file["content_base64"] );
+    }
+}
+
+return array_filter( array(
+    "schema" => (string) ( $artifact_bundle["schema"] ?? "" ),
+    "file_count" => count( $files ),
+    "bytes" => $bytes,
+    "entrypoint" => (string) ( $artifact_bundle["entrypoint"] ?? "" ),
+) );
+}
+
+function wp_codebox_browser_capture_metrics( array $captures ): array {
+$records = array();
+$bytes = 0;
+foreach ( $captures as $capture ) {
+    if ( ! is_array( $capture ) ) {
+        continue;
+    }
+    $size = isset( $capture["size"] ) ? (int) $capture["size"] : 0;
+    $bytes += $size;
+    $records[] = array_filter( array(
+        "path" => (string) ( $capture["path"] ?? "" ),
+        "name" => (string) ( $capture["name"] ?? "" ),
+        "kind" => (string) ( $capture["kind"] ?? "" ),
+        "exists" => isset( $capture["exists"] ) ? (bool) $capture["exists"] : null,
+        "bytes" => $size,
+        "sha256" => (string) ( $capture["sha256"] ?? "" ),
+        "truncated" => isset( $capture["truncated"] ) ? (bool) $capture["truncated"] : null,
+    ), static fn( $value ) => null !== $value && "" !== $value );
+}
+
+return array(
+    "count" => count( $captures ),
+    "bytes" => $bytes,
+    "records" => $records,
+);
+}
+
+function wp_codebox_browser_event_metrics( string $event_path ): array {
+$metrics = array(
+    "path" => $event_path,
+    "exists" => is_readable( $event_path ),
+    "bytes" => is_readable( $event_path ) ? (int) filesize( $event_path ) : 0,
+    "event_count" => 0,
+    "tool_call_count" => 0,
+    "tool_duration_ms" => 0,
+    "tools" => array(),
+);
+if ( ! is_readable( $event_path ) ) {
+    return $metrics;
+}
+
+$lines = file( $event_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES );
+foreach ( is_array( $lines ) ? $lines : array() as $line ) {
+    $event = json_decode( (string) $line, true );
+    if ( ! is_array( $event ) ) {
+        continue;
+    }
+    ++$metrics["event_count"];
+    $payload = is_array( $event["payload"] ?? null ) ? $event["payload"] : array();
+    $tool_name = is_scalar( $payload["tool_name"] ?? null ) ? (string) $payload["tool_name"] : "";
+    if ( "" === $tool_name && is_string( $event["event"] ?? null ) && str_contains( (string) $event["event"], "tool" ) ) {
+        $tool_name = "unknown";
+    }
+    if ( "" === $tool_name ) {
+        continue;
+    }
+
+    ++$metrics["tool_call_count"];
+    $duration = isset( $payload["duration_ms"] ) && is_numeric( $payload["duration_ms"] ) ? (int) $payload["duration_ms"] : ( isset( $payload["elapsed_ms"] ) && is_numeric( $payload["elapsed_ms"] ) ? (int) $payload["elapsed_ms"] : 0 );
+    $metrics["tool_duration_ms"] += $duration;
+    if ( ! isset( $metrics["tools"][ $tool_name ] ) ) {
+        $metrics["tools"][ $tool_name ] = array( "count" => 0, "duration_ms" => 0 );
+    }
+    ++$metrics["tools"][ $tool_name ]["count"];
+    $metrics["tools"][ $tool_name ]["duration_ms"] += $duration;
+}
+
+ksort( $metrics["tools"] );
+return $metrics;
+}
+
+function wp_codebox_browser_execution_metrics( array $payload, array $invocation_metadata, array $captures, array $artifact_bundle, array $diagnostics, $response, float $started_monotonic ): array {
+$failed = is_wp_error( $response ) || $response instanceof Throwable;
+$error = $failed ? wp_codebox_browser_normalize_error( $response ) : array();
+$event_metrics = wp_codebox_browser_event_metrics( (string) ( $diagnostics["event_stream"]["path"] ?? "/tmp/wp-codebox-agent-events.jsonl" ) );
+$capture_metrics = wp_codebox_browser_capture_metrics( $captures );
+$artifact_metrics = wp_codebox_browser_artifact_metrics( $artifact_bundle );
+$elapsed_ms = max( 0, (int) round( ( microtime( true ) - $started_monotonic ) * 1000 ) );
+
+return array_filter( array(
+    "schema" => "wp-codebox/execution-metrics/v1",
+    "executor" => "wp-codebox/browser-playground",
+    "phase" => "execution",
+    "status" => $failed ? "error" : "completed",
+    "execution" => "browser-playground",
+    "execution_scope" => "disposable-playground",
+    "permission_model" => "runtime-principal",
+    "timings_ms" => array(
+        "total_ms" => $elapsed_ms,
+        "agent_loop_ms" => $elapsed_ms,
+        "tool_calls_ms" => (int) $event_metrics["tool_duration_ms"],
+        "browser_startup_ms" => null,
+        "playground_startup_ms" => null,
+        "blueprint_run_ms" => null,
+    ),
+    "tool_calls" => array(
+        "count" => (int) $event_metrics["tool_call_count"],
+        "duration_ms" => (int) $event_metrics["tool_duration_ms"],
+        "by_tool" => $event_metrics["tools"],
+    ),
+    "payload_bytes" => array_filter( array(
+        "task_payload" => wp_codebox_browser_json_bytes( $payload ),
+        "invocation" => wp_codebox_browser_json_bytes( $invocation_metadata ),
+        "response_summary" => wp_codebox_browser_json_bytes( $diagnostics["response"] ?? array() ),
+    ), static fn( $bytes ) => is_int( $bytes ) && $bytes > 0 ),
+    "artifact_bytes" => array(
+        "captures" => (int) $capture_metrics["bytes"],
+        "artifact_bundle" => (int) ( $artifact_metrics["bytes"] ?? 0 ),
+    ),
+    "artifacts" => array(
+        "capture_count" => (int) $capture_metrics["count"],
+        "artifact_file_count" => (int) ( $artifact_metrics["file_count"] ?? 0 ),
+        "artifact_schema" => (string) ( $artifact_metrics["schema"] ?? "" ),
+        "entrypoint" => (string) ( $artifact_metrics["entrypoint"] ?? "" ),
+    ),
+    "diagnostics_refs" => array(
+        "event_stream" => array_diff_key( $event_metrics, array( "tools" => true ) ),
+        "captures" => $capture_metrics["records"],
+        "provider_proxy" => array_filter( array(
+            "installed" => isset( $diagnostics["provider_proxy"]["installed"] ) ? (bool) $diagnostics["provider_proxy"]["installed"] : null,
+            "early_return" => (string) ( $diagnostics["provider_proxy"]["early_return"] ?? "" ),
+            "connector_count" => isset( $diagnostics["provider_proxy"]["connector_count"] ) ? (int) $diagnostics["provider_proxy"]["connector_count"] : null,
+        ), static fn( $value ) => null !== $value && "" !== $value ),
+    ),
+    "failure" => $failed ? array(
+        "class" => wp_codebox_browser_failure_class( (string) ( $error["code"] ?? "" ) ),
+        "code" => (string) ( $error["code"] ?? "" ),
+    ) : array(),
+) );
+}
+';
+	}
+
 	/** Returns the generated PHP result envelope schema. */
 	public static function result_envelope_schema(): string {
 		return 'wp-codebox/browser-materialization/v1';
@@ -235,137 +462,6 @@ return array_filter( $record, static fn( $value ) => array() !== $value && \'\' 
 
 	/** Builds the generated PHP provider transport registration fragment. */
 	public static function provider_transport_registration_fragment(): string {
-		return '
-function wp_codebox_browser_install_provider_proxy( array $payload ): array {
-$diagnostics = array( \'schema\' => \'wp-codebox/browser-provider-proxy-diagnostics/v1\', \'installed\' => false );
-if ( ! function_exists( \'post_message_to_js\' ) || ! class_exists( \'\\WordPress\\AiClient\\AiClient\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' ) || ! interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' ) ) {
-	$diagnostics[\'early_return\'] = \'missing_browser_proxy_dependencies\';
-	$diagnostics[\'has_post_message_to_js\'] = function_exists( \'post_message_to_js\' );
-	$diagnostics[\'has_ai_client\'] = class_exists( \'\\WordPress\\AiClient\\AiClient\' );
-	$diagnostics[\'has_http_transporter_interface\'] = interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface\' );
-	$diagnostics[\'has_request_authentication_interface\'] = interface_exists( \'\\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface\' );
-	return $diagnostics;
-}
-
-$task_input = is_array( $payload[\'task_input\'] ?? null ) ? $payload[\'task_input\'] : array();
-$provider = trim( (string) ( $payload[\'provider\'] ?? $task_input[\'provider\'] ?? \'\' ) );
-$diagnostics[\'provider\'] = $provider;
-if ( \'\' === $provider ) {
-	$diagnostics[\'early_return\'] = \'provider_missing\';
-	return $diagnostics;
-}
-
-$registry = \\WordPress\\AiClient\\AiClient::defaultRegistry();
-if ( ! method_exists( $registry, \'setHttpTransporter\' ) || ! method_exists( $registry, \'setProviderRequestAuthentication\' ) ) {
-	$diagnostics[\'early_return\'] = \'registry_methods_missing\';
-	$diagnostics[\'has_set_http_transporter\'] = method_exists( $registry, \'setHttpTransporter\' );
-	$diagnostics[\'has_set_provider_request_authentication\'] = method_exists( $registry, \'setProviderRequestAuthentication\' );
-	return $diagnostics;
-}
-
-$provider_id = $provider;
-if ( method_exists( $registry, \'getProviderId\' ) ) {
-	try {
-		$provider_id = (string) $registry->getProviderId( $provider );
-	} catch ( Throwable $exception ) {
-		$provider_id = $provider;
-	}
-}
-$diagnostics[\'provider_id\'] = $provider_id;
-
-$inherit = is_array( $payload[\'inherit\'] ?? null ) ? $payload[\'inherit\'] : ( is_array( $task_input[\'inherit\'] ?? null ) ? $task_input[\'inherit\'] : array() );
-if ( empty( $inherit[\'connectors\'] ) && is_array( $payload[\'inheritance\'][\'connectors\'] ?? null ) ) {
-	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
-		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
-	}, $payload[\'inheritance\'][\'connectors\'] ) ) );
-}
-if ( empty( $inherit[\'connectors\'] ) && is_array( $task_input[\'inheritance\'][\'connectors\'] ?? null ) ) {
-	$inherit[\'connectors\'] = array_values( array_filter( array_map( static function ( $connector ): string {
-		return is_array( $connector ) ? trim( (string) ( $connector[\'name\'] ?? \'\' ) ) : trim( (string) $connector );
-	}, $task_input[\'inheritance\'][\'connectors\'] ) ) );
-}
-if ( empty( $inherit[\'connectors\'] ) ) {
-	$inherit[\'connectors\'] = array( $provider );
-}
-$diagnostics[\'connector_count\'] = count( is_array( $inherit[\'connectors\'] ?? null ) ? $inherit[\'connectors\'] : array() );
-$diagnostics[\'connector\'] = (string) ( $inherit[\'connectors\'][0] ?? \'\' );
-
-$request_authentication = class_exists( \'\\WordPress\\AiClient\\Providers\\Http\\DTO\\ApiKeyRequestAuthentication\' )
-	? new \\WordPress\\AiClient\\Providers\\Http\\DTO\\ApiKeyRequestAuthentication( \'wp-codebox-browser-provider-proxy\' )
-	: new class implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\RequestAuthenticationInterface {
-		public static function getJsonSchema(): array {
-			return array( \'type\' => \'object\' );
-		}
-
-		public function authenticateRequest( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request {
-			return $request;
-		}
-	};
-$registry->setProviderRequestAuthentication( $provider_id, $request_authentication );
-$diagnostics[\'request_authentication_class\'] = get_class( $request_authentication );
-$diagnostics[\'request_authentication_bound\'] = true;
-
-$registry->setHttpTransporter(
-	new class( $payload, $inherit ) implements \\WordPress\\AiClient\\Providers\\Http\\Contracts\\HttpTransporterInterface {
-		private array $payload;
-		private array $inherit;
-
-		public function __construct( array $payload, array $inherit ) {
-			$this->payload = $payload;
-			$this->inherit = $inherit;
-		}
-
-		public function send( \\WordPress\\AiClient\\Providers\\Http\\DTO\\Request $request, ?\\WordPress\\AiClient\\Providers\\Http\\DTO\\RequestOptions $options = null ): \\WordPress\\AiClient\\Providers\\Http\\DTO\\Response {
-			unset( $options );
-			$connector = trim( (string) ( $this->payload[\'connector\'] ?? $this->inherit[\'connectors\'][0] ?? \'\' ) );
-			$message   = array(
-				\'schema\'             => \'wp-codebox/browser-provider-proxy-request/v1\',
-				\'id\'                 => \'provider-\' . bin2hex( random_bytes( 8 ) ),
-				\'operation\'          => \'http.request\',
-				\'provider\'           => (string) ( $this->payload[\'provider\'] ?? ( is_array( $this->payload[\'task_input\'] ?? null ) ? ( $this->payload[\'task_input\'][\'provider\'] ?? \'\' ) : \'\' ) ),
-				\'model\'              => (string) ( $this->payload[\'model\'] ?? ( is_array( $this->payload[\'task_input\'] ?? null ) ? ( $this->payload[\'task_input\'][\'model\'] ?? \'\' ) : \'\' ) ),
-				\'connector\'          => $connector,
-				\'inherit\'            => $this->inherit,
-				\'sandbox_session_id\' => (string) ( $this->payload[\'sandbox_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
-				\'caller_session_id\'  => (string) ( $this->payload[\'caller_session_id\'] ?? $this->payload[\'session_id\'] ?? \'\' ),
-				\'job_id\'             => (string) ( $this->payload[\'job_id\'] ?? \'\' ),
-				\'orchestrator\'       => is_array( $this->payload[\'orchestrator\'] ?? null ) ? $this->payload[\'orchestrator\'] : array(),
-				\'authorization\'      => is_array( $this->payload[\'authorization\'] ?? null ) ? $this->payload[\'authorization\'] : array(),
-				\'request\'            => array(
-					\'method\'  => method_exists( $request->getMethod(), \'value\' ) ? $request->getMethod()->value : (string) $request->getMethod(),
-					\'uri\'     => $request->getUri(),
-					\'headers\' => $request->getHeaders(),
-					\'body\'    => $request->getBody(),
-					\'data\'    => $request->getData(),
-				),
-			);
-
-			$response_json = post_message_to_js( wp_json_encode( $message, JSON_UNESCAPED_SLASHES ) );
-			$response      = json_decode( is_string( $response_json ) ? $response_json : \'\', true );
-			if ( ! is_array( $response ) || empty( $response[\'success\'] ) ) {
-				$error = is_array( $response[\'error\'] ?? null ) ? $response[\'error\'] : array();
-				throw new RuntimeException( (string) ( $error[\'message\'] ?? \'Browser provider proxy request failed.\' ) );
-			}
-
-			$response_payload = is_array( $response[\'response\'] ?? null ) ? $response[\'response\'] : array();
-			$http = is_array( $response_payload[\'http\'] ?? null ) ? $response_payload[\'http\'] : ( is_array( $response[\'http\'] ?? null ) ? $response[\'http\'] : array() );
-			$status = (int) ( $http[\'status\'] ?? 0 );
-			if ( $status < 100 || $status > 599 ) {
-				throw new RuntimeException( \'Browser provider proxy returned a malformed HTTP response.\' );
-			}
-
-			return new \\WordPress\\AiClient\\Providers\\Http\\DTO\\Response(
-				$status,
-				is_array( $http[\'headers\'] ?? null ) ? $http[\'headers\'] : array( \'Content-Type\' => \'application/json\' ),
-				isset( $http[\'body\'] ) ? (string) $http[\'body\'] : \'\'
-			);
-		}
-	}
-);
-$diagnostics[\'http_transporter_bound\'] = true;
-$diagnostics[\'installed\'] = true;
-return $diagnostics;
-}
-';
+		return WP_Codebox_Agent_Runtime_Invoker::browser_provider_proxy_php();
 	}
 }
