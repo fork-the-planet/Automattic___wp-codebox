@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, realpath } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { executeHostCommand, executeManagedHostCommand, hostCommandEnv, ManagedHostCommandError, resolveAllowedHostCommandCwd } from "../packages/runtime-core/src/index.js"
+import { classifyHostCommandFailure, executeHostCommand, executeManagedHostCommand, hostCommandEnv, ManagedHostCommandError, resolveAllowedHostCommandCwd } from "../packages/runtime-core/src/index.js"
 
 const root = await mkdtemp(join(tmpdir(), "wp-codebox-host-command-executor-"))
 const allowed = join(root, "allowed")
@@ -31,6 +31,8 @@ const truncated = await executeHostCommand(
 )
 assert.equal(truncated.stdout, "abc")
 assert.equal(truncated.outputTruncated, true)
+assert.equal(truncated.failureClassification, "none")
+assert.equal(truncated.commandSummary, `${process.execPath} -e process.stdout.write('abcdef')`)
 
 const timedOut = await executeHostCommand(
   {
@@ -42,6 +44,63 @@ const timedOut = await executeHostCommand(
 )
 assert.equal(timedOut.timedOut, true)
 assert.notEqual(timedOut.signal, "")
+assert.equal(timedOut.failureClassification, "timeout")
+
+const grandchildPidFile = join(root, "grandchild.pid")
+const processTreeTimedOut = await executeHostCommand(
+  {
+    command: process.execPath,
+    args: ["-e", `const { spawn } = require("node:child_process"); const fs = require("node:fs"); const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }); fs.writeFileSync(${JSON.stringify(grandchildPidFile)}, String(child.pid)); setInterval(() => {}, 1000);`],
+    cwd: allowed,
+    terminationGraceMs: 25,
+  },
+  { timeoutMs: 25 }
+)
+assert.equal(processTreeTimedOut.failureClassification, "timeout")
+const grandchildPid = Number.parseInt(await readFile(grandchildPidFile, "utf8"), 10)
+await sleep(150)
+assert.equal(isProcessRunning(grandchildPid), false)
+
+const nonZero = await executeHostCommand(
+  {
+    command: process.execPath,
+    args: ["-e", "process.exit(9)"],
+    cwd: allowed,
+  },
+  {}
+)
+assert.equal(nonZero.exitCode, 9)
+assert.equal(nonZero.failureClassification, "non_zero_exit")
+
+const artifactsDirectory = join(root, "artifacts")
+const withArtifacts = await executeHostCommand(
+  {
+    command: process.execPath,
+    args: ["-e", "process.stdout.write('out'); process.stderr.write('err'); setTimeout(() => {}, 75)"],
+    cwd: allowed,
+    artifactsDirectory,
+    memorySampleIntervalMs: 20,
+  },
+  {}
+)
+assert.equal(withArtifacts.stdout, "out")
+assert.equal(withArtifacts.stderr, "err")
+assert.ok(withArtifacts.artifacts?.stdout?.path.endsWith("stdout.log"))
+assert.ok(withArtifacts.artifacts?.stderr?.path.endsWith("stderr.log"))
+assert.ok(withArtifacts.artifacts?.summary?.path.endsWith("command-summary.json"))
+assert.equal(await readFile(withArtifacts.artifacts!.stdout!.path, "utf8"), "out")
+assert.equal(await readFile(withArtifacts.artifacts!.stderr!.path, "utf8"), "err")
+const artifactSummary = JSON.parse(await readFile(withArtifacts.artifacts!.summary!.path, "utf8"))
+assert.equal(artifactSummary.schema, "wp-codebox/host-command-summary/v1")
+assert.equal(artifactSummary.failureClassification, "none")
+assert.ok(Array.isArray(artifactSummary.memorySamples))
+assert.ok(withArtifacts.memorySamples.length > 0)
+assert.ok(withArtifacts.peakRssBytes > 0)
+
+assert.equal(classifyHostCommandFailure(0, null, false), "none")
+assert.equal(classifyHostCommandFailure(2, null, false), "non_zero_exit")
+assert.equal(classifyHostCommandFailure(null, "SIGTERM", false), "signal")
+assert.equal(classifyHostCommandFailure(null, "SIGTERM", true), "timeout")
 
 const managed = await executeManagedHostCommand({
   command: process.execPath,
@@ -68,6 +127,19 @@ await assert.rejects(
     return true
   }
 )
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 await assert.rejects(
   () => executeManagedHostCommand({
