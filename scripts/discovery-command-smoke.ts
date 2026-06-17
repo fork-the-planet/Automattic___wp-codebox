@@ -114,7 +114,7 @@ async function main(): Promise<void> {
   assert(schemaOutput.schema === "wp-codebox/json-schema/v1", "Unexpected recipe schema envelope")
   assert(schemaOutput.id === "wp-codebox/workspace-recipe/v1", "Unexpected recipe schema id")
   assert(
-    JSON.stringify(schemaOutput.jsonSchema) === JSON.stringify(createWorkspaceRecipeJsonSchema({ recipeCommandIds: expectedCommandIds })),
+    JSON.stringify(schemaOutput.jsonSchema) === JSON.stringify(createWorkspaceRecipeJsonSchema({ recipeCommandIds: expectedCommandIds, runtimeBackendKinds: listCliRuntimeBackendKinds() })),
     "CLI recipe schema must come from the shared runtime-core schema factory"
   )
 
