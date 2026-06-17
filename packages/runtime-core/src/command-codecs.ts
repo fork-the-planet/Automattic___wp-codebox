@@ -1,3 +1,6 @@
+import { resolve } from "node:path"
+import type { JsonValue } from "./host-tool-registry.js"
+
 export type CommandJsonObject = Record<string, unknown>
 
 export interface CommandOptionParseResult {
@@ -80,6 +83,30 @@ export function parseCommandJson(raw: string, label = "JSON argument"): unknown 
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`${label} must be valid JSON: ${message}`)
   }
+}
+
+export function parseCommandInput(args: readonly string[], explicitName = "input-json"): JsonValue {
+  const explicit = commandArgValue(args, explicitName)
+  if (explicit !== undefined) {
+    return parseCommandJson(explicit, explicitName) as JsonValue
+  }
+
+  const input: Record<string, string> = {}
+  for (const arg of args) {
+    const separator = arg.indexOf("=")
+    if (separator > 0) {
+      input[arg.slice(0, separator)] = arg.slice(separator + 1)
+    }
+  }
+  return input
+}
+
+export function resolveCommandPath(pathValue: string, baseDir = process.cwd()): string {
+  const trimmed = pathValue.trim()
+  if (!trimmed) {
+    throw new Error("Command path must be non-empty")
+  }
+  return resolve(baseDir, trimmed)
 }
 
 export function parseCommandJsonObject(raw: string | undefined, label = "JSON argument", fallback: CommandJsonObject = {}): CommandJsonObject {

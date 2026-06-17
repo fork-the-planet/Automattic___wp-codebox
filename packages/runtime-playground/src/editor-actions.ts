@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { resolveCommandPath } from "@automattic/wp-codebox-core"
 import { argValue } from "./commands.js"
 
 export interface EditorOpenTarget {
@@ -59,7 +59,7 @@ export async function editorActionStepsFromArgs(args: string[]): Promise<EditorA
 
   let text = stepsRaw
   if (stepsRaw.startsWith("@")) {
-    text = await readFile(resolve(stepsRaw.slice(1)), "utf8")
+    text = await readFile(resolveCommandPath(stepsRaw.slice(1)), "utf8")
   }
 
   let parsed: unknown
