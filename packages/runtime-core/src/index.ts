@@ -1,6 +1,7 @@
 export * from "./artifact-manifest.js"
 export * from "./artifact-layout.js"
 export * from "./artifact-references.js"
+export * from "./file-tree-policy.js"
 export * from "./artifact-review.js"
 export * from "./artifact-diagnostics.js"
 export * from "./artifact-test-results.js"
