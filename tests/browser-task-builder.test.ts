@@ -25,6 +25,15 @@ $task_input = WP_Codebox_Browser_Task_Builder::normalize_task_input( array(
 	),
 ) );
 
+$local_task = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
+	'goal' => 'Build a local browser task.',
+	'sandbox_session_id' => 'session-123',
+	'placement' => array(
+		'required_capabilities' => array( 'artifact.website-bundle' ),
+	),
+	'context' => array( 'caller' => 'test' ),
+) );
+
 $payload = WP_Codebox_Browser_Task_Builder::task_payload(
 	array(
 		'agent' => 'custom-agent',
@@ -40,7 +49,7 @@ $payload = WP_Codebox_Browser_Task_Builder::task_payload(
 	)
 );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'local_task' => $local_task ), JSON_UNESCAPED_SLASHES );
 `], {
   cwd: root.pathname,
   encoding: "utf8",
@@ -59,5 +68,13 @@ assert.equal(result.payload.model, "model-from-inheritance")
 assert.deepEqual(result.payload.secret_env, ["OPENAI_API_KEY"])
 assert.deepEqual(result.payload.task_input.context, { caller: "test" })
 assert.deepEqual(result.payload.agent_bundles, [{ source: "/tmp/agent-bundle.zip", on_conflict: "skip" }])
+assert.equal(result.local_task.mode, "sandbox")
+assert.equal(result.local_task.target.kind, "browser-playground")
+assert.equal(result.local_task.target.ref, "session-123")
+assert.equal(result.local_task.context.execution, "wp-codebox-browser-playground")
+assert.equal(result.local_task.context.caller, "test")
+assert.deepEqual(result.local_task.placement.allowed_targets, ["browser"])
+assert.deepEqual(result.local_task.placement.required_capabilities, ["wordpress.playground", "browser.preview", "artifact.website-bundle"])
+assert.equal(result.local_task.browser_runner.invocation.name, "agents/chat")
 
 console.log("browser task builder ok")

@@ -30,6 +30,7 @@ public static function request_host_delegation( array $input ): array|WP_Error {
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_playground_session( array $input ): array|WP_Error {
+	$input      = WP_Codebox_Browser_Task_Builder::local_browser_task_input( $input );
 	$task_input = self::normalize_task_input( $input );
 	if ( is_wp_error( $task_input ) ) {
 		return $task_input;
