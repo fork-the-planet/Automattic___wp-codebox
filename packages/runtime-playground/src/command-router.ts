@@ -1,5 +1,5 @@
-import { commandArgValue, createHostToolTransportError, createRuntimeCommandResultEnvelope, executeHostTool, parseCommandJson, type HostToolRegistry, type JsonValue, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
-import { getCommandDefinition, type PlaygroundRuntimeCommandId } from "@automattic/wp-codebox-core/contracts"
+import { createHostToolTransportError, createRuntimeCommandResultEnvelope, executeHostTool, parseCommandInput, type HostToolRegistry, type JsonValue, type RuntimeCommandResultEnvelope } from "@automattic/wp-codebox-core"
+import { getCommandDefinition, runtimeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import type { ExecutionSpec } from "@automattic/wp-codebox-core"
 
 export type PlaygroundCommandOutput = string | RuntimeCommandResultEnvelope
@@ -27,31 +27,8 @@ interface PlaygroundCommandRuntime {
   runEditorActions(spec: ExecutionSpec): Promise<string>
 }
 
-const playgroundCommandHandlers = {
-  "inspect-mounted-inputs": (runtime) => runtime.inspectMountedInputs(),
-  "wordpress.run-php": (runtime, spec) => runtime.runPhp(spec),
-  "wordpress.wp-cli": (runtime, spec) => runtime.runWpCli(spec),
-  "wordpress.capture-state-bundle": (runtime, spec) => runtime.runCaptureStateBundle(spec),
-  "wordpress.export-replay-package": (runtime, spec) => runtime.runExportReplayPackage(spec),
-  "wordpress.rest-request": (runtime, spec) => runtime.runRestRequest(spec),
-  "wordpress.ability": (runtime, spec) => runtime.runAbility(spec),
-  "wordpress.bench": (runtime, spec) => runtime.runBench(spec),
-  "wordpress.phpunit": (runtime, spec) => runtime.runPhpunit(spec),
-  "wordpress.plugin-check": (runtime, spec) => runtime.runPluginCheck(spec),
-  "wordpress.core-phpunit": (runtime, spec) => runtime.runCorePhpunit(spec),
-  "wordpress.theme-check": (runtime, spec) => runtime.runThemeCheck(spec),
-  "wordpress.browser-probe": (runtime, spec) => runtime.runBrowserProbe(spec),
-  "wordpress.capture-html": (runtime, spec) => runtime.runHtmlCapture(spec),
-  "wordpress.editor-canvas-probe": (runtime, spec) => runtime.runEditorCanvasProbe(spec),
-  "wordpress.browser-actions": (runtime, spec) => runtime.runBrowserActions(spec),
-  "wordpress.browser-scenario": (runtime, spec) => runtime.runBrowserScenario(spec),
-  "wordpress.visual-compare": (runtime, spec) => runtime.runVisualCompare(spec),
-  "wordpress.editor-open": (runtime, spec) => runtime.runEditorOpen(spec),
-  "wordpress.editor-actions": (runtime, spec) => runtime.runEditorActions(spec),
-} satisfies Record<PlaygroundRuntimeCommandId, (runtime: PlaygroundCommandRuntime, spec: ExecutionSpec) => Promise<PlaygroundCommandOutput>>
-
 export function playgroundRuntimeCommandIds(): string[] {
-  return Object.keys(playgroundCommandHandlers)
+  return runtimeCommandDefinitions().map((definition) => definition.id)
 }
 
 export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime, spec: ExecutionSpec, hostTools?: HostToolRegistry): Promise<PlaygroundCommandOutput> {
@@ -60,7 +37,7 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
     const startedAt = new Date().toISOString()
     let input: JsonValue
     try {
-      input = hostToolInput(spec.args ?? [])
+      input = parseCommandInput(spec.args ?? [])
     } catch (error) {
       const result = createHostToolTransportError(hostTool, spec.command, startedAt, "host-tool-invalid-input-json", error instanceof Error ? error.message : String(error))
       return createRuntimeCommandResultEnvelope({ status: "error", stdout: `${JSON.stringify(result)}\n`, json: result, error: { code: result.error.code, message: result.error.message }, diagnostics: result.diagnostics })
@@ -76,28 +53,16 @@ export async function executePlaygroundCommand(runtime: PlaygroundCommandRuntime
 
   const definition = getCommandDefinition(spec.command)
   if (definition?.handler.kind === "playground") {
-    const handler = playgroundCommandHandlers[definition.id as PlaygroundRuntimeCommandId]
-    if (handler) {
-      return handler(runtime, spec)
+    const method = definition.handler.method
+    if (isPlaygroundCommandRuntimeMethod(runtime, method)) {
+      return runtime[method](spec)
     }
+    throw new Error(`Playground command handler method is unavailable for ${spec.command}: ${method}`)
   }
 
   throw new Error(`No Playground command handler is registered for: ${spec.command}`)
 }
 
-function hostToolInput(args: string[]): JsonValue {
-  const explicit = commandArgValue(args, "input-json")
-  if (explicit !== undefined) {
-    const parsed = parseCommandJson(explicit, "input-json") as JsonValue
-    return parsed
-  }
-
-  const input: Record<string, string> = {}
-  for (const arg of args) {
-    const separator = arg.indexOf("=")
-    if (separator > 0) {
-      input[arg.slice(0, separator)] = arg.slice(separator + 1)
-    }
-  }
-  return input
+function isPlaygroundCommandRuntimeMethod(runtime: PlaygroundCommandRuntime, method: string): method is keyof PlaygroundCommandRuntime {
+  return method in runtime && typeof runtime[method as keyof PlaygroundCommandRuntime] === "function"
 }

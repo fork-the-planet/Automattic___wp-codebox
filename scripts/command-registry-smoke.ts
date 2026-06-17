@@ -1,5 +1,6 @@
 import { commandRegistry, runtimeCommandDefinitions } from "@automattic/wp-codebox-core/contracts"
 import { playgroundRuntimeCommandIds } from "@automattic/wp-codebox-playground"
+import { executePlaygroundCommand } from "../packages/runtime-playground/src/command-router.js"
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -11,7 +12,7 @@ function sorted(values: Iterable<string>): string[] {
   return [...values].sort((left, right) => left.localeCompare(right))
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const registryIds = commandRegistry.map((command) => command.id)
   assert(new Set(registryIds).size === registryIds.length, "Command registry ids must be unique")
 
@@ -43,7 +44,31 @@ function main(): void {
     assert(command.handler.method.length > 0, `${command.id} must name its Playground handler method`)
   }
 
+  for (const command of runtimeCommandDefinitions()) {
+    const calls: string[] = []
+    const runtime = new Proxy({}, {
+      get(_target, property) {
+        if (typeof property !== "string") {
+          return undefined
+        }
+        return async () => {
+          calls.push(property)
+          return ""
+        }
+      },
+      has(_target, property) {
+        return typeof property === "string"
+      },
+    })
+
+    await executePlaygroundCommand(runtime as Parameters<typeof executePlaygroundCommand>[0], { command: command.id, args: [] })
+    assert(calls[0] === command.handler.method, `${command.id} must dispatch through registry handler method ${command.handler.method}`)
+  }
+
   assert(commandRegistry.some((command) => command.outputSchema?.jsonSchema), "Command registry should expose structured output schemas where available")
 }
 
-main()
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : error)
+  process.exitCode = 1
+})

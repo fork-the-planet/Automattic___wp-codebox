@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
-import { validateBrowserInteractionScript, type BrowserInteractionStep } from "@automattic/wp-codebox-core"
+import { resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep } from "@automattic/wp-codebox-core"
 import { argValue } from "./commands.js"
 
 export async function browserInteractionStepsFromArgs(args: string[]): Promise<BrowserInteractionStep[]> {
@@ -21,7 +20,7 @@ async function parseBrowserStepsPayload(raw: string, name: string): Promise<unkn
   let text = raw
   if (raw.startsWith("@")) {
     const path = raw.slice(1)
-    text = await readFile(resolve(path), "utf8")
+    text = await readFile(resolveCommandPath(path), "utf8")
   }
   try {
     return JSON.parse(text)

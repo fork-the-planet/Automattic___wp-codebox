@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
 import { argValue, normalizePhpCode, phpBody } from "./commands.js"
 import { phpEnvAssignments, phpRuntimeComponentLifecycleReplayFunction, phpWpConfigDefineAssignments } from "./php-snippets.js"
-import { normalizeRuntimeEnvRecord, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { normalizeRuntimeEnvRecord, resolveCommandPath, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 
 interface PhpBootstrapBridge {
   url: string
@@ -158,7 +157,7 @@ export async function phpCodeFromArgs(args: string[], command = "wordpress.run-p
 
   const codeFile = argValue(args, "code-file")
   if (codeFile) {
-    return normalizePhpCode(await readFile(resolve(codeFile), "utf8"))
+    return normalizePhpCode(await readFile(resolveCommandPath(codeFile), "utf8"))
   }
 
   throw new Error(`${command} requires code=<php> or code-file=<path>`)

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
-import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
+import { assertRuntimeCommandAllowed, browserInteractionScriptUsesEvaluate, BROWSER_PROBE_BROWSER_VALUES, BROWSER_PROBE_CAPTURE_VALUES, BROWSER_PROBE_CHROMIUM_PROFILE_IDS, BROWSER_PROBE_PROFILES, BROWSER_PROBE_THROTTLE_PROFILE_IDS, resolveCommandPath, validateBrowserInteractionScript, type BrowserInteractionStep, type BrowserProbeProfileDefinition, type ExecutionSpec, type RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import pixelmatch from "pixelmatch"
 import { PNG } from "pngjs"
 import { browserInteractionStepsFromArgs, browserStepTimeoutMs, durationStringMs, sanitizeScreenshotName } from "./browser-actions.js"
@@ -2652,7 +2652,7 @@ async function browserScenarioFromArgs(args: string[]): Promise<BrowserScenarioI
   if (!raw) {
     return {}
   }
-  const text = raw.startsWith("@") ? await readFile(raw.slice(1), "utf8") : raw
+  const text = raw.startsWith("@") ? await readFile(resolveCommandPath(raw.slice(1)), "utf8") : raw
   const parsed = JSON.parse(text) as unknown
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("wordpress.browser-scenario scenario-json must be a JSON object")

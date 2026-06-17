@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { booleanCommandArg, commandArg, commandArgValue, commandJsonArg, commandStringListArg, nonNegativeIntegerCommandArg, parseCommandJsonArray, parseCommandJsonObject, parseCommandOptions, parseCommandStringList, positiveIntegerCommandArg, strictBooleanCommandArg } from "@automattic/wp-codebox-core"
+import { join } from "node:path"
+import { booleanCommandArg, commandArg, commandArgValue, commandJsonArg, commandStringListArg, nonNegativeIntegerCommandArg, parseCommandInput, parseCommandJsonArray, parseCommandJsonObject, parseCommandOptions, parseCommandStringList, positiveIntegerCommandArg, resolveCommandPath, strictBooleanCommandArg } from "@automattic/wp-codebox-core"
 
 assert.equal(commandArg("name", "value=with=equals"), "name=value=with=equals")
 assert.equal(commandArgValue(["name=value=with=equals"], "name"), "value=with=equals")
@@ -22,6 +23,11 @@ assert.deepEqual(parseCommandJsonArray('["x"]', "items-json"), ["x"])
 assert.throws(() => parseCommandJsonObject("[]", "payload-json"), /payload-json must be a JSON object/)
 assert.throws(() => parseCommandJsonArray("{}", "items-json"), /items-json must be a JSON array/)
 assert.throws(() => parseCommandJsonObject("{", "payload-json"), /payload-json must be valid JSON/)
+assert.deepEqual(parseCommandInput(["first=one", "second=two=three"]), { first: "one", second: "two=three" })
+assert.deepEqual(parseCommandInput(["input-json={\"ok\":true}"]), { ok: true })
+assert.throws(() => parseCommandInput(["input-json={"]), /input-json must be valid JSON/)
+assert.equal(resolveCommandPath("child/file.txt", "/tmp/base"), join("/tmp/base", "child/file.txt"))
+assert.throws(() => resolveCommandPath("  "), /Command path must be non-empty/)
 
 const parsed = parseCommandOptions(["--recipe=recipe=a.json", "--json", "--artifacts", "out", "positional"], new Set(["--json"]))
 assert.equal(parsed.options.get("--recipe"), "recipe=a.json")
