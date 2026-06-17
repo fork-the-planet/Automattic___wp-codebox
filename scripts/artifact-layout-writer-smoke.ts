@@ -1,7 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
 
 import {
   ARTIFACT_MANIFEST_PATH,
@@ -15,10 +13,9 @@ import {
   runtimeReplayReferenceIndexArtifactFiles,
   type ArtifactManifest,
 } from "@automattic/wp-codebox-core"
+import { readJson, withTempDir } from "./test-kit.ts"
 
-const directory = await mkdtemp(join(tmpdir(), "wp-codebox-artifact-layout-"))
-
-try {
+await withTempDir("wp-codebox-artifact-layout-", async (directory) => {
   const writer = new ArtifactBundleWriter(directory)
   await writer.writeJson("files/example.json", { ok: true }, { kind: "example" })
 
@@ -41,7 +38,7 @@ try {
 
   await writer.writeManifest(manifest)
 
-  const written = JSON.parse(await readFile(join(directory, ARTIFACT_MANIFEST_PATH), "utf8")) as ArtifactManifest
+  const written = await readJson<ArtifactManifest>(join(directory, ARTIFACT_MANIFEST_PATH))
   assert.deepEqual(written.files.map((file) => file.path), ["files/example.json", ARTIFACT_MANIFEST_PATH])
   assert.notEqual(written.files.find((file) => file.path === ARTIFACT_MANIFEST_PATH)?.sha256.value, "0".repeat(64))
   assert.equal(writer.relativePath(join(directory, "files", "example.json")), "files/example.json")
@@ -57,8 +54,6 @@ try {
 
   assert.deepEqual(runtimeReferenceManifestArtifactFiles(files).map((file) => file.path), ["files/example.json"])
   assert.deepEqual(runtimeReplayReferenceIndexArtifactFiles(files).map((file) => file.path), [METADATA_ARTIFACT_PATH, REVIEW_ARTIFACT_PATH, RUNTIME_REFERENCE_MANIFEST_ARTIFACT_PATH, "files/example.json"])
-} finally {
-  await rm(directory, { recursive: true, force: true })
-}
+})
 
 console.log("Artifact layout writer smoke passed")
