@@ -71,6 +71,7 @@ export const smokeGroups = {
       tsxSmoke("artifact-diagnostics-normalizer-smoke"),
       tsxSmoke("typed-artifacts-smoke"),
       tsxSmoke("artifact-browser-error-collection-smoke"),
+      tsxSmoke("browser-artifact-persistence-idempotency-smoke"),
       tsxSmoke("partial-artifact-discovery-smoke"),
       tsxSmoke("mounted-workspace-diff-smoke"),
       tsxSmoke("replay-export-blueprint-smoke"),
