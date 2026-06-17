@@ -467,6 +467,7 @@ private static function compact_browser_materializer_contract_dto( array $contra
 			'authorization'    => is_array( $contract['authorization'] ?? null ) ? self::compact_browser_dto_value( $contract['authorization'] ) : array(),
 			'task_input'       => is_array( $contract['task_input'] ?? null ) ? self::compact_browser_dto_value( $contract['task_input'] ) : array(),
 			'task_payload'     => is_array( $contract['task_payload'] ?? null ) ? self::compact_browser_dto_value( $contract['task_payload'] ) : array(),
+			'executable'       => self::browser_executable_materializer_contract_dto( $contract ),
 			'materialization'  => is_array( $contract['materialization'] ?? null ) ? self::compact_browser_dto_value( $contract['materialization'] ) : array(),
 			'recipe'           => is_array( $contract['recipe'] ?? null ) ? self::compact_browser_recipe_dto( $contract['recipe'] ) : array(),
 			'playground'       => is_array( $contract['playground'] ?? null ) ? self::compact_browser_playground_dto( $contract['playground'] ) : array(),
@@ -475,6 +476,62 @@ private static function compact_browser_materializer_contract_dto( array $contra
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
+}
+
+/** @param array<string,mixed> $contract Browser materializer contract. @return array<string,mixed> */
+private static function browser_executable_materializer_contract_dto( array $contract ): array {
+	$task_payload = is_array( $contract['task_payload'] ?? null ) ? $contract['task_payload'] : array();
+	$task_input   = is_array( $contract['task_input'] ?? null ) ? $contract['task_input'] : array();
+	$payload_bundles = is_array( $task_payload['agent_bundles'] ?? null ) ? self::normalize_agent_bundles( $task_payload['agent_bundles'] ) : array();
+	$input_bundles   = is_array( $task_input['agent_bundles'] ?? null ) ? self::normalize_agent_bundles( $task_input['agent_bundles'] ) : array();
+	$agent_bundles   = ! empty( $payload_bundles ) ? $payload_bundles : $input_bundles;
+
+	return array_filter(
+		array(
+			'schema'       => 'wp-codebox/browser-materializer-executable-dto/v1',
+			'session_id'   => (string) ( $contract['session_id'] ?? $task_payload['session_id'] ?? '' ),
+			'task_payload' => self::compact_browser_executable_task_payload( $task_payload, $agent_bundles ),
+			'task_input'   => self::compact_browser_executable_task_input( $task_input, $agent_bundles ),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $task_payload Browser task payload. @param array<int,array<string,mixed>> $agent_bundles Executable bundle specs. @return array<string,mixed> */
+private static function compact_browser_executable_task_payload( array $task_payload, array $agent_bundles ): array {
+	$compact = array();
+	foreach ( array( 'schema', 'agent', 'mode', 'provider', 'model', 'message', 'session_id' ) as $field ) {
+		$value = isset( $task_payload[ $field ] ) ? (string) $task_payload[ $field ] : '';
+		if ( '' !== $value ) {
+			$compact[ $field ] = $value;
+		}
+	}
+	if ( ! empty( $agent_bundles ) ) {
+		$compact['agent_bundles'] = $agent_bundles;
+	}
+
+	return $compact;
+}
+
+/** @param array<string,mixed> $task_input Browser task input. @param array<int,array<string,mixed>> $agent_bundles Executable bundle specs. @return array<string,mixed> */
+private static function compact_browser_executable_task_input( array $task_input, array $agent_bundles ): array {
+	$compact = array();
+	foreach ( array( 'schema', 'version', 'goal' ) as $field ) {
+		$value = isset( $task_input[ $field ] ) ? (string) $task_input[ $field ] : '';
+		if ( '' !== $value ) {
+			$compact[ $field ] = $value;
+		}
+	}
+	foreach ( array( 'target', 'allowed_tools', 'expected_artifacts', 'structured_artifacts', 'sandbox_tool_policy', 'policy', 'context' ) as $field ) {
+		if ( is_array( $task_input[ $field ] ?? null ) ) {
+			$compact[ $field ] = self::compact_browser_dto_value( $task_input[ $field ] );
+		}
+	}
+	if ( ! empty( $agent_bundles ) ) {
+		$compact['agent_bundles'] = $agent_bundles;
+	}
+
+	return array_filter( $compact, static fn( mixed $value ): bool => array() !== $value && '' !== $value );
 }
 
 /** @param array<string,mixed> $session Browser session envelope. @return array<string,mixed> */

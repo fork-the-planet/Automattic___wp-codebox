@@ -13,6 +13,7 @@ final class WP_Codebox_Artifacts {
 	private const GET_SCHEMA   = 'wp-codebox/artifact/v1';
 	private const BROWSER_ARTIFACT_GRANT_SCHEMA = 'wp-codebox/browser-artifact-grant/v1';
 	private const BROWSER_ARTIFACT_REF_SCHEMA = 'wp-codebox/browser-artifact-ref/v1';
+	private const BROWSER_PERSISTED_BUNDLE_SCHEMA = 'wp-codebox/browser-persisted-artifact-bundle/v1';
 	private const APPLY_PREFLIGHT_SCHEMA = 'wp-codebox/artifact-apply-preflight/v1';
 	private const APPLY_SCHEMA = 'wp-codebox/artifact-apply/v1';
 	private const APPLY_RESULT_SCHEMA = 'wp-codebox/apply-result/v1';
@@ -230,7 +231,7 @@ final class WP_Codebox_Artifacts {
 			}
 
 			$file_sha256 = hash( 'sha256', $file['bytes'] );
-			$changed_files['files'][] = array(
+			$changed_file = array(
 				'path'         => $file['path'],
 				'artifactPath' => $artifact_path,
 				'status'       => 'created',
@@ -240,6 +241,12 @@ final class WP_Codebox_Artifacts {
 				'sha256'       => array( 'algorithm' => 'sha256', 'value' => $file_sha256 ),
 				'kind'         => $file['kind'],
 			);
+			foreach ( array( 'roles', 'metadata', 'provenance', 'description' ) as $field ) {
+				if ( ! empty( $file[ $field ] ) ) {
+					$changed_file[ $field ] = $file[ $field ];
+				}
+			}
+			$changed_files['files'][] = $changed_file;
 			$manifest_files[] = $this->manifest_file( $artifact_path, 'browser-artifact', $file['mime_type'], $file_sha256 );
 		}
 
@@ -257,7 +264,8 @@ final class WP_Codebox_Artifacts {
 			if ( is_wp_error( $bundle ) ) {
 				return $bundle;
 			}
-			$artifact_ref = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'existing' );
+			$artifact_ref      = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'existing' );
+			$persisted_bundle = $this->browser_persisted_bundle_result( $input, $bundle, $artifact_ref );
 
 			return array(
 				'success'        => true,
@@ -266,9 +274,10 @@ final class WP_Codebox_Artifacts {
 				'artifact_id'    => $bundle_id,
 				'content_digest' => $content_digest,
 				'directory'      => $destination,
-				'artifact_ref'   => $artifact_ref,
-				'grant'          => $artifact_ref['grant'] ?? null,
-				'artifact'       => $bundle,
+				'artifact_ref'     => $artifact_ref,
+				'persisted_bundle' => $persisted_bundle,
+				'grant'            => $artifact_ref['grant'] ?? null,
+				'artifact'         => $bundle,
 			);
 		}
 
@@ -348,7 +357,8 @@ final class WP_Codebox_Artifacts {
 		if ( is_wp_error( $bundle ) ) {
 			return $bundle;
 		}
-		$artifact_ref = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'created' );
+		$artifact_ref      = $this->browser_artifact_ref( $input, $bundle_id, $content_digest, $destination, 'created' );
+		$persisted_bundle = $this->browser_persisted_bundle_result( $input, $bundle, $artifact_ref );
 
 		return array(
 			'success'        => true,
@@ -357,9 +367,10 @@ final class WP_Codebox_Artifacts {
 			'artifact_id'    => $bundle_id,
 			'content_digest' => $content_digest,
 			'directory'      => $destination,
-			'artifact_ref'   => $artifact_ref,
-			'grant'          => $artifact_ref['grant'] ?? null,
-			'artifact'       => $bundle,
+			'artifact_ref'     => $artifact_ref,
+			'persisted_bundle' => $persisted_bundle,
+			'grant'            => $artifact_ref['grant'] ?? null,
+			'artifact'         => $bundle,
 		);
 	}
 
@@ -890,7 +901,7 @@ final class WP_Codebox_Artifacts {
 				$mime_type = $this->browser_bundle_mime_type( $path );
 			}
 
-			$normalized[] = array(
+			$normalized_file = array(
 				'path'      => $path,
 				'bytes'     => $bytes,
 				'encoding'  => $encoding,
@@ -898,6 +909,17 @@ final class WP_Codebox_Artifacts {
 				'kind'      => trim( (string) ( $file['kind'] ?? 'browser-artifact' ) ),
 				'roles'     => array_values( array_filter( array_map( 'strval', is_array( $file['roles'] ?? null ) ? $file['roles'] : array() ), static fn( string $role ): bool => '' !== trim( $role ) ) ),
 			);
+			foreach ( array( 'metadata', 'provenance' ) as $field ) {
+				if ( is_array( $file[ $field ] ?? null ) ) {
+					$normalized_file[ $field ] = $this->stable_assoc_array( $file[ $field ] );
+				}
+			}
+			$description = trim( (string) ( $file['description'] ?? '' ) );
+			if ( '' !== $description ) {
+				$normalized_file['description'] = $description;
+			}
+
+			$normalized[] = $normalized_file;
 		}
 
 		return $normalized;
@@ -1055,6 +1077,54 @@ final class WP_Codebox_Artifacts {
 		);
 
 		return $this->strip_null_values( $ref );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $bundle Persisted artifact bundle. @param array<string,mixed> $artifact_ref Browser artifact reference. @return array<string,mixed> */
+	private function browser_persisted_bundle_result( array $input, array $bundle, array $artifact_ref ): array {
+		$changed_files = is_array( $bundle['changed_files']['files'] ?? null ) ? $bundle['changed_files']['files'] : array();
+		$files         = array();
+		foreach ( $changed_files as $file ) {
+			if ( ! is_array( $file ) ) {
+				continue;
+			}
+
+			$sha256 = is_array( $file['sha256'] ?? null ) ? (string) ( $file['sha256']['value'] ?? '' ) : (string) ( $file['sha256'] ?? '' );
+			$files[] = $this->strip_null_values(
+				array(
+					'path'          => (string) ( $file['path'] ?? '' ),
+					'artifact_path' => (string) ( $file['artifactPath'] ?? $file['artifact_path'] ?? '' ),
+					'status'        => (string) ( $file['status'] ?? '' ),
+					'encoding'      => (string) ( $file['encoding'] ?? '' ),
+					'mime_type'     => (string) ( $file['mimeType'] ?? $file['mime_type'] ?? '' ),
+					'size'          => isset( $file['size'] ) ? (int) $file['size'] : null,
+					'sha256'        => '' === $sha256 ? null : array( 'algorithm' => 'sha256', 'value' => $sha256 ),
+					'kind'          => (string) ( $file['kind'] ?? '' ),
+					'roles'         => is_array( $file['roles'] ?? null ) ? array_values( $file['roles'] ) : null,
+					'metadata'      => is_array( $file['metadata'] ?? null ) ? $file['metadata'] : null,
+					'provenance'    => is_array( $file['provenance'] ?? null ) ? $file['provenance'] : null,
+					'description'   => (string) ( $file['description'] ?? '' ),
+				)
+			);
+		}
+
+		$metadata = is_array( $bundle['metadata'] ?? null ) ? $bundle['metadata'] : array();
+		$caller   = is_array( $metadata['caller'] ?? null ) ? $metadata['caller'] : $this->browser_caller_metadata( $input );
+
+		return $this->strip_null_values(
+			array(
+				'schema'         => self::BROWSER_PERSISTED_BUNDLE_SCHEMA,
+				'artifact_id'    => (string) ( $bundle['id'] ?? $artifact_ref['artifact_id'] ?? '' ),
+				'content_digest' => (string) ( $bundle['content_digest'] ?? $artifact_ref['content_digest'] ?? '' ),
+				'directory'      => (string) ( $bundle['directory'] ?? $artifact_ref['artifacts_path'] ?? '' ),
+				'status'         => (string) ( $artifact_ref['status'] ?? '' ),
+				'artifact_ref'   => $artifact_ref,
+				'root'           => (string) ( $input['root'] ?? '' ),
+				'entrypoint'     => (string) ( $input['entrypoint'] ?? '' ),
+				'files'          => $files,
+				'provenance'     => is_array( $metadata['provenance'] ?? null ) ? $metadata['provenance'] : null,
+				'caller'         => empty( $caller ) ? null : $caller,
+			)
+		);
 	}
 
 	/** @return array<string,mixed> */
