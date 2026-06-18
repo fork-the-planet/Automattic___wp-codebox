@@ -6,6 +6,7 @@ import { buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTask
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode } from "../packages/cli/src/commands/agent-task-run.js"
+import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 
 const succeeded = normalizeAgentTaskRunResult({ success: true, status: "completed" }, { exitStatus: 0 })
@@ -103,6 +104,12 @@ try {
   const providerSource = join(agentRecipeTemp, "test-provider")
   mkdirSync(providerSource)
   writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
+  const bridgeSource = join(agentRecipeTemp, "agent-runtime-tool-bridge")
+  mkdirSync(bridgeSource)
+  writeFileSync(join(bridgeSource, "agent-runtime-tool-bridge.php"), "<?php\n/* Plugin Name: Agent Runtime Tool Bridge */\n")
+  const helperSource = join(agentRecipeTemp, "agent-runtime-helper")
+  mkdirSync(helperSource)
+  writeFileSync(join(helperSource, "agent-runtime-helper.php"), "<?php\n/* Plugin Name: Agent Runtime Helper */\n")
   const artifactsPath = join(agentRecipeTemp, "artifacts")
   mkdirSync(artifactsPath)
 
@@ -111,7 +118,7 @@ try {
     artifacts_path: artifactsPath,
     provider_plugin_paths: [providerSource],
     extra_plugins: [{
-      source: "/workspace/runtime-tools/agent-runtime-tool-bridge",
+      source: bridgeSource,
       slug: "agent-runtime-tool-bridge",
       loadAs: "mu-plugin",
       activate: false,
@@ -119,7 +126,7 @@ try {
       metadata: { source: "agent-task-input" },
     }],
     extraPlugins: [{
-      source: "/workspace/runtime-tools/agent-runtime-helper",
+      source: helperSource,
       slug: "agent-runtime-helper",
       loadAs: "plugin",
       activate: true,
@@ -129,7 +136,7 @@ try {
   const extraPlugins = recipe.inputs?.extra_plugins ?? []
   assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)
   assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-tool-bridge"), {
-    source: "/workspace/runtime-tools/agent-runtime-tool-bridge",
+    source: bridgeSource,
     slug: "agent-runtime-tool-bridge",
     pluginFile: "agent-runtime-tool-bridge/agent-runtime-tool-bridge.php",
     activate: false,
@@ -137,12 +144,21 @@ try {
     metadata: { source: "agent-task-input" },
   })
   assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-helper"), {
-    source: "/workspace/runtime-tools/agent-runtime-helper",
+    source: helperSource,
     slug: "agent-runtime-helper",
     pluginFile: "agent-runtime-helper/agent-runtime-helper.php",
     activate: true,
     loadAs: "plugin",
   })
+
+  const recipePath = join(agentRecipeTemp, "recipe.json")
+  writeFileSync(recipePath, JSON.stringify(recipe, null, 2))
+  const dryRun = await dryRunRecipe({ recipePath, artifactsDirectory: artifactsPath }, {
+    defaultWordPressVersion: "latest",
+    resolveExecutionSpec: async (step) => ({ command: step.command, args: step.args ?? [] }),
+  })
+  assert.equal(dryRun.success, true)
+  assert.deepEqual(dryRun.plan?.runtime.blueprint, { steps: [] })
 } finally {
   rmSync(agentRecipeTemp, { recursive: true, force: true })
 }
