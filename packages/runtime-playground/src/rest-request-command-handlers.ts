@@ -39,7 +39,13 @@ if ( ! class_exists( 'WP_REST_Request' ) || ! function_exists( 'rest_do_request'
     throw new RuntimeException( 'The WordPress REST API is not available in this runtime.' );
 }
 
-$wp_codebox_route = '/' . ltrim( preg_replace( '#^/wp-json#', '', $wp_codebox_path ), '/' );
+$wp_codebox_path_parts = parse_url( $wp_codebox_path );
+if ( ! is_array( $wp_codebox_path_parts ) ) {
+    throw new RuntimeException( 'wordpress.rest-request received an invalid REST path.' );
+}
+
+$wp_codebox_route_path = (string) ( $wp_codebox_path_parts['path'] ?? $wp_codebox_path );
+$wp_codebox_route = '/' . ltrim( preg_replace( '#^/wp-json#', '', $wp_codebox_route_path ), '/' );
 $wp_codebox_request = new WP_REST_Request( $wp_codebox_method, $wp_codebox_route );
 
 foreach ( $wp_codebox_headers as $wp_codebox_name => $wp_codebox_value ) {
@@ -48,6 +54,15 @@ foreach ( $wp_codebox_headers as $wp_codebox_name => $wp_codebox_value ) {
 
 foreach ( $wp_codebox_params as $wp_codebox_name => $wp_codebox_value ) {
     $wp_codebox_request->set_param( $wp_codebox_name, $wp_codebox_value );
+}
+
+if ( isset( $wp_codebox_path_parts['query'] ) ) {
+    parse_str( (string) $wp_codebox_path_parts['query'], $wp_codebox_query_params );
+    foreach ( $wp_codebox_query_params as $wp_codebox_name => $wp_codebox_value ) {
+        if ( ! $wp_codebox_request->has_param( $wp_codebox_name ) ) {
+            $wp_codebox_request->set_param( $wp_codebox_name, $wp_codebox_value );
+        }
+    }
 }
 
 if ( $wp_codebox_body !== '' ) {

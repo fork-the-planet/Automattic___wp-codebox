@@ -577,7 +577,12 @@ final class WP_Codebox_Browser_Task_Builder {
 			return '';
 		}
 
-		return '/wp-codebox/v1/browser-blueprint-ref?ref=' . rawurlencode( $ref );
+		$endpoint = '/wp-codebox/v1/browser-blueprint-ref?ref=' . rawurlencode( $ref );
+		if ( function_exists( 'wp_create_nonce' ) ) {
+			$endpoint .= '&_wpnonce=' . rawurlencode( wp_create_nonce( 'wp_rest' ) );
+		}
+
+		return $endpoint;
 	}
 
 	/** @param array<mixed> $value Values to normalize. @return array<string,string> */
