@@ -100,7 +100,12 @@ assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
 assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
 
 const agentRecipeTemp = mkdtempSync(join(tmpdir(), "wp-codebox-agent-recipe-test-"))
+const originalAgentsApiPath = process.env.WP_CODEBOX_AGENTS_API_PATH
 try {
+  const agentsApiSource = join(agentRecipeTemp, "agents-api")
+  mkdirSync(agentsApiSource)
+  writeFileSync(join(agentsApiSource, "agents-api.php"), "<?php\n/* Plugin Name: Agents API */\n")
+  process.env.WP_CODEBOX_AGENTS_API_PATH = agentsApiSource
   const providerSource = join(agentRecipeTemp, "test-provider")
   mkdirSync(providerSource)
   writeFileSync(join(providerSource, "test-provider.php"), "<?php\n/* Plugin Name: Test Provider */\n")
@@ -139,6 +144,15 @@ try {
     }],
   }, normalizeTaskInput({ goal: "Verify extra plugin propagation" }), "latest")
   const extraPlugins = recipe.inputs?.extra_plugins ?? []
+  assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agents-api"), {
+    source: agentsApiSource,
+    slug: "agents-api",
+    pluginFile: "agents-api/agents-api.php",
+    activate: false,
+    loadAs: "mu-plugin",
+    metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
+  })
+  assert.equal(recipe.inputs?.component_manifest?.components.some((component) => component.slug === "agents-api" && component.loadAs === "mu-plugin"), true)
   assert.equal(extraPlugins.some((plugin) => plugin.slug === "test-provider" && plugin.activate === true && plugin.loadAs === "plugin"), true)
   assert.equal(extraPlugins.filter((plugin) => plugin.slug === "test-provider" && plugin.loadAs === "plugin").length, 1)
   assert.deepEqual(extraPlugins.find((plugin) => plugin.slug === "agent-runtime-tool-bridge"), {
@@ -166,6 +180,11 @@ try {
   assert.equal(dryRun.success, true)
   assert.deepEqual(dryRun.plan?.runtime.blueprint, { steps: [] })
 } finally {
+  if (originalAgentsApiPath === undefined) {
+    delete process.env.WP_CODEBOX_AGENTS_API_PATH
+  } else {
+    process.env.WP_CODEBOX_AGENTS_API_PATH = originalAgentsApiPath
+  }
   rmSync(agentRecipeTemp, { recursive: true, force: true })
 }
 

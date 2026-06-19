@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
@@ -94,12 +94,14 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
   const providerContracts = providerPlugins.map((plugin) => ({ slug: plugin.slug, pluginFile: plugin.pluginFile, loadAs: plugin.loadAs ?? "plugin" }))
   const componentPluginEntries = componentPlugins(input.component_contracts, artifacts)
   const callerExtraPlugins = agentTaskExtraPlugins(input)
+  const defaultRuntimeComponents = defaultAgentRuntimeComponentPlugins(componentPluginEntries, callerExtraPlugins)
   const extraPlugins = dedupeExtraPlugins([
+    ...defaultRuntimeComponents,
     ...componentPluginEntries,
     ...providerPlugins,
     ...callerExtraPlugins,
   ].filter(Boolean))
-  const componentManifest = componentManifestForRuntimePlugins(componentPluginEntries, providerPlugins)
+  const componentManifest = componentManifestForRuntimePlugins([...defaultRuntimeComponents, ...componentPluginEntries], providerPlugins)
   const workflowArgs = [
     `task=${taskInput.goal}`,
     `agent=${stringValue(input.agent) || "wp-codebox-sandbox"}`,
@@ -155,6 +157,54 @@ export function buildAgentTaskRecipe(input: AgentTaskRunInput, taskInput: TaskIn
       after: Array.isArray(input.verify_steps) && input.verify_steps.length > 0 ? input.verify_steps : undefined,
     }),
   }) as WorkspaceRecipe
+}
+
+function defaultAgentRuntimeComponentPlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], callerExtraPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeExtraPlugin[] {
+  if ([...componentPlugins, ...callerExtraPlugins].some((plugin) => plugin.slug === "agents-api")) {
+    return []
+  }
+
+  const agentsApiPath = defaultAgentsApiPath()
+  if (!agentsApiPath) {
+    return []
+  }
+
+  return [{
+    source: agentsApiPath,
+    slug: "agents-api",
+    pluginFile: "agents-api/agents-api.php",
+    activate: false,
+    loadAs: "mu-plugin",
+    metadata: { source: "wp-codebox-default-agent-runtime-substrate" },
+  }]
+}
+
+function defaultAgentsApiPath(): string {
+  const explicit = [process.env.WP_CODEBOX_AGENTS_API_PATH, process.env.AGENTS_API_PATH]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => resolve(value))
+    .find(isAgentsApiPluginRoot)
+
+  if (explicit) {
+    return explicit
+  }
+
+  const candidates: string[] = []
+  let current = resolve(process.cwd())
+  for (let depth = 0; depth < 6; depth++) {
+    candidates.push(join(current, "agents-api"), join(dirname(current), "agents-api"))
+    const parent = dirname(current)
+    if (parent === current) {
+      break
+    }
+    current = parent
+  }
+
+  return candidates.find(isAgentsApiPluginRoot) ?? ""
+}
+
+function isAgentsApiPluginRoot(candidate: string): boolean {
+  return existsSync(join(candidate, "agents-api.php"))
 }
 
 export function componentManifestForRuntimePlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], providerPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeComponentManifest {
