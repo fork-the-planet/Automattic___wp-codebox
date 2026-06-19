@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import {
+  artifactBundleFileManifest,
   browserArtifactGrant,
   browserArtifactPersistenceProjection,
   browserArtifactRef,
@@ -10,7 +11,9 @@ import {
   materializationResultEnvelope,
   materializationPhaseResult,
   materializationRunArtifactRefs,
+  normalizeMaterializationArtifactRefs,
   normalizeMaterializationResultEnvelope,
+  persistedBrowserArtifactRefs,
   trustedBrowserSessionOrigin,
   trustedBrowserSessionOrigins,
   verifyBrowserCallbackSignature,
@@ -215,6 +218,33 @@ assert.deepEqual(projection.artifactRefs, [
     id: "materialization-1",
   },
 ])
+assert.deepEqual(persistedBrowserArtifactRefs(projection), projection.artifactRefs)
+assert.deepEqual(browserArtifactPersistenceProjection(projection).artifactRefs, projection.artifactRefs)
+assert.deepEqual(normalizeMaterializationArtifactRefs([
+  { kind: "browser-html", path: "files/browser/index.html", sha256: "def" },
+  { role: "browser-html", path: "files/browser/index.html", content_digest: "def" },
+  { artifact_type: "browser-screenshot", artifact_id: "screenshot-1", artifacts_path: "files/browser/screenshot.png", contentDigest: { algorithm: "sha256", value: "123" } },
+]), [
+  { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
+  { kind: "browser-screenshot", id: "screenshot-1", path: "files/browser/screenshot.png", digest: { algorithm: "sha256", value: "123" } },
+])
+assert.deepEqual(artifactBundleFileManifest(projection), {
+  schema: "wp-codebox/artifact-bundle-file-manifest/v1",
+  bundle: {
+    kind: "artifact-bundle",
+    id: "artifact-bundle-sha256-abc",
+    path: "artifacts/run-1",
+    digest: { algorithm: "sha256", value: "abc" },
+  },
+  files: [
+    {
+      kind: "browser-html",
+      path: "files/browser/index.html",
+      digest: { algorithm: "sha256", value: "def" },
+    },
+  ],
+  paths: ["files/browser/index.html"],
+})
 const callbackEnvelope = browserCallbackResultEnvelope({
   capability: "persist-browser-artifact",
   ability: "wp-codebox/persist-browser-artifact",

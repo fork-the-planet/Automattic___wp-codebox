@@ -1,6 +1,8 @@
 import type { RuntimeRunArtifactRef } from "./run-registry.js"
 
 export const MATERIALIZATION_RESULT_SCHEMA = "wp-codebox/materialization-result/v1" as const
+export const BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = "wp-codebox/browser-artifact-persistence-projection/v1" as const
+export const ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA = "wp-codebox/artifact-bundle-file-manifest/v1" as const
 
 export interface MaterializationArtifactRef {
   kind: string
@@ -91,12 +93,19 @@ export interface BrowserArtifactProjectionInput {
 }
 
 export interface BrowserArtifactPersistenceProjection {
-  schema: "wp-codebox/browser-artifact-persistence-projection/v1"
+  schema: typeof BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA
   artifact?: Record<string, unknown>
   artifacts: Record<string, unknown>[]
   artifactBundle?: Record<string, unknown>
   materialization?: Record<string, unknown>
   artifactRefs: MaterializationArtifactRef[]
+}
+
+export interface ArtifactBundleFileManifest {
+  schema: typeof ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA
+  bundle?: MaterializationArtifactRef
+  files: MaterializationArtifactRef[]
+  paths: string[]
 }
 
 export function materializationPhaseResult(input: Omit<MaterializationPhaseResult, "schema" | "artifactRefs"> & { artifactRefs?: MaterializationArtifactRef[] }): MaterializationPhaseResult {
@@ -124,7 +133,7 @@ export function materializationResultEnvelope(input: {
 }): MaterializationResultEnvelope {
   const phases = input.phases ?? []
   const status = input.status ?? (input.error || phases.some((phase) => phase.status === "failed") ? "failed" : "completed")
-  const artifactRefs = [...(input.artifactRefs ?? []), ...phases.flatMap((phase) => phase.artifactRefs)]
+  const artifactRefs = normalizeMaterializationArtifactRefs([...(input.artifactRefs ?? []), ...phases.flatMap((phase) => phase.artifactRefs)])
   const diagnostics = input.diagnostics ?? phases.flatMap(phaseDiagnostics)
   const base = stripUndefined({
     schema: MATERIALIZATION_RESULT_SCHEMA,
@@ -233,12 +242,71 @@ export function browserArtifactPersistenceProjection(input: BrowserArtifactProje
   const artifactRefs = browserArtifactProjectionRefs({ artifactBundle, artifacts, materialization })
 
   return stripUndefined({
-    schema: "wp-codebox/browser-artifact-persistence-projection/v1" as const,
+    schema: BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA,
     artifact,
     artifacts,
     artifactBundle,
     materialization,
-    artifactRefs,
+    artifactRefs: normalizeMaterializationArtifactRefs(artifactRefs),
+  })
+}
+
+export function normalizeMaterializationArtifactRef(input: unknown, defaults: Partial<MaterializationArtifactRef> = {}): MaterializationArtifactRef | undefined {
+  const source = asRecord(input)
+  if (!source) {
+    return undefined
+  }
+
+  const kind = stringValue(source.kind ?? source.artifact_type ?? source.role) || defaults.kind
+  const id = stringValue(source.id ?? source.artifact_id ?? source.artifactId) || defaults.id
+  const path = stringValue(source.path ?? source.artifacts_path ?? source.artifactsPath ?? source.directory) || defaults.path
+  const digest = normalizeDigest(source.digest ?? source.sha256 ?? source.contentDigest ?? source.content_digest) ?? defaults.digest
+
+  if (!id && !path && !digest && !stringValue(source.kind ?? source.artifact_type ?? source.role)) {
+    return undefined
+  }
+
+  return stripUndefined({
+    kind: kind ?? "artifact",
+    id,
+    path,
+    digest,
+  })
+}
+
+export function normalizeMaterializationArtifactRefs(inputs: unknown[] | undefined): MaterializationArtifactRef[] {
+  const refs: MaterializationArtifactRef[] = []
+  const seen = new Set<string>()
+  for (const input of inputs ?? []) {
+    const ref = normalizeMaterializationArtifactRef(input)
+    if (!ref) {
+      continue
+    }
+    const key = `${ref.kind}\u0000${ref.id ?? ""}\u0000${ref.path ?? ""}\u0000${ref.digest?.algorithm ?? ""}\u0000${ref.digest?.value ?? ""}`
+    if (!seen.has(key)) {
+      refs.push(ref)
+      seen.add(key)
+    }
+  }
+  return refs
+}
+
+export function persistedBrowserArtifactRefs(input: BrowserArtifactProjectionInput | MaterializationResultEnvelope | unknown): MaterializationArtifactRef[] {
+  return browserArtifactPersistenceProjection(input).artifactRefs
+}
+
+export function artifactBundleFileManifest(input: BrowserArtifactProjectionInput | MaterializationResultEnvelope | BrowserArtifactPersistenceProjection | unknown): ArtifactBundleFileManifest {
+  const projection = isRecord(input) && input.schema === BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA
+    ? input as unknown as BrowserArtifactPersistenceProjection
+    : browserArtifactPersistenceProjection(input)
+  const refs = normalizeMaterializationArtifactRefs(projection.artifactRefs)
+  const bundle = refs.find((ref) => ref.kind === "artifact-bundle")
+  const files = refs.filter((ref) => ref.path && ref.kind !== "artifact-bundle" && ref.kind !== "materialization")
+  return stripUndefined({
+    schema: ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
+    bundle,
+    files,
+    paths: files.map((file) => file.path as string),
   })
 }
 
@@ -272,29 +340,16 @@ function materializationProjectionSource(input: unknown): Record<string, unknown
 
 function browserArtifactProjectionRefs(input: { artifactBundle?: Record<string, unknown>; artifacts: Record<string, unknown>[]; materialization?: Record<string, unknown> }): MaterializationArtifactRef[] {
   const refs: MaterializationArtifactRef[] = []
-  const bundleId = stringValue(input.artifactBundle?.id ?? input.artifactBundle?.artifact_id)
-  const bundleDigest = normalizeDigest(input.artifactBundle?.contentDigest ?? input.artifactBundle?.content_digest ?? input.artifactBundle?.digest ?? input.artifactBundle?.sha256)
-  if (bundleId || bundleDigest || stringValue(input.artifactBundle?.path)) {
-    refs.push(stripUndefined({
-      kind: "artifact-bundle",
-      id: bundleId || undefined,
-      path: stringValue(input.artifactBundle?.path) || stringValue(input.artifactBundle?.directory) || undefined,
-      digest: bundleDigest,
-    }))
+  const bundle = normalizeMaterializationArtifactRef(input.artifactBundle, { kind: "artifact-bundle" })
+  if (bundle) {
+    refs.push(bundle)
   }
 
   for (const artifact of input.artifacts) {
-    const path = stringValue(artifact.path)
-    const id = stringValue(artifact.id ?? artifact.artifact_id)
-    if (!path && !id) {
-      continue
+    const ref = normalizeMaterializationArtifactRef(artifact, { kind: "browser-artifact" })
+    if (ref?.path || ref?.id) {
+      refs.push(ref)
     }
-    refs.push(stripUndefined({
-      kind: stringValue(artifact.kind ?? artifact.artifact_type ?? artifact.role) || "browser-artifact",
-      id: id || undefined,
-      path: path || undefined,
-      digest: normalizeDigest(artifact.digest ?? artifact.sha256 ?? artifact.contentDigest ?? artifact.content_digest),
-    }))
   }
 
   const materializationId = stringValue(input.materialization?.id ?? input.materialization?.artifact_id)
