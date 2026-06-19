@@ -75,8 +75,9 @@ public static function create_browser_playground_session( array $input ): array|
 	$blueprint      = self::browser_blueprint_with_runtime( $base_blueprint, $runtime, $playground );
 	$prepared_runtime = self::browser_prepared_runtime_with_blueprints( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array(), $blueprint, $playground );
 	$runtime['prepared_runtime'] = $prepared_runtime;
-	$blueprint = self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $blueprint );
-	$artifacts      = self::browser_artifact_files( $input );
+	$blueprint       = self::browser_selected_prepared_runtime_blueprint( $prepared_runtime, $blueprint );
+	$contained_site  = self::browser_contained_site_envelope( $input, $session_id, $playground, $runtime, $prepared_runtime, 'ready' );
+	$artifacts       = self::browser_artifact_files( $input );
 	if ( is_wp_error( $artifacts ) ) {
 		return $artifacts;
 	}
@@ -108,6 +109,7 @@ public static function create_browser_playground_session( array $input ): array|
 		'inheritance' => $inheritance_payload['inheritance'],
 		'plugins'    => $browser_plugins,
 		'runtime'    => $runtime,
+		'contained_site' => $contained_site,
 		'site_blueprint_artifact' => $site_blueprint_artifact,
 		'materialization' => $materialization,
 		'playground' => array(
@@ -120,6 +122,7 @@ public static function create_browser_playground_session( array $input ): array|
 			'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
 			'blueprint'          => self::browser_playground_blueprint( $blueprint, $playground ),
 			'prepared_runtime'   => $prepared_runtime,
+			'contained_site'     => $contained_site,
 			'capabilities'       => array(
 				'compile_blueprint' => true,
 				'run_blueprint'     => true,
@@ -139,6 +142,30 @@ public static function create_browser_playground_session( array $input ): array|
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function get_browser_contained_site_status( array $input ): array|WP_Error {
+	$contained_site = is_array( $input['contained_site'] ?? null ) ? $input['contained_site'] : array();
+	$recovery       = is_array( $contained_site['recovery']['input'] ?? null ) ? $contained_site['recovery']['input'] : array();
+	$prepared       = is_array( $contained_site['prepared_runtime'] ?? null ) ? $contained_site['prepared_runtime'] : array();
+	$source_digest  = is_array( $input['source_digest'] ?? null ) ? (string) ( $input['source_digest']['value'] ?? '' ) : (string) ( $input['source_digest'] ?? '' );
+	if ( '' === $source_digest && is_array( $contained_site['source_digest'] ?? null ) ) {
+		$source_digest = (string) ( $contained_site['source_digest']['value'] ?? '' );
+	}
+
+	$cache_key  = self::safe_key( (string) ( $input['cache_key'] ?? $recovery['cache_key'] ?? $prepared['cache_key'] ?? $input['site_id'] ?? $contained_site['site_id'] ?? '' ) );
+	$input_hash = strtolower( trim( (string) ( $input['input_hash'] ?? $recovery['input_hash'] ?? $prepared['input_hash'] ?? $source_digest ) ) );
+	if ( '' === $cache_key || ! preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
+		return new WP_Error( 'wp_codebox_browser_contained_site_ref_invalid', 'Browser contained site status requires cache_key/site_id and a 64-character source digest.', array( 'status' => 400 ) );
+	}
+
+	$prepared_ref = array(
+		'cache_key'  => $cache_key,
+		'input_hash' => $input_hash,
+	);
+	$lookup = self::browser_prepared_runtime_cache_lookup( $prepared_ref );
+	return self::browser_contained_site_status_envelope( $cache_key, $input_hash, $lookup );
 }
 
 /** @param array<string,mixed> $input Blueprint ref input. @return array<string,mixed>|WP_Error */
@@ -165,6 +192,7 @@ public static function create_browser_materializer_contract( array $input ): arr
 				'status'           => (string) ( $session['status'] ?? 'blocked' ),
 				'error'            => is_array( $session['error'] ?? null ) ? $session['error'] : array(),
 				'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
+				'contained_site'   => is_array( $session['contained_site'] ?? null ) ? $session['contained_site'] : array(),
 				'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
 				'signals'          => is_array( $session['signals'] ?? null ) ? $session['signals'] : array(),
 			),
@@ -184,6 +212,7 @@ public static function create_browser_materializer_contract( array $input ): arr
 		'execution_scope'  => 'disposable-playground',
 		'permission_model' => 'runtime-principal',
 		'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
+		'contained_site'   => is_array( $session['contained_site'] ?? null ) ? $session['contained_site'] : array(),
 		'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
 		'task_input'       => is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array(),
 		'task_payload'     => is_array( $session['task_payload'] ?? null ) ? $session['task_payload'] : array(),
@@ -231,6 +260,7 @@ private static function prepare_browser_task_contract( array $input ): array|WP_
 				'status'           => (string) ( $primary['status'] ?? 'blocked' ),
 				'error'            => is_array( $primary['error'] ?? null ) ? $primary['error'] : array(),
 				'session'          => $session_envelope,
+				'contained_site'   => is_array( $primary['contained_site'] ?? null ) ? $primary['contained_site'] : array(),
 				'primary'          => $primary,
 				'phases'           => array(),
 				'execution_metrics' => self::browser_contract_execution_metrics( $primary, array() ),
@@ -254,6 +284,7 @@ private static function prepare_browser_task_contract( array $input ): array|WP_
 		'execution_scope'  => 'disposable-playground',
 		'permission_model' => 'runtime-principal',
 		'session'          => $session_envelope,
+		'contained_site'   => is_array( $primary['contained_site'] ?? null ) ? $primary['contained_site'] : array(),
 		'primary'          => $primary,
 		'phases'           => $phases,
 		'execution_metrics' => self::browser_contract_execution_metrics( $primary, $phases ),
@@ -560,6 +591,7 @@ private static function compact_browser_playground_dto( array $playground ): arr
 			'artifact_base_path' => (string) ( $playground['artifact_base_path'] ?? '' ),
 			'artifact_base_url'  => (string) ( $playground['artifact_base_url'] ?? '' ),
 			'preview_url'        => (string) ( $playground['preview_url'] ?? '' ),
+			'contained_site'     => is_array( $playground['contained_site'] ?? null ) ? self::compact_browser_dto_value( $playground['contained_site'] ) : array(),
 			'capabilities'       => is_array( $playground['capabilities'] ?? null ) ? self::compact_browser_dto_value( $playground['capabilities'] ) : array(),
 			'provenance'         => is_array( $playground['provenance'] ?? null ) ? self::compact_browser_dto_value( $playground['provenance'] ) : array(),
 		),
@@ -829,6 +861,9 @@ private static function host_delegation_result( bool $success, string $status, a
  * @return array<string,mixed>
  */
 private static function blocked_browser_playground_session( string $session_id, array $input, array $task_input, array $ready_to_code, array $browser_plugins, array $runtime, array $artifacts, array $playground, array $blueprint, array $site_blueprint_artifact ): array {
+	$prepared_runtime = is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array();
+	$contained_site   = self::browser_contained_site_envelope( $input, $session_id, $playground, $runtime, $prepared_runtime, 'blocked' );
+
 	return array(
 		'success'          => false,
 		'schema'           => 'wp-codebox/browser-playground-session/v1',
@@ -847,6 +882,7 @@ private static function blocked_browser_playground_session( string $session_id, 
 		'agent'      => (string) ( $input['agent'] ?? 'wp-codebox-sandbox' ),
 		'plugins'    => $browser_plugins,
 		'runtime'    => $runtime,
+		'contained_site' => $contained_site,
 		'site_blueprint_artifact' => $site_blueprint_artifact,
 		'materialization' => array(
 			'schema' => 'wp-codebox/browser-materialization/v1',
@@ -862,6 +898,8 @@ private static function blocked_browser_playground_session( string $session_id, 
 			'artifact_base_url'  => self::browser_artifact_base_url( $playground ),
 			'preview_url'        => self::browser_preview_url( $artifacts, $playground ),
 			'blueprint'          => self::browser_playground_blueprint( $blueprint, $playground ),
+			'prepared_runtime'   => $prepared_runtime,
+			'contained_site'     => $contained_site,
 			'capabilities'       => array(
 				'compile_blueprint' => true,
 				'run_blueprint'     => true,
@@ -880,6 +918,117 @@ private static function blocked_browser_playground_session( string $session_id, 
 			'expected_artifacts' => $task_input['expected_artifacts'],
 		),
 	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_envelope( array $input, string $session_id, array $playground, array $runtime, array $prepared_runtime, string $status ): array {
+	$source_digest = self::browser_contained_site_source_digest( $input, $playground, $runtime, $prepared_runtime );
+	$caller_id     = self::browser_contained_site_caller_id( $input );
+	$cache_key     = self::safe_key( (string) ( $prepared_runtime['cache_key'] ?? '' ) );
+	if ( '' === $cache_key ) {
+		$cache_key = 'site-' . substr( hash( 'sha256', $caller_id . ':' . $source_digest ), 0, 16 );
+	}
+	$site_id    = $cache_key;
+	$preview_id = 'preview-' . substr( hash( 'sha256', $site_id . ':' . $session_id ), 0, 16 );
+
+	return array_filter(
+		array(
+			'schema'        => 'wp-codebox/browser-contained-site/v1',
+			'site_id'       => $site_id,
+			'preview_id'    => $preview_id,
+			'session_id'    => $session_id,
+			'caller_id'     => $caller_id,
+			'status'        => $status,
+			'persistence'   => 'browser-contained',
+			'recovery'      => array(
+				'ability' => 'wp-codebox/get-browser-contained-site-status',
+				'input'   => array(
+					'cache_key'     => $cache_key,
+					'input_hash'    => $source_digest,
+					'source_digest' => $source_digest,
+				),
+			),
+			'source_digest' => array(
+				'algorithm' => 'sha256',
+				'value'     => $source_digest,
+			),
+			'preview'       => array_filter(
+				array(
+					'preview_public_url' => (string) ( $playground['preview_public_url'] ?? '' ),
+					'local_url'          => self::browser_preview_url( array(), $playground ),
+					'scope'              => (string) ( $playground['scope'] ?? $session_id ),
+				),
+				static fn( string $value ): bool => '' !== $value
+			),
+			'prepared_runtime' => array_filter(
+				array(
+					'cache_key'  => $cache_key,
+					'input_hash' => $source_digest,
+					'status'     => (string) ( $prepared_runtime['status'] ?? '' ),
+					'selected'   => (string) ( $prepared_runtime['selected'] ?? '' ),
+				),
+				static fn( string $value ): bool => '' !== $value
+			),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_status_envelope( string $cache_key, string $input_hash, array $lookup ): array {
+	$artifact = is_array( $lookup['artifact'] ?? null ) ? $lookup['artifact'] : array();
+	$status   = 'hit' === (string) ( $lookup['status'] ?? '' ) ? 'recoverable' : (string) ( $lookup['status'] ?? 'miss' );
+
+	return array_filter(
+		array(
+			'success'       => 'recoverable' === $status,
+			'schema'        => 'wp-codebox/browser-contained-site-status/v1',
+			'site_id'       => $cache_key,
+			'status'        => $status,
+			'source_digest' => array(
+				'algorithm' => 'sha256',
+				'value'     => $input_hash,
+			),
+			'prepared_runtime' => array_filter(
+				array(
+					'cache_key'  => $cache_key,
+					'input_hash' => $input_hash,
+					'status'     => (string) ( $lookup['status'] ?? '' ),
+					'created_at' => (string) ( $artifact['created_at'] ?? '' ),
+				),
+				static fn( string $value ): bool => '' !== $value
+			),
+			'blueprint_ref' => 'recoverable' === $status ? WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'recoverable' ) ) : array(),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+private static function browser_contained_site_source_digest( array $input, array $playground, array $runtime, array $prepared_runtime ): string {
+	$input_hash = strtolower( trim( (string) ( $prepared_runtime['input_hash'] ?? '' ) ) );
+	if ( preg_match( '/^[a-f0-9]{64}$/', $input_hash ) ) {
+		return $input_hash;
+	}
+
+	$hash_input = array(
+		'runtime'    => is_array( $runtime['prepared_runtime'] ?? null ) ? array_diff_key( $runtime, array( 'prepared_runtime' => true ) ) : $runtime,
+		'blueprint'  => is_array( $input['blueprint'] ?? null ) ? $input['blueprint'] : array(),
+		'site_blueprint_artifact' => is_array( $input['site_blueprint_artifact'] ?? null ) ? $input['site_blueprint_artifact'] : array(),
+		'playground' => array(
+			'wp'  => (string) ( $playground['wp'] ?? $input['playground']['wp'] ?? 'latest' ),
+			'php' => (string) ( $playground['php'] ?? $input['playground']['php'] ?? 'latest' ),
+		),
+	);
+
+	return hash( 'sha256', 'wp-codebox/browser-contained-site-source/v1' . "\n" . self::stable_json( $hash_input ) );
+}
+
+private static function browser_contained_site_caller_id( array $input ): string {
+	$authorization = is_array( $input['authorization'] ?? null ) ? $input['authorization'] : array();
+	$orchestrator  = is_array( $input['orchestrator'] ?? null ) ? $input['orchestrator'] : array();
+	$caller_id     = self::safe_key( (string) ( $authorization['caller'] ?? $orchestrator['id'] ?? $orchestrator['type'] ?? '' ) );
+
+	return '' !== $caller_id ? $caller_id : 'wp-codebox';
 }
 
 /** @return array<string,mixed> */

@@ -304,6 +304,7 @@ private static function browser_playground_session_schema(): array {
 				'description' => 'The generated browser runner authorizes Agents API calls through a scoped runtime principal inside the disposable Playground sandbox.',
 			),
 			'session'    => array( 'type' => 'object' ),
+			'contained_site' => self::browser_contained_site_schema(),
 			'task_input' => self::task_input_schema(),
 			'task_payload' => array( 'type' => 'object' ),
 			'playground' => array( 'type' => 'object' ),
@@ -340,6 +341,7 @@ private static function browser_materializer_contract_schema(): array {
 				'enum' => array( 'runtime-principal' ),
 			),
 			'session_id'       => array( 'type' => 'string' ),
+			'contained_site'   => self::browser_contained_site_schema(),
 			'authorization'    => array( 'type' => 'object' ),
 			'task_input'       => self::task_input_schema(),
 			'task_payload'     => array( 'type' => 'object' ),
@@ -373,6 +375,7 @@ private static function browser_task_contract_schema(): array {
 				'enum' => array( 'runtime-principal' ),
 			),
 			'session'          => array( 'type' => 'object' ),
+			'contained_site'   => self::browser_contained_site_schema(),
 			'primary'          => self::browser_playground_session_schema(),
 			'phases'           => array(
 				'type'        => 'array',
@@ -418,6 +421,7 @@ private static function browser_product_dto_schema(): array {
 			'execution_scope'  => array( 'type' => 'string' ),
 			'permission_model' => array( 'type' => 'string' ),
 			'session'          => array( 'type' => 'object' ),
+			'contained_site'   => self::browser_contained_site_schema(),
 			'primary'          => array( 'type' => 'object' ),
 			'phases'           => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'task_input'       => array( 'type' => 'object' ),
@@ -427,6 +431,27 @@ private static function browser_product_dto_schema(): array {
 			'recipe'           => array( 'type' => 'object' ),
 			'artifacts'        => array( 'type' => 'object' ),
 			'execution_metrics' => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Durable browser-contained WordPress site handle. The parent product stores this envelope and can call the status ability to recover a prepared runtime blueprint when the transient still exists.',
+		'properties'  => array(
+			'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/browser-contained-site/v1' ),
+			'site_id'       => array( 'type' => 'string' ),
+			'preview_id'    => array( 'type' => 'string' ),
+			'session_id'    => array( 'type' => 'string' ),
+			'caller_id'     => array( 'type' => 'string' ),
+			'status'        => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'recoverable', 'miss', 'disabled' ) ),
+			'persistence'   => array( 'type' => 'string', 'enum' => array( 'browser-contained' ) ),
+			'recovery'      => array( 'type' => 'object' ),
+			'source_digest' => array( 'type' => 'object' ),
+			'preview'       => array( 'type' => 'object' ),
+			'prepared_runtime' => array( 'type' => 'object' ),
 		),
 	);
 }

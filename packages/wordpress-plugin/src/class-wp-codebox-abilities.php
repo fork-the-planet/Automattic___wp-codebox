@@ -531,6 +531,7 @@ final class WP_Codebox_Abilities {
 					'browser_connector_request_schema' => self::browser_connector_request_schema(),
 					'browser_connector_response_schema' => self::browser_connector_response_schema(),
 					'browser_materializer_contract_schema' => self::browser_materializer_contract_schema(),
+					'browser_contained_site_schema' => self::browser_contained_site_schema(),
 					'browser_task_contract_schema' => self::browser_task_contract_schema(),
 					'browser_task_phase_kinds'    => self::browser_task_phase_kinds(),
 					'trusted_artifact_authorization_schema' => self::trusted_orchestrator_authorization_schema( self::BROWSER_ARTIFACT_WRITE_SCOPE, 'Explicit trusted orchestrator authorization for browser artifact persistence. Callers must provide a caller id and the artifact:write scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' ),
