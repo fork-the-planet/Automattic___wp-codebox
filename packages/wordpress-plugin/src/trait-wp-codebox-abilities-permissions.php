@@ -53,6 +53,11 @@ public static function can_persist_browser_artifact( mixed $input = null ): bool
 }
 
 /** @param mixed $input Ability input or request-like object. */
+public static function can_import_artifact_bundle( mixed $input = null ): bool {
+	return self::can_persist_browser_artifact( $input );
+}
+
+/** @param mixed $input Ability input or request-like object. */
 public static function can_request_browser_connector( mixed $input = null ): bool {
 	if ( current_user_can( 'manage_options' ) ) {
 		return true;

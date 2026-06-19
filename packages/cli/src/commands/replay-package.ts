@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { materializationPhaseResult, materializationResultEnvelope, type MaterializationArtifactRef, type MaterializationResultEnvelope } from "@automattic/wp-codebox-core"
+import { artifactResultEnvelope, materializationPhaseResult, materializationResultEnvelope, type MaterializationArtifactRef, type MaterializationResultEnvelope } from "@automattic/wp-codebox-core"
 import { writeReplayExportPackage, type ReplayExportPackage, type RuntimeSnapshotArtifact } from "@automattic/wp-codebox-playground"
 import { captureStdout } from "../output.js"
 
@@ -62,12 +62,23 @@ async function materializeReplayPackageEnvelope(options: MaterializeReplayPackag
       artifactRefs: replayPackageArtifactRefs(result),
       metadata: result.metrics,
     })
+    const artifactResult = artifactResultEnvelope({
+      operation: "materialize-replay-package",
+      status: "created",
+      artifactBundle: replayPackageBundleArtifactRef(result),
+      artifactRefs: replayPackageArtifactRefs(result),
+      result: result as unknown as Record<string, unknown>,
+      metadata: { durationMs: Date.now() - startedAtMs },
+    })
 
     return materializationResultEnvelope({
       task: "materialize-replay-package",
       phases: [phase],
       result: result as unknown as Record<string, unknown>,
-      projections: [{ kind: "wordpress-replay-package", schema: "wp-codebox/wordpress-replay-export/v1", package: result }],
+      projections: [
+        { kind: "wordpress-replay-package", schema: "wp-codebox/wordpress-replay-export/v1", package: result },
+        { kind: "artifact-result", schema: "wp-codebox/artifact-result-envelope/v1", envelope: artifactResult },
+      ],
       metadata: { durationMs: Date.now() - startedAtMs },
     })
   } catch (error) {
@@ -162,6 +173,15 @@ function replayPackageArtifactRefs(result: ReplayExportPackage): Materialization
     { kind: "runtime-snapshot", path: result.artifacts.snapshot },
     { kind: "replay-package-notes", path: result.artifacts.notes },
   ]
+}
+
+function replayPackageBundleArtifactRef(result: ReplayExportPackage): MaterializationArtifactRef {
+  return {
+    kind: "wordpress-replay-package",
+    id: result.manifest.id,
+    path: result.directory,
+    digest: result.manifest.contentDigest,
+  }
 }
 
 function serializeMaterializationError(error: unknown): { name: string; message: string; code?: string } {

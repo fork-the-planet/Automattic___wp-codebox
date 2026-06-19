@@ -169,6 +169,50 @@ public static function get_browser_contained_site_status( array $input ): array|
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function preview_reuse_decision( array $input ): array|WP_Error {
+	$status = self::get_browser_contained_site_status( $input );
+	if ( is_wp_error( $status ) ) {
+		return $status;
+	}
+
+	$open_mode = (string) ( $status['open_mode'] ?? 'materialize' );
+	$action    = match ( $open_mode ) {
+		'reuse_current' => 'reuse-current',
+		'reuse_live', 'reuse_materialized', 'reuse_prepared_runtime' => 'hydrate-ref',
+		'unavailable' => 'reload-required',
+		default => 'create-new',
+	};
+	$reload_required = in_array( $action, array( 'create-new', 'reload-required' ), true );
+	$identity_key    = hash( 'sha256', implode( ':', array( (string) ( $status['site_id'] ?? '' ), (string) ( $status['source_digest']['value'] ?? '' ), $open_mode ) ) );
+
+	return array_filter(
+		array(
+			'success'         => true,
+			'schema'          => 'wp-codebox/preview-reuse-decision/v1',
+			'action'          => $action,
+			'decision'        => $action,
+			'identity_key'    => $identity_key,
+			'reload_required' => $reload_required,
+			'site_id'         => (string) ( $status['site_id'] ?? '' ),
+			'open_mode'       => $open_mode,
+			'reuse_level'     => (string) ( $status['reuse_level'] ?? 'none' ),
+			'requires_materialization' => true === ( $status['requires_materialization'] ?? false ),
+			'prepared_runtime_recoverable' => true === ( $status['prepared_runtime_recoverable'] ?? false ),
+			'live'            => true === ( $status['live'] ?? false ),
+			'current'         => true === ( $status['current'] ?? false ),
+			'materialized'    => true === ( $status['materialized'] ?? false ),
+			'status'          => (string) ( $status['status'] ?? '' ),
+			'reason'          => (string) ( $status['resolution']['reason'] ?? '' ),
+			'resolution'      => is_array( $status['resolution'] ?? null ) ? $status['resolution'] : array(),
+			'status_result'   => $status,
+			'recovery'        => is_array( $status['recovery'] ?? null ) ? $status['recovery'] : array(),
+			'recovery_handle' => (string) ( $status['recovery_handle'] ?? '' ),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function open_browser_contained_site( array $input ): array|WP_Error {
 	$status = self::get_browser_contained_site_status( $input );
 	if ( is_wp_error( $status ) ) {
@@ -248,6 +292,82 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 				'recovery'      => $recovery,
 				'recovery_handle' => $recovery_handle,
 			)
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function open_or_create_browser_contained_site( array $input ): array|WP_Error {
+	$decision = self::preview_reuse_decision( $input );
+	if ( is_wp_error( $decision ) ) {
+		return $decision;
+	}
+
+	$action = (string) ( $decision['action'] ?? 'create-new' );
+	if ( in_array( $action, array( 'reuse-current', 'hydrate-ref' ), true ) ) {
+		$open = self::open_browser_contained_site( $input );
+		if ( is_wp_error( $open ) ) {
+			return $open;
+		}
+
+		if ( true === ( $open['success'] ?? false ) ) {
+			return array_filter(
+				array(
+					'success'         => true,
+					'schema'          => 'wp-codebox/browser-contained-site-open-or-create/v1',
+					'action'          => 'opened',
+					'decision'        => $decision,
+					'identity_key'    => (string) ( $decision['identity_key'] ?? '' ),
+					'reload_required' => false,
+					'open'            => $open,
+					'contained_site'  => is_array( $open['contained_site'] ?? null ) ? $open['contained_site'] : array(),
+					'preview_boot'    => is_array( $open['preview_boot'] ?? null ) ? $open['preview_boot'] : array(),
+					'preview_lease'   => is_array( $open['preview_lease'] ?? null ) ? $open['preview_lease'] : array(),
+					'preview_session' => is_array( $open['preview_session'] ?? null ) ? $open['preview_session'] : array(),
+					'session'         => is_array( $open['session'] ?? null ) ? $open['session'] : array(),
+				),
+				static fn( mixed $value ): bool => array() !== $value && '' !== $value
+			);
+		}
+	}
+
+	if ( 'reload-required' === $action && empty( $input['fallback_create'] ) ) {
+		return array_filter(
+			array(
+				'success'         => false,
+				'schema'          => 'wp-codebox/browser-contained-site-open-or-create/v1',
+				'action'          => 'unavailable',
+				'decision'        => $decision,
+				'identity_key'    => (string) ( $decision['identity_key'] ?? '' ),
+				'reload_required' => true,
+				'error'           => array(
+					'code'    => 'wp_codebox_browser_contained_site_unavailable',
+					'message' => 'Browser contained site cannot be reused or recovered.',
+				),
+			),
+			static fn( mixed $value ): bool => array() !== $value && '' !== $value
+		);
+	}
+
+	$created = self::create_browser_playground_session( $input );
+	if ( is_wp_error( $created ) ) {
+		return $created;
+	}
+
+	return array_filter(
+		array(
+			'success'         => true === ( $created['success'] ?? false ),
+			'schema'          => 'wp-codebox/browser-contained-site-open-or-create/v1',
+			'action'          => true === ( $created['success'] ?? false ) ? 'created' : 'blocked',
+			'decision'        => $decision,
+			'identity_key'    => (string) ( $decision['identity_key'] ?? '' ),
+			'reload_required' => true,
+			'created'         => $created,
+			'contained_site'  => is_array( $created['contained_site'] ?? null ) ? $created['contained_site'] : array(),
+			'preview_boot'    => is_array( $created['preview_boot'] ?? null ) ? $created['preview_boot'] : array(),
+			'preview_session' => is_array( $created['preview_session'] ?? null ) ? $created['preview_session'] : array(),
+			'session'         => is_array( $created['session'] ?? null ) ? $created['session'] : array(),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);
@@ -1536,6 +1656,16 @@ public static function persist_browser_artifact( array $input ): array|WP_Error 
 	}
 
 	return $result;
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function import_artifact_bundle( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Artifacts() )->import_artifact_bundle( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function reimport_artifact_bundle( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Artifacts() )->reimport_artifact_bundle( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
