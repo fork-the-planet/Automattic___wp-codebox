@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
+import { artifactResultEnvelope, buildAgentTaskRecipe, DEFAULT_WORDPRESS_VERSION, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput, parseCommandJson, parseCommandOptions, resolveEffectiveRuntimeToolPolicy, type AgentTaskRunInput, type AgentTaskRunResultSummary, type AgentTerminalResult, type ArtifactResultEnvelope, type SandboxToolPolicySnapshot } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { runRecipeRunCommand } from "./recipe-run.js"
 
@@ -30,6 +30,9 @@ interface AgentTaskRunOutput {
   completion_outcome: Record<string, unknown>
   component_contracts: Array<Record<string, unknown>>
   structured_artifacts: Array<Record<string, unknown>>
+  typed_artifacts: Array<Record<string, unknown>>
+  outputs: Record<string, unknown>
+  artifact_result: ArtifactResultEnvelope
   run: Record<string, unknown>
   diagnostics: Array<Record<string, unknown>>
   agent_runtime_diagnostics: Record<string, unknown>
@@ -147,11 +150,34 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, capture })
     const outputDiagnostics = [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])]
     const agentTaskRunResult = success ? normalizedRunResult : withFailureEvidence(normalizedRunResult, failureEvidence, outputDiagnostics)
+    const session = sandboxSession(input, run, artifacts, success ? "completed" : "failed")
+    const structuredArtifacts = structuredArtifactRefs(agentTaskResult)
+    const outputs = stripUndefined({ ...workload.outputs })
+    const typedArtifacts = typedArtifactRefs(agentTaskResult, outputs)
+    const evidence = evidenceRefs(run, artifacts, failureEvidence)
+    const artifactResult = artifactResultEnvelope({
+      operation: "agent-task-run",
+      status: success ? "created" : "failed",
+      artifactBundle: agentTaskRunResult.refs.artifact_bundles[0],
+      artifactRefs: [...agentTaskRunResult.refs.artifact_bundles, ...agentTaskRunResult.artifacts],
+      result: {
+        structured_artifacts: structuredArtifacts,
+        typed_artifacts: typedArtifacts,
+        agent_reply: agentReply(agentResult, terminalResult, agentTaskRunResult),
+        transcript_refs: agentTaskRunResult.refs.transcripts,
+        evidence_refs: evidence,
+        preview: previewMetadata(session, run),
+        session,
+        outputs,
+      },
+      diagnostics: artifactResultDiagnostics(outputDiagnostics),
+      metadata: artifactResultMetadata(run, input, agentTaskRunResult),
+    })
     const output: AgentTaskRunOutput = {
       success,
       schema: "wp-codebox/agent-task-run/v1",
       status: agentTaskRunResult.status,
-      session: sandboxSession(input, run, artifacts, success ? "completed" : "failed"),
+      session,
       task,
       task_input: taskInput,
       wp: wpVersion,
@@ -162,11 +188,14 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       terminal_result: terminalResult,
       completion_outcome: completionOutcome,
       component_contracts: componentContractReport(run),
-      structured_artifacts: structuredArtifactRefs(agentTaskResult),
+      structured_artifacts: structuredArtifacts,
+      typed_artifacts: typedArtifacts,
+      outputs: { ...outputs, artifact_result: artifactResult },
+      artifact_result: artifactResult,
       run,
       diagnostics: outputDiagnostics,
       agent_runtime_diagnostics: await buildAgentRuntimeDiagnostics(run, input),
-      evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
+      evidence_refs: evidence,
       failure_evidence: failureEvidence,
       run_metadata: stripUndefined({
         run_id: stringValue(runRecord.runId),
@@ -181,6 +210,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
         agent_runtime: {
           workload,
         },
+        artifact_result: artifactResult,
       },
     }
     return output
@@ -191,11 +221,29 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const failureEvidence = buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, capture, error })
     const failureDiagnostics = diagnostics(run, capture?.exitCode ?? 1, false, failureEvidence)
     const agentTaskRunResult = withFailureEvidence(normalizedRunResult, failureEvidence, failureDiagnostics)
+    const session = sandboxSession(input, run, artifacts, "failed")
+    const evidence = evidenceRefs(run, artifacts, failureEvidence)
+    const artifactResult = artifactResultEnvelope({
+      operation: "agent-task-run",
+      status: "failed",
+      artifactBundle: agentTaskRunResult.refs.artifact_bundles[0],
+      artifactRefs: [...agentTaskRunResult.refs.artifact_bundles, ...agentTaskRunResult.artifacts],
+      result: {
+        agent_reply: agentReply({}, normalizeAgentTerminalResult(run, { compatMode: true }), agentTaskRunResult),
+        transcript_refs: agentTaskRunResult.refs.transcripts,
+        evidence_refs: evidence,
+        preview: previewMetadata(session, run),
+        session,
+        outputs: {},
+      },
+      diagnostics: artifactResultDiagnostics(failureDiagnostics),
+      metadata: artifactResultMetadata(run, input, agentTaskRunResult),
+    })
     return {
       success: false,
       schema: "wp-codebox/agent-task-run/v1",
       status: agentTaskRunResult.status,
-      session: sandboxSession(input, run, artifacts, "failed"),
+      session,
       task,
       task_input: taskInput,
       wp: wpVersion,
@@ -207,10 +255,13 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       completion_outcome: {},
       component_contracts: componentContractReport(run),
       structured_artifacts: [],
+      typed_artifacts: [],
+      outputs: { artifact_result: artifactResult },
+      artifact_result: artifactResult,
       run,
       diagnostics: failureDiagnostics,
       agent_runtime_diagnostics: await buildAgentRuntimeDiagnostics(run, input),
-      evidence_refs: evidenceRefs(run, artifacts, failureEvidence),
+      evidence_refs: evidence,
       failure_evidence: failureEvidence,
       run_metadata: stripUndefined({
         sandbox_session_id: stringValue(input.sandbox_session_id),
@@ -224,6 +275,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
             diagnostics: failureDiagnostics,
           },
         },
+        artifact_result: artifactResult,
       },
     }
   } finally {
@@ -506,6 +558,62 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array
   const outputs = objectValue(agentTaskResult.outputs) || {}
   const fromOutputs = Array.isArray(outputs.structured_artifacts) ? outputs.structured_artifacts : []
   return fromOutputs.filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry)))
+}
+
+function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
+  const direct = Array.isArray(agentTaskResult.typed_artifacts) ? agentTaskResult.typed_artifacts : []
+  const outputs = objectValue(agentTaskResult.outputs) || {}
+  const fromOutputs = Array.isArray(outputs.typed_artifacts) ? outputs.typed_artifacts : []
+  const fromWorkloadOutputs = Array.isArray(workloadOutputs.typed_artifacts) ? workloadOutputs.typed_artifacts : []
+  return dedupeRecords([...direct, ...fromOutputs, ...fromWorkloadOutputs].filter((entry): entry is Record<string, unknown> => Boolean(objectValue(entry))))
+}
+
+function agentReply(agentResult: Record<string, unknown>, terminalResult: AgentTerminalResult | undefined, runResult: AgentTaskRunResultSummary): Record<string, unknown> | undefined {
+  const text = stringValue(agentResult.reply) || stringValue(agentResult.message) || stringValue(agentResult.response)
+  const summary = stringValue(agentResult.summary) || runResult.summary
+  const status = terminalResult?.status || runResult.status
+  return nonEmptyObject(stripUndefined({
+    text: text || undefined,
+    summary: summary || undefined,
+    status,
+    metadata: nonEmptyObject(stripUndefined({ terminal_result: terminalResult })),
+  }))
+}
+
+function previewMetadata(session: Record<string, unknown>, run: Record<string, unknown>): Record<string, unknown> | undefined {
+  const runtime = objectValue(run.runtime) || {}
+  const preview = objectValue(runtime.preview) || {}
+  const sessionArtifacts = objectValue(session.artifacts) || {}
+  return nonEmptyObject(stripUndefined({
+    ...preview,
+    url: stringValue(preview.url) || stringValue(runtime.previewUrl) || stringValue(sessionArtifacts.preview_url) || undefined,
+  }))
+}
+
+function artifactResultMetadata(run: Record<string, unknown>, input: AgentTaskRunInput, runResult: AgentTaskRunResultSummary): Record<string, unknown> {
+  const runRecord = objectValue(run.run) || {}
+  const runtimeRecord = objectValue(run.runtime) || {}
+  return stripUndefined({
+    status: runResult.status,
+    success: runResult.success,
+    run_id: stringValue(runRecord.runId) || stringValue(runResult.metadata.run_id) || undefined,
+    run_status: stringValue(runRecord.status) || stringValue(runResult.metadata.run_status) || undefined,
+    runtime_id: stringValue(runtimeRecord.id) || stringValue(runResult.metadata.runtime_id) || undefined,
+    runtime_status: stringValue(runtimeRecord.status) || stringValue(runResult.metadata.runtime_status) || undefined,
+    sandbox_session_id: stringValue(input.sandbox_session_id) || undefined,
+    orchestrator: input.orchestrator,
+    parent_request_schema: stringValue(input.parent_request?.schema) || undefined,
+  })
+}
+
+function artifactResultDiagnostics(diagnostics: Array<Record<string, unknown>>): Array<{ code: string, message: string, severity?: "info" | "warning" | "error", phase?: string, metadata?: Record<string, unknown> }> {
+  return diagnostics.map((diagnostic) => stripUndefined({
+    code: stringValue(diagnostic.code ?? diagnostic.class ?? diagnostic.kind) || "wp-codebox.agent_task_diagnostic",
+    message: stringValue(diagnostic.message) || "WP Codebox agent task diagnostic.",
+    severity: diagnostic.severity === "info" || diagnostic.severity === "warning" || diagnostic.severity === "error" ? diagnostic.severity : undefined,
+    phase: stringValue(diagnostic.phase) || undefined,
+    metadata: nonEmptyObject(objectValue(diagnostic.data ?? diagnostic.metadata)),
+  }))
 }
 
 async function readJsonRecord(path: string): Promise<Record<string, unknown> | undefined> {

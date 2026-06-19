@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
+import { ARTIFACT_RESULT_ENVELOPE_SCHEMA, buildAgentTaskRecipe, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
 import { agentTaskRunExitCode } from "../packages/cli/src/commands/agent-task-run.js"
@@ -43,6 +43,23 @@ assert.equal(strictNestedTerminal, undefined)
 const strictRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } })
 assert.deepEqual(strictRuntimeWorkload.outputs, {})
 assert.equal(strictRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), false)
+
+const compatRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } }, { compatMode: true })
+assert.deepEqual(compatRuntimeWorkload.outputs, { answer: "legacy" })
+assert.equal(compatRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), true)
+
+const normalizedWithArtifactEnvelope = normalizeAgentTaskRunResult({
+  success: true,
+  run: { artifactRefs: [{ id: "bundle-1", kind: "artifact-bundle", directory: "artifacts/run-1" }] },
+  agentResult: {
+    artifacts: { directory: "artifacts/run-1" },
+    summary: "Changed one file",
+    transcript: { artifact: "files/transcript.json" },
+  },
+}, { exitStatus: 0 })
+assert.equal(normalizedWithArtifactEnvelope.refs.artifact_bundles[0].path, "artifacts/run-1")
+assert.equal(normalizedWithArtifactEnvelope.refs.transcripts[0].kind, "codebox-transcript")
+assert.equal(ARTIFACT_RESULT_ENVELOPE_SCHEMA, "wp-codebox/artifact-result-envelope/v1")
 
 const catalog = commandCatalogOutput()
 const agentSandboxRun = catalog.commands.find((command) => command.id === "wp-codebox.agent-sandbox-run")
