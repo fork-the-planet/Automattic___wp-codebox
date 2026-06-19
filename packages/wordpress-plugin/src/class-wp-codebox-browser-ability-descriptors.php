@@ -120,6 +120,36 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
 				'meta'                => array( 'show_in_rest' => true ),
 			),
+			'wp-codebox/get-browser-contained-site-status'    => array(
+				'label'               => 'Get Browser Contained Site Status',
+				'description'         => 'Resolve a durable browser-contained site handle into recoverable prepared-runtime status without creating a new Playground session.',
+				'category'            => 'wp-codebox',
+				'input_schema'        => array(
+					'type'       => 'object',
+					'properties' => array(
+						'contained_site' => $context['browser_contained_site_schema'],
+						'site_id'       => array( 'type' => 'string' ),
+						'cache_key'     => array( 'type' => 'string' ),
+						'source_digest' => array( 'type' => 'string' ),
+						'input_hash'    => array( 'type' => 'string' ),
+					),
+				),
+				'output_schema'       => array(
+					'type'       => 'object',
+					'properties' => array(
+						'success'       => array( 'type' => 'boolean' ),
+						'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/browser-contained-site-status/v1' ),
+						'site_id'       => array( 'type' => 'string' ),
+						'source_digest' => array( 'type' => 'object' ),
+						'status'        => array( 'type' => 'string' ),
+						'prepared_runtime' => array( 'type' => 'object' ),
+						'blueprint_ref' => array( 'type' => 'object' ),
+					),
+				),
+				'execute_callback'    => array( WP_Codebox_Abilities::class, 'get_browser_contained_site_status' ),
+				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_create_browser_playground_session' ),
+				'meta'                => array( 'show_in_rest' => true ),
+			),
 			'wp-codebox/browser-connector-request'            => array(
 				'label'               => 'Run Browser Connector Request',
 				'description'         => 'Resolve connector credentials server-side and dispatch a generic browser connector request without exposing raw secrets to the browser sandbox.',

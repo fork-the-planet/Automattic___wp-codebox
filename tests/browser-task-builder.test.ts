@@ -168,6 +168,14 @@ $product_session = WP_Codebox_Browser_Task_Builder::product_browser_session_dto(
 		'preview_url' => '/?preview=1',
 		'prepared_runtime' => array( 'cache_key' => 'runtime-cache-key', 'input_hash' => str_repeat( 'a', 64 ), 'status' => 'hit', 'blueprint' => array( 'must' => 'not leak' ) ),
 	),
+	'contained_site' => array(
+		'schema' => 'wp-codebox/browser-contained-site/v1',
+		'site_id' => 'runtime-cache-key',
+		'preview_id' => 'preview-123',
+		'session_id' => 'session-123',
+		'status' => 'ready',
+		'source_digest' => array( 'algorithm' => 'sha256', 'value' => str_repeat( 'a', 64 ) ),
+	),
 	'artifacts' => array( 'preview_url' => '/?preview=1' ),
 ) );
 
@@ -270,7 +278,10 @@ assert.equal(result.fanout_request.workers[0].schema, "wp-codebox/agent-fanout-w
 assert.equal(result.fanout_request.workers[0].id, "planner-worker")
 assert.equal(result.product_session.schema, "wp-codebox/browser-session-product-dto/v1")
 assert.equal(result.product_session.session_id, "session-123")
+assert.equal(result.product_session.contained_site.schema, "wp-codebox/browser-contained-site/v1")
+assert.equal(result.product_session.contained_site.site_id, "runtime-cache-key")
 assert.equal(result.product_session.preview_boot.schema, "wp-codebox/browser-preview-boot-config/v1")
+assert.equal(result.product_session.preview_boot.contained_site.site_id, "runtime-cache-key")
 assert.equal(result.product_session.preview_boot.blueprint_ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)
 assert.equal(result.product_session.preview_boot.blueprint_ref_dto.schema, "wp-codebox/browser-blueprint-ref/v1")
 assert.equal(result.product_session.preview_boot.blueprint_ref_dto.ref, `prepared:runtime-cache-key:${"a".repeat(64)}`)

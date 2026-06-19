@@ -286,6 +286,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'execution_scope'  => (string) ( $session['execution_scope'] ?? '' ),
 				'permission_model' => (string) ( $session['permission_model'] ?? '' ),
 				'session_id'       => (string) ( $session_envelope['id'] ?? $session['session_id'] ?? '' ),
+				'contained_site'   => is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array(),
 				'task'             => (string) ( $session['task'] ?? $task_input['goal'] ?? '' ),
 				'target'           => is_array( $task_input['target'] ?? null ) ? self::compact_public_value( $task_input['target'] ) : array(),
 				'agent'            => (string) ( $session['agent'] ?? '' ),
@@ -503,6 +504,7 @@ final class WP_Codebox_Browser_Task_Builder {
 				'blueprint_ref'     => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? (string) $blueprint_ref['ref'] : ( '' !== $legacy_blueprint_ref ? $legacy_blueprint_ref : 'inline-session-blueprint' ),
 				'blueprint_ref_dto' => '' !== (string) ( $blueprint_ref['ref'] ?? '' ) ? $blueprint_ref : array(),
 				'preview'           => self::preview_lease_from_session( $session ),
+				'contained_site'    => is_array( $session['contained_site'] ?? null ) ? self::compact_public_value( $session['contained_site'] ) : array(),
 				'artifacts'         => array_filter(
 					array(
 						'base_path'   => (string) ( $playground['artifact_base_path'] ?? '' ),

@@ -52,6 +52,66 @@ registers runtime-principal authorization. If the runner is copied into a normal
 host WordPress install, it fails with `wp_codebox_browser_runner_not_playground`
 instead of executing the requested sandbox invocation.
 
+## Browser Contained Site Handle
+
+Browser session, materializer, and task contracts include an additive durable
+handle for caller-owned preview recovery:
+
+```json
+{
+  "contained_site": {
+    "schema": "wp-codebox/browser-contained-site/v1",
+    "site_id": "prepared-a1b2c3d4e5f6a7b8",
+    "preview_id": "preview-1234abcd5678ef90",
+    "session_id": "browser-session-123",
+    "caller_id": "studio-native",
+    "status": "ready",
+    "persistence": "browser-contained",
+    "source_digest": {
+      "algorithm": "sha256",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "recovery": {
+      "ability": "wp-codebox/get-browser-contained-site-status",
+      "input": {
+        "cache_key": "prepared-a1b2c3d4e5f6a7b8",
+        "input_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  }
+}
+```
+
+The handle is intentionally a primitive, not a parent-product lifecycle table.
+`site_id` is stable for the caller plus normalized runtime/source inputs, and
+`preview_id` is stable for the contained site plus browser session. The
+`source_digest` is the prepared-runtime `input_hash` when available, or a stable
+hash of the browser runtime, blueprint, site blueprint artifact, and Playground
+version inputs.
+
+Call `wp-codebox/get-browser-contained-site-status` with `cache_key` or `site_id`
+plus `input_hash` or `source_digest` to check whether WP Codebox can recover the
+prepared-runtime blueprint from its transient cache:
+
+```json
+{
+  "success": true,
+  "schema": "wp-codebox/browser-contained-site-status/v1",
+  "site_id": "prepared-a1b2c3d4e5f6a7b8",
+  "status": "recoverable",
+  "blueprint_ref": {
+    "schema": "wp-codebox/browser-blueprint-ref/v1",
+    "ref": "prepared:prepared-a1b2c3d4e5f6a7b8:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+```
+
+Status is idempotent and read-only. `recoverable` means the prepared runtime
+transient exists and can hydrate a blueprint ref. `miss` means the caller should
+create a new browser session from the same inputs. Durable ownership, UI state,
+and retry policy still belong to the parent control plane.
+
 ## Browser Provider Adapter Contract
 
 Browser Playground provider calls that need parent-side connector authorization
