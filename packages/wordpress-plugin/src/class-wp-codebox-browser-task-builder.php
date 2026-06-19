@@ -525,6 +525,108 @@ final class WP_Codebox_Browser_Task_Builder {
 		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_preview_boot_config', $config, $session ) : $config;
 	}
 
+	/** @param array<string,mixed> $recipe Browser workspace recipe. @return array<string,mixed> */
+	public static function browser_recipe_dto( array $recipe ): array {
+		$runtime = is_array( $recipe['runtime'] ?? null ) ? $recipe['runtime'] : array();
+		$browser = is_array( $recipe['browser'] ?? null ) ? $recipe['browser'] : array();
+		$workflow_steps = array();
+		foreach ( is_array( $recipe['workflow']['steps'] ?? null ) ? $recipe['workflow']['steps'] : array() as $index => $step ) {
+			if ( ! is_array( $step ) ) {
+				continue;
+			}
+
+			$workflow_steps[] = array_filter(
+				array(
+					'index'   => $index,
+					'command' => (string) ( $step['command'] ?? '' ),
+					'args'    => self::browser_recipe_safe_args( is_array( $step['args'] ?? null ) ? $step['args'] : array(), $browser ),
+				),
+				static fn( mixed $value ): bool => '' !== $value && array() !== $value
+			);
+		}
+
+		$dto = array_filter(
+			array(
+				'schema'        => 'wp-codebox/browser-recipe-dto/v1',
+				'source_schema' => (string) ( $recipe['schema'] ?? '' ),
+				'runtime'       => array_filter(
+					array(
+						'backend'       => (string) ( $runtime['backend'] ?? '' ),
+						'name'          => (string) ( $runtime['name'] ?? '' ),
+						'wp'            => (string) ( $runtime['wp'] ?? '' ),
+						'blueprint_ref' => self::browser_blueprint_ref( is_array( $runtime['prepared_runtime'] ?? null ) ? $runtime['prepared_runtime'] : array() ),
+					),
+					static fn( mixed $value ): bool => '' !== $value && array() !== $value
+				),
+				'inputs'        => is_array( $recipe['inputs'] ?? null ) ? self::compact_public_value( $recipe['inputs'] ) : array(),
+				'workflow'      => array_filter( array( 'steps' => $workflow_steps ), static fn( mixed $value ): bool => array() !== $value ),
+				'artifacts'     => is_array( $recipe['artifacts'] ?? null ) ? self::compact_public_value( $recipe['artifacts'] ) : array(),
+				'browser'       => self::browser_recipe_browser_dto( $browser ),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+
+		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_recipe_dto', $dto, $recipe ) : $dto;
+	}
+
+	/** @param array<int,mixed> $args Step args. @param array<string,mixed> $browser Browser recipe metadata. @return array<int,string|array<string,mixed>> */
+	private static function browser_recipe_safe_args( array $args, array $browser ): array {
+		$safe_args = array();
+		foreach ( $args as $arg ) {
+			if ( ! is_scalar( $arg ) ) {
+				continue;
+			}
+
+			$arg = (string) $arg;
+			if ( str_starts_with( $arg, 'code=' ) ) {
+				$safe_args[] = array_filter(
+					array(
+						'kind'            => 'generated-php',
+						'runner_contract' => is_array( $browser['runner_contract'] ?? null ) ? self::browser_recipe_runner_contract_dto( $browser['runner_contract'] ) : array(),
+					),
+					static fn( mixed $value ): bool => array() !== $value && '' !== $value
+				);
+				continue;
+			}
+
+			$safe_args[] = $arg;
+		}
+
+		return $safe_args;
+	}
+
+	/** @param array<string,mixed> $browser Browser recipe metadata. @return array<string,mixed> */
+	private static function browser_recipe_browser_dto( array $browser ): array {
+		return array_filter(
+			array(
+				'execution'       => (string) ( $browser['execution'] ?? '' ),
+				'task_path'       => (string) ( $browser['task_path'] ?? '' ),
+				'result_path'     => (string) ( $browser['result_path'] ?? '' ),
+				'invocation'      => is_array( $browser['invocation'] ?? null ) ? self::compact_public_value( $browser['invocation'] ) : array(),
+				'captures'        => is_array( $browser['captures'] ?? null ) ? self::compact_public_value( $browser['captures'] ) : array(),
+				'runner_contract' => is_array( $browser['runner_contract'] ?? null ) ? self::browser_recipe_runner_contract_dto( $browser['runner_contract'] ) : array(),
+			),
+			static fn( mixed $value ): bool => '' !== $value && array() !== $value
+		);
+	}
+
+	/** @param array<string,mixed> $contract Browser runner contract. @return array<string,mixed> */
+	private static function browser_recipe_runner_contract_dto( array $contract ): array {
+		$dto = array( 'schema' => (string) ( $contract['schema'] ?? 'wp-codebox/browser-runner-contract/v1' ) );
+		foreach ( array( 'php_prelude', 'php_footer' ) as $field ) {
+			$value = (string) ( $contract[ $field ] ?? '' );
+			if ( '' !== $value ) {
+				$dto[ $field ] = array(
+					'type'   => 'generated-php-fragment',
+					'bytes'  => strlen( $value ),
+					'sha256' => hash( 'sha256', $value ),
+				);
+			}
+		}
+
+		return $dto;
+	}
+
 	/** @param array<string,mixed> $session Browser session or preview input. @return array<string,mixed> */
 	public static function preview_lease( array $session ): array {
 		return self::preview_lease_from_session( $session );
@@ -820,6 +922,13 @@ if ( ! function_exists( 'wp_codebox_browser_preview_lease_dto' ) ) {
 	/** @param array<string,mixed> $input Browser session or preview input. @return array<string,mixed> */
 	function wp_codebox_browser_preview_lease_dto( array $input ): array {
 		return WP_Codebox_Browser_Task_Builder::preview_lease( $input );
+	}
+}
+
+if ( ! function_exists( 'wp_codebox_browser_recipe_dto' ) ) {
+	/** @param array<string,mixed> $recipe Browser workspace recipe. @return array<string,mixed> */
+	function wp_codebox_browser_recipe_dto( array $recipe ): array {
+		return WP_Codebox_Browser_Task_Builder::browser_recipe_dto( $recipe );
 	}
 }
 
