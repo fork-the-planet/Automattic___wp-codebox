@@ -1243,27 +1243,8 @@ export function activeExtraPluginFiles(extraPlugins: BootActivePluginCandidate[]
     .map((plugin) => plugin.pluginFile)
 }
 
-export function recipeBlueprintWithBootActivePlugins(blueprint: unknown, extraPlugins: BootActivePluginCandidate[]): unknown {
-  const activePlugins = activeExtraPluginFiles(extraPlugins)
-  if (activePlugins.length === 0) {
-    return blueprint ?? { steps: [] }
-  }
-
-  const base = !blueprint || typeof blueprint !== "object" || Array.isArray(blueprint) ? { steps: [] } : blueprint as Record<string, unknown>
-  const steps = Array.isArray(base.steps) ? base.steps : []
-
-  return {
-    ...base,
-    steps: [
-      {
-        step: "setSiteOptions",
-        options: {
-          active_plugins: activePlugins,
-        },
-      },
-      ...steps,
-    ],
-  }
+export function recipeBlueprintWithBootActivePlugins(blueprint: unknown, _extraPlugins: BootActivePluginCandidate[]): unknown {
+  return blueprint ?? { steps: [] }
 }
 
 export function installMuPluginsCode(extraPlugins: PreparedExtraPlugin[]): string | null {

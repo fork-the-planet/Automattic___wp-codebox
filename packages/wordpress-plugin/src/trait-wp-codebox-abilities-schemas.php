@@ -304,6 +304,7 @@ private static function browser_playground_session_schema(): array {
 				'description' => 'The generated browser runner authorizes Agents API calls through a scoped runtime principal inside the disposable Playground sandbox.',
 			),
 			'session'    => array( 'type' => 'object' ),
+			'contained_site' => self::browser_contained_site_schema(),
 			'task_input' => self::task_input_schema(),
 			'task_payload' => array( 'type' => 'object' ),
 			'playground' => array( 'type' => 'object' ),
@@ -340,6 +341,7 @@ private static function browser_materializer_contract_schema(): array {
 				'enum' => array( 'runtime-principal' ),
 			),
 			'session_id'       => array( 'type' => 'string' ),
+			'contained_site'   => self::browser_contained_site_schema(),
 			'authorization'    => array( 'type' => 'object' ),
 			'task_input'       => self::task_input_schema(),
 			'task_payload'     => array( 'type' => 'object' ),
@@ -373,6 +375,7 @@ private static function browser_task_contract_schema(): array {
 				'enum' => array( 'runtime-principal' ),
 			),
 			'session'          => array( 'type' => 'object' ),
+			'contained_site'   => self::browser_contained_site_schema(),
 			'primary'          => self::browser_playground_session_schema(),
 			'phases'           => array(
 				'type'        => 'array',
@@ -418,6 +421,7 @@ private static function browser_product_dto_schema(): array {
 			'execution_scope'  => array( 'type' => 'string' ),
 			'permission_model' => array( 'type' => 'string' ),
 			'session'          => array( 'type' => 'object' ),
+			'contained_site'   => self::browser_contained_site_schema(),
 			'primary'          => array( 'type' => 'object' ),
 			'phases'           => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
 			'task_input'       => array( 'type' => 'object' ),
@@ -427,6 +431,34 @@ private static function browser_product_dto_schema(): array {
 			'recipe'           => array( 'type' => 'object' ),
 			'artifacts'        => array( 'type' => 'object' ),
 			'execution_metrics' => array( 'type' => 'object' ),
+		),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_schema(): array {
+	return array(
+		'type'        => 'object',
+		'description' => 'Durable browser-contained WordPress site handle. The caller stores this envelope and can call the status ability to recover a prepared runtime blueprint when the transient still exists.',
+		'properties'  => array(
+			'schema'        => array( 'type' => 'string', 'const' => 'wp-codebox/browser-contained-site/v1' ),
+			'site_id'       => array( 'type' => 'string' ),
+			'preview_id'    => array( 'type' => 'string' ),
+			'session_id'    => array( 'type' => 'string' ),
+			'caller_id'     => array( 'type' => 'string' ),
+			'status'        => array( 'type' => 'string', 'enum' => array( 'ready', 'blocked', 'recoverable', 'miss', 'disabled', 'incompatible' ) ),
+			'resolution'    => array( 'type' => 'object' ),
+			'persistence'   => array( 'type' => 'string', 'enum' => array( 'browser-contained' ) ),
+			'artifact_seed' => array( 'type' => 'string' ),
+			'artifact_revision' => array( 'type' => 'string' ),
+			'recovery'      => array( 'type' => 'object' ),
+			'source_digest' => array( 'type' => 'object' ),
+			'preview'       => array( 'type' => 'object' ),
+			'prepared_runtime' => array( 'type' => 'object' ),
+			'blueprint_ref' => array( 'type' => 'object' ),
+			'preview_boot'  => array( 'type' => 'object' ),
+			'preview_lease' => array( 'type' => 'object' ),
+			'session'       => array( 'type' => 'object' ),
 		),
 	);
 }
@@ -453,7 +485,7 @@ private static function trusted_orchestrator_authorization_schema( string $scope
 			),
 			'caller' => array(
 				'type'        => 'string',
-				'description' => 'Stable caller id, for example studio-web.',
+				'description' => 'Stable caller id, for example browser-client.',
 			),
 			'scope'  => array(
 				'type'        => 'string',
@@ -662,6 +694,7 @@ private static function browser_task_input_properties( array $task_input_schema,
 		'playground'              => $detailed ? self::browser_playground_input_schema() : self::object_property_schema(),
 		'browser_runner'          => $detailed ? self::browser_runner_input_schema() : self::object_property_schema(),
 		'browser_plugins'         => $detailed ? self::browser_plugins_input_schema() : array( 'type' => 'array' ),
+		'runtime_profile'        => self::object_property_schema( $detailed ? 'Portable wp-codebox/runtime-profile/v1 descriptor normalized into browser runtime fields before session creation.' : '' ),
 		'runtime'                 => $detailed ? self::browser_runtime_input_schema() : self::object_property_schema(),
 		'blueprint'               => self::object_property_schema( $detailed ? 'Optional WordPress Playground blueprint for the browser to compile and run.' : '' ),
 		'site_blueprint_artifact' => $detailed ? self::site_blueprint_artifact_input_schema() : self::object_property_schema(),

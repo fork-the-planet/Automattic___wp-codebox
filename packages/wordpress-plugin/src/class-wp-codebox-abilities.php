@@ -92,6 +92,15 @@ final class WP_Codebox_Abilities {
 				),
 			)
 		);
+		register_rest_route(
+			'wp-codebox/v1',
+			'/browser-blueprint-ref',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( self::class, 'rest_browser_blueprint_ref' ),
+				'permission_callback' => static fn(): bool => current_user_can( 'manage_options' ),
+			)
+		);
 	}
 
 	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
@@ -102,6 +111,17 @@ final class WP_Codebox_Abilities {
 		}
 
 		return self::execute_browser_provider_request( $input );
+	}
+
+	/** @param WP_REST_Request $request REST request. @return array<string,mixed>|WP_Error */
+	public static function rest_browser_blueprint_ref( WP_REST_Request $request ): array|WP_Error {
+		return self::hydrate_browser_blueprint_ref(
+			array(
+				'ref'        => (string) $request->get_param( 'ref' ),
+				'cache_key'  => (string) $request->get_param( 'cache_key' ),
+				'input_hash' => (string) $request->get_param( 'input_hash' ),
+			)
+		);
 	}
 
 	/**
@@ -444,6 +464,20 @@ final class WP_Codebox_Abilities {
 			);
 
 			wp_register_ability(
+				'wp-codebox/runner-workspace-publish',
+				array(
+					'label'               => 'Publish Runner Workspace',
+					'description'         => 'Publish runner-owned workspace changes through the WP Codebox runner boundary without exposing backend publication internals to callers.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_publication_input_schema(),
+					'output_schema'       => self::runner_workspace_publication_output_schema(),
+					'execute_callback'    => array( self::class, 'publish_runner_workspace' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
+			wp_register_ability(
 				'wp-codebox/capture-runner-workspace',
 				array(
 					'label'               => 'Capture Runner Workspace',
@@ -471,6 +505,20 @@ final class WP_Codebox_Abilities {
 				)
 			);
 
+			wp_register_ability(
+				'wp-codebox/runner-workspace-command',
+				array(
+					'label'               => 'Run Runner Workspace Command',
+					'description'         => 'Run a bounded verification or drift-check command against a runner-owned workspace through the WP Codebox runner boundary.',
+					'category'            => 'wp-codebox',
+					'input_schema'        => self::runner_workspace_command_input_schema(),
+					'output_schema'       => self::runner_workspace_command_output_schema(),
+					'execute_callback'    => array( self::class, 'run_runner_workspace_command' ),
+					'permission_callback' => array( self::class, 'can_run_agent_task' ),
+					'meta'                => array( 'show_in_rest' => true ),
+				)
+			);
+
 			foreach ( WP_Codebox_Browser_Ability_Descriptors::descriptors(
 				array(
 					'artifact_id_schema'          => $artifact_id_schema,
@@ -483,6 +531,7 @@ final class WP_Codebox_Abilities {
 					'browser_connector_request_schema' => self::browser_connector_request_schema(),
 					'browser_connector_response_schema' => self::browser_connector_response_schema(),
 					'browser_materializer_contract_schema' => self::browser_materializer_contract_schema(),
+					'browser_contained_site_schema' => self::browser_contained_site_schema(),
 					'browser_task_contract_schema' => self::browser_task_contract_schema(),
 					'browser_task_phase_kinds'    => self::browser_task_phase_kinds(),
 					'trusted_artifact_authorization_schema' => self::trusted_orchestrator_authorization_schema( self::BROWSER_ARTIFACT_WRITE_SCOPE, 'Explicit trusted orchestrator authorization for browser artifact persistence. Callers must provide a caller id and the artifact:write scope; sites grant trust through wp_codebox_trusted_browser_session_callers.' ),
