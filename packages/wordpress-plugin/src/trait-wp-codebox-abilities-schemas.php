@@ -452,6 +452,10 @@ private static function browser_contained_site_schema(): array {
 			'source_digest' => array( 'type' => 'object' ),
 			'preview'       => array( 'type' => 'object' ),
 			'prepared_runtime' => array( 'type' => 'object' ),
+			'blueprint_ref' => array( 'type' => 'object' ),
+			'preview_boot'  => array( 'type' => 'object' ),
+			'preview_lease' => array( 'type' => 'object' ),
+			'session'       => array( 'type' => 'object' ),
 		),
 	);
 }

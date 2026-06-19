@@ -168,6 +168,64 @@ public static function get_browser_contained_site_status( array $input ): array|
 	return self::browser_contained_site_status_envelope( $cache_key, $input_hash, $lookup );
 }
 
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function open_browser_contained_site( array $input ): array|WP_Error {
+	$status = self::get_browser_contained_site_status( $input );
+	if ( is_wp_error( $status ) ) {
+		return $status;
+	}
+
+	$contained_site = self::browser_contained_site_public_input( is_array( $input['contained_site'] ?? null ) ? $input['contained_site'] : array() );
+	$session        = self::browser_contained_site_open_session( $input, $contained_site, $status );
+	$preview_boot   = WP_Codebox_Browser_Task_Builder::preview_boot_config( $session );
+	$preview_lease  = WP_Codebox_Browser_Task_Builder::preview_lease( $session );
+	$blueprint_ref  = is_array( $status['blueprint_ref'] ?? null ) ? $status['blueprint_ref'] : array();
+	$site_id        = (string) ( $status['site_id'] ?? $contained_site['site_id'] ?? $input['site_id'] ?? '' );
+	$session_id     = (string) ( $session['session']['id'] ?? '' );
+	$preview_id     = (string) ( $contained_site['preview_id'] ?? $input['preview_id'] ?? '' );
+	$scope          = (string) ( $preview_boot['scope'] ?? $contained_site['preview']['scope'] ?? '' );
+
+	$opened_site = array_filter(
+		array_merge(
+			$contained_site,
+			array(
+				'schema'           => 'wp-codebox/browser-contained-site/v1',
+				'site_id'          => $site_id,
+				'preview_id'       => $preview_id,
+				'session_id'       => $session_id,
+				'status'           => (string) ( $status['status'] ?? 'miss' ),
+				'persistence'      => 'browser-contained',
+				'source_digest'    => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),
+				'prepared_runtime' => is_array( $status['prepared_runtime'] ?? null ) ? $status['prepared_runtime'] : array(),
+				'blueprint_ref'    => $blueprint_ref,
+				'preview_boot'     => $preview_boot,
+				'preview_lease'    => $preview_lease,
+				'session'          => self::browser_contained_site_session_identity( $session_id, $preview_id, $scope ),
+				'recovery'         => self::browser_contained_site_open_recovery( $site_id, (string) ( $status['source_digest']['value'] ?? '' ) ),
+			)
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+
+	return array_filter(
+		array(
+			'success'       => true === ( $status['success'] ?? false ),
+			'schema'        => 'wp-codebox/browser-contained-site-open/v1',
+			'site_id'       => $site_id,
+			'status'        => (string) ( $status['status'] ?? 'miss' ),
+			'contained_site' => $opened_site,
+			'source_digest' => is_array( $status['source_digest'] ?? null ) ? $status['source_digest'] : array(),
+			'prepared_runtime' => is_array( $status['prepared_runtime'] ?? null ) ? $status['prepared_runtime'] : array(),
+			'blueprint_ref' => $blueprint_ref,
+			'preview_boot'  => $preview_boot,
+			'preview_lease' => $preview_lease,
+			'session'       => self::browser_contained_site_session_identity( $session_id, $preview_id, $scope ),
+			'recovery'      => self::browser_contained_site_open_recovery( $site_id, (string) ( $status['source_digest']['value'] ?? '' ) ),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
 /** @param array<string,mixed> $input Blueprint ref input. @return array<string,mixed>|WP_Error */
 public static function hydrate_browser_blueprint_ref( array $input ): array|WP_Error {
 	return WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( $input );
@@ -999,6 +1057,104 @@ private static function browser_contained_site_status_envelope( string $cache_ke
 				static fn( string $value ): bool => '' !== $value
 			),
 			'blueprint_ref' => 'recoverable' === $status ? WP_Codebox_Browser_Task_Builder::browser_blueprint_ref( array( 'cache_key' => $cache_key, 'input_hash' => $input_hash, 'status' => 'recoverable' ) ) : array(),
+		),
+		static fn( mixed $value ): bool => array() !== $value && '' !== $value
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_open_session( array $input, array $contained_site, array $status ): array {
+	$source_digest = (string) ( $status['source_digest']['value'] ?? '' );
+	$session_id    = trim( (string) ( $input['session_id'] ?? $input['sandbox_session_id'] ?? $contained_site['session_id'] ?? '' ) );
+	$site_id       = (string) ( $status['site_id'] ?? $contained_site['site_id'] ?? $input['site_id'] ?? '' );
+	if ( '' === $session_id && '' !== $site_id ) {
+		$session_id = 'contained-' . substr( hash( 'sha256', $site_id . ':' . $source_digest ), 0, 16 );
+	}
+
+	$preview    = is_array( $contained_site['preview'] ?? null ) ? $contained_site['preview'] : array();
+	$playground = is_array( $input['playground'] ?? null ) ? $input['playground'] : array();
+	$playground = array_merge(
+		array_filter(
+			array(
+				'scope'              => (string) ( $preview['scope'] ?? $session_id ),
+				'preview_public_url' => (string) ( $preview['preview_public_url'] ?? '' ),
+				'preview_url'        => (string) ( $preview['local_url'] ?? '' ),
+				'local_url'          => (string) ( $preview['local_url'] ?? '' ),
+				'site_url'           => (string) ( $preview['site_url'] ?? '' ),
+			),
+			static fn( string $value ): bool => '' !== $value
+		),
+		$playground
+	);
+	$playground['prepared_runtime'] = array_filter(
+		array(
+			'cache_key'  => $site_id,
+			'input_hash' => $source_digest,
+			'status'     => (string) ( $status['status'] ?? '' ),
+			'created_at' => (string) ( $status['prepared_runtime']['created_at'] ?? '' ),
+		),
+		static fn( string $value ): bool => '' !== $value
+	);
+
+	if ( is_array( $input['preview_lease'] ?? null ) ) {
+		$playground['lease'] = $input['preview_lease'];
+	}
+
+	return array(
+		'success'        => true === ( $status['success'] ?? false ),
+		'schema'         => 'wp-codebox/browser-contained-site-open-session/v1',
+		'session'        => array_filter( array( 'id' => $session_id ), static fn( string $value ): bool => '' !== $value ),
+		'session_id'     => $session_id,
+		'playground'     => $playground,
+		'contained_site' => $contained_site,
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_public_input( array $contained_site ): array {
+	return array_intersect_key(
+		$contained_site,
+		array(
+			'schema'           => true,
+			'site_id'          => true,
+			'preview_id'       => true,
+			'session_id'       => true,
+			'caller_id'        => true,
+			'status'           => true,
+			'persistence'      => true,
+			'recovery'         => true,
+			'source_digest'    => true,
+			'preview'          => true,
+			'prepared_runtime' => true,
+		)
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_session_identity( string $session_id, string $preview_id, string $scope ): array {
+	return array_filter(
+		array(
+			'schema'     => 'wp-codebox/browser-session-identity/v1',
+			'session_id' => $session_id,
+			'preview_id' => $preview_id,
+			'scope'      => $scope,
+		),
+		static fn( string $value ): bool => '' !== $value
+	);
+}
+
+/** @return array<string,mixed> */
+private static function browser_contained_site_open_recovery( string $site_id, string $source_digest ): array {
+	return array_filter(
+		array(
+			'ability' => 'wp-codebox/open-browser-contained-site',
+			'input'   => array_filter(
+				array(
+					'site_id'       => $site_id,
+					'source_digest' => $source_digest,
+				),
+				static fn( string $value ): bool => '' !== $value
+			),
 		),
 		static fn( mixed $value ): bool => array() !== $value && '' !== $value
 	);

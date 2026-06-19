@@ -48,8 +48,31 @@ $miss = WP_Codebox_Test_Browser_Contained_Site_Abilities::get_browser_contained_
 	'site_id' => $cache_key,
 	'input_hash' => str_repeat( 'd', 64 ),
 ) );
+$open_hit = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_contained_site( array(
+	'contained_site' => array(
+		'schema' => 'wp-codebox/browser-contained-site/v1',
+		'site_id' => $cache_key,
+		'preview_id' => 'preview-proof',
+		'session_id' => 'session-proof',
+		'source_digest' => array( 'algorithm' => 'sha256', 'value' => $input_hash ),
+		'preview' => array(
+			'preview_public_url' => 'https://preview.example.test',
+			'local_url' => '/?preview=1',
+			'scope' => 'session-proof',
+		),
+		'blueprint' => array( 'must' => 'not leak' ),
+		'secret' => 'must-not-leak',
+		'recovery' => array( 'input' => array( 'cache_key' => $cache_key, 'input_hash' => $input_hash ) ),
+	),
+	'preview_lease' => array( 'status' => 'active', 'expires_at' => '2099-01-01T00:00:00+00:00' ),
+	'runtime_profile' => array( 'id' => 'studio-native-preview', 'env' => array( 'SECRET' => 'must-not-leak' ) ),
+) );
+$open_miss = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_contained_site( array(
+	'site_id' => $cache_key,
+	'input_hash' => str_repeat( 'd', 64 ),
+) );
 
-echo json_encode( array( 'hit' => $hit, 'miss' => $miss ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'open_hit' => $open_hit, 'open_miss' => $open_miss ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.hit.schema, "wp-codebox/browser-contained-site-status/v1")
@@ -60,5 +83,26 @@ assert.equal(result.hit.source_digest.value, "c".repeat(64))
 assert.equal(result.hit.blueprint_ref.ref, `prepared:studio-proof:${"c".repeat(64)}`)
 assert.equal(result.miss.success, false)
 assert.equal(result.miss.status, "miss")
+assert.equal(result.open_hit.schema, "wp-codebox/browser-contained-site-open/v1")
+assert.equal(result.open_hit.success, true)
+assert.equal(result.open_hit.status, "recoverable")
+assert.equal(result.open_hit.contained_site.schema, "wp-codebox/browser-contained-site/v1")
+assert.equal(result.open_hit.contained_site.status, "recoverable")
+assert.equal(result.open_hit.blueprint_ref.ref, `prepared:studio-proof:${"c".repeat(64)}`)
+assert.equal(result.open_hit.blueprint_ref.hydrator_ability, "wp-codebox/hydrate-browser-blueprint-ref")
+assert.equal(result.open_hit.blueprint_ref.hydration_endpoint.includes("/wp-codebox/v1/browser-blueprint-ref"), true)
+assert.equal(result.open_hit.preview_boot.schema, "wp-codebox/browser-preview-boot-config/v1")
+assert.equal(result.open_hit.preview_boot.blueprint_ref, `prepared:studio-proof:${"c".repeat(64)}`)
+assert.equal(result.open_hit.preview_boot.preview.preview_public_url, "https://preview.example.test")
+assert.equal(result.open_hit.preview_lease.schema, "wp-codebox/preview-lease/v1")
+assert.equal(result.open_hit.preview_lease.lease.status, "active")
+assert.equal(result.open_hit.session.schema, "wp-codebox/browser-session-identity/v1")
+assert.equal(result.open_hit.session.session_id, "session-proof")
+assert.equal(result.open_hit.recovery.ability, "wp-codebox/open-browser-contained-site")
+assert.equal(JSON.stringify(result.open_hit).includes('"blueprint"'), false)
+assert.equal(JSON.stringify(result.open_hit).includes("must-not-leak"), false)
+assert.equal(result.open_miss.success, false)
+assert.equal(result.open_miss.status, "miss")
+assert.equal(result.open_miss.blueprint_ref, undefined)
 
 console.log("browser contained site status ok")
