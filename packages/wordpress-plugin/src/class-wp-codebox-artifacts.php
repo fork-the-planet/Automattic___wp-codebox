@@ -25,6 +25,9 @@ final class WP_Codebox_Artifacts {
 	private const VERIFICATION_SCHEMA = 'wp-codebox/artifact-bundle-verification/v1';
 	private const BROWSER_NORMALIZATION_SCHEMA = 'wp-codebox/browser-artifact-bundle-normalization/v1';
 	private const BROWSER_PERSIST_SCHEMA = 'wp-codebox/browser-artifact-persistence/v1';
+	private const ARTIFACT_RESULT_ENVELOPE_SCHEMA = 'wp-codebox/artifact-result-envelope/v1';
+	private const IMPORT_BUNDLE_SCHEMA = 'wp-codebox/import-artifact-bundle/v1';
+	private const REIMPORT_BUNDLE_SCHEMA = 'wp-codebox/reimport-artifact-bundle/v1';
 	private const GENERIC_VERIFIER_ISSUE_URL = 'https://github.com/Automattic/wp-codebox/issues/176';
 	private const CONTENT_DIGEST_PREFIX = "wp-codebox/artifact-content/v1\nfiles/changed-files.json\n";
 	private const CONTENT_DIGEST_SEPARATOR = "\nfiles/patch.diff\n";
@@ -60,7 +63,7 @@ final class WP_Codebox_Artifacts {
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public function get( array $input ): array|WP_Error {
-		$bundle = $this->resolve_bundle( $input );
+		$bundle = $this->resolve_any_bundle( $input );
 		if ( is_wp_error( $bundle ) ) {
 			return $bundle;
 		}
@@ -372,6 +375,96 @@ final class WP_Codebox_Artifacts {
 			'grant'            => $artifact_ref['grant'] ?? null,
 			'artifact'         => $bundle,
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function import_artifact_bundle( array $input ): array|WP_Error {
+		return $this->import_artifact_bundle_with_operation( $input, 'import-artifact-bundle' );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	public function reimport_artifact_bundle( array $input ): array|WP_Error {
+		$source_input = $input;
+		if ( empty( $source_input['source_bundle_path'] ) && empty( $source_input['source_manifest_path'] ) ) {
+			$artifact_result = is_array( $input['artifact_result'] ?? null ) ? $input['artifact_result'] : array();
+			$artifact_ref    = is_array( $input['artifact_ref'] ?? null ) ? $input['artifact_ref'] : array();
+			$bundle          = is_array( $artifact_result['artifactBundle'] ?? null ) ? $artifact_result['artifactBundle'] : array();
+			$path            = (string) ( $artifact_ref['artifacts_path'] ?? $bundle['path'] ?? '' );
+			if ( '' !== $path ) {
+				$source_input['source_bundle_path'] = $path;
+			}
+		}
+
+		return $this->import_artifact_bundle_with_operation( $source_input, 'reimport-artifact-bundle' );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function import_artifact_bundle_with_operation( array $input, string $operation ): array|WP_Error {
+		$root = $this->artifact_root( $input, true );
+		if ( is_wp_error( $root ) ) {
+			return $root;
+		}
+
+		$source = $this->artifact_import_source( $input );
+		if ( is_wp_error( $source ) ) {
+			return $source;
+		}
+
+		$bundle = $this->read_generic_bundle_at_manifest( (string) $source['manifest_path'], true );
+		if ( is_wp_error( $bundle ) ) {
+			return $bundle;
+		}
+
+		$expected_id = trim( (string) ( $input['expected_artifact_id'] ?? '' ) );
+		if ( '' !== $expected_id && $expected_id !== (string) $bundle['id'] ) {
+			return new WP_Error( 'wp_codebox_artifact_import_id_mismatch', 'Imported artifact id does not match expected_artifact_id.', array( 'status' => 400 ) );
+		}
+
+		$expected_digest = trim( (string) ( $input['expected_content_digest'] ?? '' ) );
+		if ( '' !== $expected_digest && $expected_digest !== (string) $bundle['content_digest'] ) {
+			return new WP_Error( 'wp_codebox_artifact_import_digest_mismatch', 'Imported artifact content digest does not match expected_content_digest.', array( 'status' => 400 ) );
+		}
+
+		$verification = $this->verify_artifact_bundle( $bundle, $input );
+		if ( is_wp_error( $verification ) ) {
+			return $verification;
+		}
+
+		$artifact_id = (string) $bundle['id'];
+		$destination = $root . DIRECTORY_SEPARATOR . $artifact_id;
+		$existing    = is_dir( $destination );
+		$replace     = true === ( $input['replace'] ?? false );
+		$status      = $existing ? 'existing' : 'created';
+
+		if ( $existing && ! $replace ) {
+			$imported = $this->read_generic_bundle_at_manifest( $destination . DIRECTORY_SEPARATOR . 'manifest.json', true );
+			if ( is_wp_error( $imported ) ) {
+				return $imported;
+			}
+		} else {
+			$tmp = $root . DIRECTORY_SEPARATOR . '.artifact-import-' . bin2hex( random_bytes( 8 ) );
+			if ( ! $this->copy_directory( (string) $source['directory'], $tmp ) ) {
+				$this->remove_directory_if_exists( $tmp );
+				return new WP_Error( 'wp_codebox_artifact_import_copy_failed', 'Unable to copy artifact bundle into the artifact store.', array( 'status' => 500 ) );
+			}
+
+			if ( $existing ) {
+				$this->remove_directory( $destination );
+				$status = 'updated';
+			}
+
+			if ( ! rename( $tmp, $destination ) ) {
+				$this->remove_directory_if_exists( $tmp );
+				return new WP_Error( 'wp_codebox_artifact_import_finalize_failed', 'Unable to finalize imported artifact bundle.', array( 'status' => 500 ) );
+			}
+
+			$imported = $this->read_generic_bundle_at_manifest( $destination . DIRECTORY_SEPARATOR . 'manifest.json', true );
+			if ( is_wp_error( $imported ) ) {
+				return $imported;
+			}
+		}
+
+		return $this->artifact_result_envelope( $operation, $status, $imported, $verification, $input );
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -812,6 +905,61 @@ final class WP_Codebox_Artifacts {
 		}
 
 		return new WP_Error( 'wp_codebox_artifact_not_found', 'Artifact bundle was not found under the configured artifact root.', array( 'status' => 404 ) );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+	private function resolve_any_bundle( array $input ): array|WP_Error {
+		$artifact_id = trim( (string) ( $input['artifact_id'] ?? '' ) );
+		if ( '' === $artifact_id ) {
+			return new WP_Error( 'wp_codebox_artifact_id_missing', 'artifact_id is required.', array( 'status' => 400 ) );
+		}
+
+		$root = $this->artifact_root( $input );
+		if ( is_wp_error( $root ) ) {
+			return $root;
+		}
+
+		foreach ( $this->find_manifest_paths( $root ) as $manifest_path ) {
+			$bundle = $this->read_bundle_at_manifest( $manifest_path, true );
+			if ( ! is_wp_error( $bundle ) && $artifact_id === (string) $bundle['id'] ) {
+				return $bundle;
+			}
+
+			$generic = $this->read_generic_bundle_at_manifest( $manifest_path, true );
+			if ( ! is_wp_error( $generic ) && $artifact_id === (string) $generic['id'] ) {
+				return $generic;
+			}
+		}
+
+		return new WP_Error( 'wp_codebox_artifact_not_found', 'Artifact bundle was not found under the configured artifact root.', array( 'status' => 404 ) );
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array{directory:string,manifest_path:string}|WP_Error */
+	private function artifact_import_source( array $input ): array|WP_Error {
+		$manifest_path = trim( (string) ( $input['source_manifest_path'] ?? '' ) );
+		$bundle_path   = trim( (string) ( $input['source_bundle_path'] ?? '' ) );
+		if ( '' === $manifest_path && '' !== $bundle_path ) {
+			$manifest_path = rtrim( $bundle_path, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . 'manifest.json';
+		}
+
+		$real_manifest = '' === $manifest_path ? false : realpath( $manifest_path );
+		if ( false === $real_manifest || ! is_file( $real_manifest ) ) {
+			return new WP_Error( 'wp_codebox_artifact_import_source_missing', 'source_bundle_path or source_manifest_path must point to an artifact bundle manifest.', array( 'status' => 400 ) );
+		}
+
+		$directory = dirname( $real_manifest );
+		if ( '' !== $bundle_path ) {
+			$real_bundle = realpath( $bundle_path );
+			if ( false === $real_bundle || ! is_dir( $real_bundle ) || ! $this->path_is_inside( $real_manifest, $real_bundle ) ) {
+				return new WP_Error( 'wp_codebox_artifact_import_source_invalid', 'source_manifest_path must be inside source_bundle_path.', array( 'status' => 400 ) );
+			}
+			$directory = $real_bundle;
+		}
+
+		return array(
+			'directory'     => $directory,
+			'manifest_path' => $real_manifest,
+		);
 	}
 
 	/** @param array<string,mixed> $input Ability input. @return string|WP_Error */
@@ -1300,6 +1448,80 @@ final class WP_Codebox_Artifacts {
 	}
 
 	/** @return array<string,mixed>|WP_Error */
+	private function read_generic_bundle_at_manifest( string $manifest_path, bool $include_contents ): array|WP_Error {
+		$directory = dirname( $manifest_path );
+		$manifest  = $this->read_json_file( $manifest_path );
+		if ( is_wp_error( $manifest ) ) {
+			return $manifest;
+		}
+
+		$id = trim( (string) ( $manifest['id'] ?? '' ) );
+		if ( '' === $id ) {
+			return new WP_Error( 'wp_codebox_manifest_invalid', 'Artifact manifest is missing an id.', array( 'status' => 400 ) );
+		}
+
+		$bundle = array(
+			'id'             => $id,
+			'content_digest' => is_array( $manifest['contentDigest'] ?? null ) ? (string) ( $manifest['contentDigest']['value'] ?? '' ) : '',
+			'created_at'     => (string) ( $manifest['createdAt'] ?? '' ),
+			'directory'      => $directory,
+			'paths'          => array(
+				'manifest' => $manifest_path,
+				'metadata' => $this->resolve_artifact_file( $directory, 'metadata.json' ),
+			),
+			'has_patch'      => is_file( $this->resolve_artifact_file( $directory, 'files/patch.diff' ) ),
+			'has_changed_files' => is_file( $this->resolve_artifact_file( $directory, 'files/changed-files.json' ) ),
+		);
+
+		if ( ! $include_contents ) {
+			return $bundle;
+		}
+
+		$bundle['manifest'] = $manifest;
+		$metadata_path      = (string) $bundle['paths']['metadata'];
+		$bundle['metadata'] = is_file( $metadata_path ) ? $this->read_json_file( $metadata_path ) : array();
+		if ( is_wp_error( $bundle['metadata'] ) ) {
+			return $bundle['metadata'];
+		}
+
+		return $bundle;
+	}
+
+	/** @param array<string,mixed> $bundle Imported bundle. @param array<string,mixed> $verification Verifier result. @param array<string,mixed> $input Ability input. @return array<string,mixed> */
+	private function artifact_result_envelope( string $operation, string $status, array $bundle, array $verification, array $input ): array {
+		$artifact_ref = $this->strip_null_values( array(
+			'kind'   => 'artifact-bundle',
+			'id'     => (string) $bundle['id'],
+			'path'   => (string) $bundle['directory'],
+			'digest' => '' === (string) ( $bundle['content_digest'] ?? '' ) ? null : array(
+				'algorithm' => 'sha256',
+				'value'     => (string) $bundle['content_digest'],
+			),
+		) );
+
+		return $this->strip_null_values(
+			array(
+				'success'        => in_array( $status, array( 'created', 'existing', 'updated' ), true ),
+				'schema'         => self::ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+				'operation'      => $operation,
+				'operation_schema' => 'reimport-artifact-bundle' === $operation ? self::REIMPORT_BUNDLE_SCHEMA : self::IMPORT_BUNDLE_SCHEMA,
+				'status'         => $status,
+				'artifactBundle' => $artifact_ref,
+				'artifactRefs'   => array( $artifact_ref ),
+				'verification'   => $verification,
+				'result'         => array(
+					'artifact_id'    => (string) $bundle['id'],
+					'content_digest' => (string) ( $bundle['content_digest'] ?? '' ),
+					'directory'      => (string) $bundle['directory'],
+				),
+				'metadata'       => is_array( $input['metadata'] ?? null ) ? $input['metadata'] : null,
+				'diagnostics'    => array(),
+				'artifact'       => $bundle,
+			)
+		);
+	}
+
+	/** @return array<string,mixed>|WP_Error */
 	private function read_json_file( string $path ): array|WP_Error {
 		$contents = is_file( $path ) ? file_get_contents( $path ) : false;
 		if ( false === $contents ) {
@@ -1678,5 +1900,42 @@ final class WP_Codebox_Artifacts {
 		}
 
 		rmdir( $directory );
+	}
+
+	private function remove_directory_if_exists( string $directory ): void {
+		if ( is_dir( $directory ) ) {
+			$this->remove_directory( $directory );
+		}
+	}
+
+	private function copy_directory( string $source, string $destination ): bool {
+		if ( ! is_dir( $source ) || is_dir( $destination ) ) {
+			return false;
+		}
+
+		if ( ! $this->mkdir_p( $destination ) ) {
+			return false;
+		}
+
+		foreach ( scandir( $source ) ?: array() as $entry ) {
+			if ( '.' === $entry || '..' === $entry ) {
+				continue;
+			}
+
+			$source_path      = $source . DIRECTORY_SEPARATOR . $entry;
+			$destination_path = $destination . DIRECTORY_SEPARATOR . $entry;
+			if ( is_dir( $source_path ) && ! is_link( $source_path ) ) {
+				if ( ! $this->copy_directory( $source_path, $destination_path ) ) {
+					return false;
+				}
+				continue;
+			}
+
+			if ( ! copy( $source_path, $destination_path ) ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 }
