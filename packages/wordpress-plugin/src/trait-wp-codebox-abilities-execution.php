@@ -569,12 +569,7 @@ private static function compact_browser_playground_dto( array $playground ): arr
 
 /** @param array<string,mixed> $recipe Browser recipe. @return array<string,mixed> */
 private static function compact_browser_recipe_dto( array $recipe ): array {
-	$compact = self::compact_browser_dto_value( $recipe );
-	if ( is_array( $compact ) && isset( $compact['runtime'] ) && is_array( $compact['runtime'] ) ) {
-		unset( $compact['runtime']['blueprint'] );
-	}
-
-	return is_array( $compact ) ? $compact : array();
+	return WP_Codebox_Browser_Task_Builder::browser_recipe_dto( $recipe );
 }
 
 private static function compact_browser_dto_value( mixed $value, string $key = '' ): mixed {

@@ -180,7 +180,36 @@ $GLOBALS['wp_codebox_test_transients']['wp_codebox_browser_prepared_runtime_' . 
 );
 $hydrated_blueprint = WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( array( 'ref' => $blueprint_ref['ref'] ) );
 
-echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'blueprint_ref' => $blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint ), JSON_UNESCAPED_SLASHES );
+$recipe_dto = WP_Codebox_Browser_Task_Builder::browser_recipe_dto( array(
+	'schema' => 'wp-codebox/workspace-recipe/v1',
+	'runtime' => array(
+		'backend' => 'wordpress-playground',
+		'name' => 'browser-playground',
+		'wp' => 'latest',
+		'blueprint' => array( 'steps' => array( array( 'step' => 'runPHP', 'code' => 'must-not-leak' ) ) ),
+	),
+	'workflow' => array(
+		'steps' => array(
+			array(
+				'command' => 'wordpress.run-php',
+				'args' => array( 'code=<?php /* WP_CODEBOX_BROWSER_RUNNER_BODY_START */ must-not-leak /* WP_CODEBOX_BROWSER_RUNNER_BODY_END */' ),
+			),
+		),
+	),
+	'browser' => array(
+		'execution' => 'php-wasm',
+		'task_path' => '/tmp/task.json',
+		'result_path' => '/tmp/result.json',
+		'runner_contract' => array(
+			'schema' => 'wp-codebox/browser-runner-contract/v1',
+			'php_prelude' => '<?php function generated_prelude() { return "must-not-leak"; }',
+			'php_footer' => '<?php function generated_footer() { return "must-not-leak"; }',
+		),
+		'task_payload' => array( 'secret' => 'must-not-leak' ),
+	),
+) );
+
+echo json_encode( array( 'task_input' => $task_input, 'payload' => $payload, 'explicit_plan_payload' => $explicit_plan_payload, 'plan_contract' => $plan_contract, 'plan_plugin_specs' => $plan_plugin_specs, 'local_task' => $local_task, 'intent_task' => $intent_task, 'fanout_request' => $fanout_request, 'product_session' => $product_session, 'blueprint_ref' => $blueprint_ref, 'hydrated_blueprint' => $hydrated_blueprint, 'recipe_dto' => $recipe_dto ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.task_input.schema, "wp-codebox/task-input/v1")
@@ -255,5 +284,14 @@ assert.equal(result.blueprint_ref.schema, "wp-codebox/browser-blueprint-ref/v1")
 assert.equal(result.blueprint_ref.ref, `prepared:runtime-cache-key:${"b".repeat(64)}`)
 assert.equal(result.hydrated_blueprint.schema, "wp-codebox/browser-blueprint-hydration/v1")
 assert.equal(result.hydrated_blueprint.blueprint.steps[0].step, "login")
+assert.equal(result.recipe_dto.schema, "wp-codebox/browser-recipe-dto/v1")
+assert.equal(result.recipe_dto.source_schema, "wp-codebox/workspace-recipe/v1")
+assert.equal(result.recipe_dto.runtime.backend, "wordpress-playground")
+assert.equal(result.recipe_dto.workflow.steps[0].args[0].kind, "generated-php")
+assert.equal(result.recipe_dto.workflow.steps[0].args[0].runner_contract.php_prelude.type, "generated-php-fragment")
+assert.equal(result.recipe_dto.browser.runner_contract.php_footer.type, "generated-php-fragment")
+assert.equal(JSON.stringify(result.recipe_dto).includes("must-not-leak"), false)
+assert.equal(JSON.stringify(result.recipe_dto).includes("code="), false)
+assert.equal(JSON.stringify(result.recipe_dto).includes("php_prelude\":\""), false)
 
 console.log("browser task builder ok")
