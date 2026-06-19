@@ -553,6 +553,37 @@ final class WP_Codebox_Browser_Task_Builder {
 		return function_exists( 'apply_filters' ) ? apply_filters( 'wp_codebox_browser_preview_boot_config', $config, $session ) : $config;
 	}
 
+	/**
+	 * @param array<string,mixed> $preview_boot Browser preview boot config.
+	 * @param array<string,mixed> $blueprint_ref Browser blueprint ref DTO.
+	 * @return array{valid:bool,reason:string}
+	 */
+	public static function validate_browser_preview_boot_contract( array $preview_boot, array $blueprint_ref = array() ): array {
+		$boot_ref           = trim( (string) ( $preview_boot['blueprint_ref'] ?? '' ) );
+		$boot_ref_dto       = is_array( $preview_boot['blueprint_ref_dto'] ?? null ) ? $preview_boot['blueprint_ref_dto'] : array();
+		$boot_dto_ref       = trim( (string) ( $boot_ref_dto['ref'] ?? $boot_ref_dto['id'] ?? '' ) );
+		$contract_ref       = trim( (string) ( $blueprint_ref['ref'] ?? $blueprint_ref['id'] ?? '' ) );
+		$hydration_endpoint = trim( (string) ( $boot_ref_dto['hydration_endpoint'] ?? $boot_ref_dto['endpoint'] ?? '' ) );
+
+		if ( '' === $boot_ref || 'inline-session-blueprint' === $boot_ref ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-missing' );
+		}
+
+		if ( '' === $boot_dto_ref ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-dto-missing' );
+		}
+
+		if ( $boot_ref !== $boot_dto_ref || ( '' !== $contract_ref && $boot_ref !== $contract_ref ) ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-blueprint-ref-mismatch' );
+		}
+
+		if ( '' === $hydration_endpoint ) {
+			return array( 'valid' => false, 'reason' => 'preview-boot-hydration-endpoint-missing' );
+		}
+
+		return array( 'valid' => true, 'reason' => 'preview-boot-contract-hydratable' );
+	}
+
 	/** @param array<string,mixed> $recipe Browser workspace recipe. @return array<string,mixed> */
 	public static function browser_recipe_dto( array $recipe ): array {
 		$runtime = is_array( $recipe['runtime'] ?? null ) ? $recipe['runtime'] : array();
