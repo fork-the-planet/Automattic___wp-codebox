@@ -934,6 +934,24 @@ async function validateRecipePluginRuntime(pluginRuntime: WorkspaceRecipePluginR
     addIssue("invalid-plugin-runtime-max-execution-time", "$.inputs.pluginRuntime.php.maxExecutionTime", "Plugin runtime maxExecutionTime must be an integer from 0 through 3600.")
   }
 
+  for (const [name, value] of Object.entries(pluginRuntime.php?.iniEntries ?? {})) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(name)) {
+      addIssue("invalid-plugin-runtime-php-ini-entry", `$.inputs.pluginRuntime.php.iniEntries.${name}`, "PHP ini entry names may contain only letters, numbers, dots, underscores, and hyphens.")
+    }
+    if (!["string", "number", "boolean"].includes(typeof value) && value !== null) {
+      addIssue("invalid-plugin-runtime-php-ini-entry-value", `$.inputs.pluginRuntime.php.iniEntries.${name}`, "PHP ini entry values must be string, number, boolean, or null.")
+    }
+  }
+
+  for (const [name, value] of Object.entries(pluginRuntime.php?.bootstrapIniEntries ?? {})) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(name)) {
+      addIssue("invalid-plugin-runtime-bootstrap-php-ini-entry", `$.inputs.pluginRuntime.php.bootstrapIniEntries.${name}`, "Bootstrap PHP ini entry names may contain only letters, numbers, dots, underscores, and hyphens.")
+    }
+    if (!["string", "number", "boolean"].includes(typeof value) && value !== null) {
+      addIssue("invalid-plugin-runtime-bootstrap-php-ini-entry-value", `$.inputs.pluginRuntime.php.bootstrapIniEntries.${name}`, "Bootstrap PHP ini entry values must be string, number, boolean, or null.")
+    }
+  }
+
   for (const [name, value] of Object.entries(pluginRuntime.wpConfigDefines ?? {})) {
     if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) {
       addIssue("invalid-plugin-runtime-wp-config-define", `$.inputs.pluginRuntime.wpConfigDefines.${name}`, "wpConfigDefines keys must be valid PHP constant names.")

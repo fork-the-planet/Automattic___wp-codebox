@@ -1,6 +1,7 @@
 import { playgroundBlueprint } from "./blueprint.js"
 import { PlaygroundCliExitError, type PlaygroundCliBufferedOutput } from "./playground-command-errors.js"
 import { PlaygroundPreviewPortUnavailableError, assertPreviewPortAvailable, errorHasCode, withPreviewProxy, type PlaygroundCliServer } from "./preview-server.js"
+import { startProgrammaticPlaygroundServer } from "./programmatic-playground-runner.js"
 import type { BrowserStartupProgressEvent, BrowserStartupProgressPhase, BrowserStartupProgressStatus, MountSpec, RuntimeCreateSpec } from "@automattic/wp-codebox-core"
 import { randomInt } from "node:crypto"
 import { existsSync } from "node:fs"
@@ -24,8 +25,10 @@ export interface PlaygroundCliModule {
     blueprint?: unknown
     wp?: string
     php?: string
+    workers?: number | "auto"
     wordpressInstallMode?: "install-from-existing-files" | "install-from-existing-files-if-needed" | "do-not-attempt-installing"
     "site-url"?: string
+    phpIniEntries?: Record<string, string>
   }): Promise<PlaygroundCliServer>
 }
 
@@ -56,7 +59,6 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
   })
   emitProgress("preview:loading-client", "running", "Loading preview")
   try {
-    const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
     if (spec.preview?.port) {
       await assertPreviewPortAvailable(spec.preview.port)
     }
@@ -66,6 +68,8 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
     })
     const wordpressDirectory = spec.environment.assets?.wordpressDirectory
     const wordpressInstallMode = spec.environment.wordpressInstallMode ?? "install-from-existing-files"
+    const bootstrapIniEntries = pluginRuntimeBootstrapPhpIniEntries(spec)
+    const useProgrammaticRunner = shouldUseProgrammaticPlaygroundRunner(spec, options)
     const wordpressStartupAsset = wordpressDirectory ? undefined : await resolvePlaygroundWordPressStartupAsset(spec.environment.version, spec.environment.assets?.wordpressZip)
     const cacheValidation = wordpressStartupAsset?.cacheValidation ?? {
       version: spec.environment.version ?? "mounted-wordpress-source",
@@ -84,8 +88,24 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
       emitProgress("preview:activating-dependencies", "running", "Activating site features", blueprintSummary)
     }
 
-    const server = await startPlaygroundCliWithDynamicPortRetry(async (port) => {
+    const server = useProgrammaticRunner ? await startPlaygroundCliWithDynamicPortRetry(async (port) => {
+      return startProgrammaticPlaygroundServer({
+        ...spec,
+        preview: {
+          ...spec.preview,
+          port,
+        },
+      }, mounts, {
+        bootstrapIniEntries: bootstrapIniEntries!,
+        phpIniEntries: pluginRuntimePhpIniEntries(spec),
+        wordpressDirectory: wordpressDirectory!,
+        wordpressInstallMode,
+        sharedPhpIniContent: phpIniContent(bootstrapIniEntries!),
+      })
+    }, Boolean(spec.preview?.port)) : await startPlaygroundCliWithDynamicPortRetry(async (port) => {
+      const { runCLI } = options.cliModule ?? (await import("@wp-playground/cli")) as unknown as PlaygroundCliModule
       const localAssetServer = wordpressStartupAsset?.localPath ? await serveLocalStartupAsset(wordpressStartupAsset.localPath) : undefined
+      const bootstrapSharedMount = await pluginRuntimeBootstrapSharedMount(spec)
       try {
         return await runCLI({
           command: "server",
@@ -93,16 +113,23 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
           quiet: true,
           verbosity: "quiet",
           skipBrowser: true,
-          mount: mounts.map((mount) => ({
-            hostPath: mount.source,
-            vfsPath: mount.target,
-          })),
-          ...(wordpressDirectory ? {
-            "mount-before-install": [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }],
+          workers: 6,
+          mount: [
+            ...mounts.map((mount) => ({
+              hostPath: mount.source,
+              vfsPath: mount.target,
+            })),
+          ],
+          ...(wordpressDirectory || bootstrapSharedMount ? {
+            "mount-before-install": [
+              ...(bootstrapSharedMount ? [bootstrapSharedMount] : []),
+              ...(wordpressDirectory ? [{ hostPath: wordpressDirectory, vfsPath: "/wordpress" }] : []),
+            ],
             wordpressInstallMode,
           } : {}),
           wp: localAssetServer?.url ?? wordpressStartupAsset?.wp,
           php: spec.environment.phpVersion,
+          phpIniEntries: pluginRuntimePhpIniEntries(spec),
           "site-url": spec.preview?.siteUrl,
           blueprint: playgroundCliBlueprint(spec),
         })
@@ -134,6 +161,84 @@ export async function startPlaygroundCliServer(spec: RuntimeCreateSpec, mounts: 
 
     throw error
   }
+}
+
+export function shouldUseProgrammaticPlaygroundRunner(spec: RuntimeCreateSpec, options: PlaygroundCliStartupOptions = {}): boolean {
+  return !options.cliModule && Boolean(spec.environment.assets?.wordpressDirectory) && Boolean(pluginRuntimeBootstrapPhpIniEntries(spec))
+}
+
+async function pluginRuntimeBootstrapSharedMount(spec: RuntimeCreateSpec): Promise<{ hostPath: string; vfsPath: string } | undefined> {
+  const iniEntries = pluginRuntimeBootstrapPhpIniEntries(spec)
+  if (!iniEntries) {
+    return undefined
+  }
+
+  const directory = join(spec.artifactsDirectory ?? "artifacts", "playground-internal-shared")
+  await mkdir(directory, { recursive: true })
+  await mkdir(join(directory, "mu-plugins"), { recursive: true })
+  await mkdir(join(directory, "preload"), { recursive: true })
+  await writeFile(join(directory, "php.ini"), phpIniContent(iniEntries), "utf8")
+  await writeFile(join(directory, "auto_prepend_file.php"), "<?php\n", "utf8")
+
+  return { hostPath: directory, vfsPath: "/internal/shared" }
+}
+
+function pluginRuntimeBootstrapPhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+  return pluginRuntimePhpEntries(spec, "bootstrapIniEntries")
+}
+
+function pluginRuntimePhpIniEntries(spec: RuntimeCreateSpec): Record<string, string> | undefined {
+  return pluginRuntimePhpEntries(spec, "iniEntries")
+}
+
+function pluginRuntimePhpEntries(spec: RuntimeCreateSpec, key: "iniEntries" | "bootstrapIniEntries"): Record<string, string> | undefined {
+  const pluginRuntime = spec.metadata?.recipe && typeof spec.metadata.recipe === "object" && !Array.isArray(spec.metadata.recipe)
+    ? (spec.metadata.recipe as { inputs?: { pluginRuntime?: unknown } }).inputs?.pluginRuntime
+    : undefined
+  const php = pluginRuntime && typeof pluginRuntime === "object" && !Array.isArray(pluginRuntime)
+    ? (pluginRuntime as { php?: Record<string, unknown> }).php
+    : undefined
+  const iniEntries = php && typeof php === "object" && !Array.isArray(php) ? php[key] : undefined
+  if (!iniEntries || typeof iniEntries !== "object" || Array.isArray(iniEntries)) {
+    return undefined
+  }
+
+  const entries: Record<string, string> = {}
+  for (const [name, value] of Object.entries(iniEntries)) {
+    if (/^[a-zA-Z0-9_.-]+$/.test(name) && (["string", "number", "boolean"].includes(typeof value) || value === null)) {
+      entries[name] = value === null ? "" : String(value)
+    }
+  }
+
+  return Object.keys(entries).length > 0 ? entries : undefined
+}
+
+function phpIniContent(entries: Record<string, string>): string {
+  const lines = [
+    "auto_prepend_file=/internal/shared/auto_prepend_file.php",
+    "memory_limit=256M",
+    "ignore_repeated_errors = 1",
+    "error_reporting = E_ALL",
+    "display_errors = 1",
+    "html_errors = 1",
+    "display_startup_errors = On",
+    "log_errors = 1",
+    "always_populate_raw_post_data = -1",
+    "upload_max_filesize = 2000M",
+    "post_max_size = 2000M",
+    "allow_url_fopen = On",
+    "allow_url_include = Off",
+    "session.save_path = /home/web_user",
+    "implicit_flush = 1",
+    "output_buffering = 0",
+    "max_execution_time = 0",
+    "max_input_time = -1",
+  ]
+  for (const [name, value] of Object.entries(entries)) {
+    lines.push(`${name} = ${value}`)
+  }
+
+  return `${lines.join("\n")}\n`
 }
 
 function playgroundCliBlueprint(spec: RuntimeCreateSpec): unknown {

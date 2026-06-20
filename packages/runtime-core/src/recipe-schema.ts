@@ -745,6 +745,19 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             properties: {
               memoryLimit: { type: "string", pattern: "^[0-9]+[KMG]?$" },
               maxExecutionTime: { type: "integer", minimum: 0, maximum: 3600 },
+              iniEntries: {
+                type: "object",
+                additionalProperties: {
+                  type: ["string", "number", "boolean", "null"],
+                },
+              },
+              bootstrapIniEntries: {
+                type: "object",
+                description: "PHP.ini entries written before PHP WASM initializes. Use this for settings that must override PHP WASM's generated default php.ini, such as opcache file-cache behavior.",
+                additionalProperties: {
+                  type: ["string", "number", "boolean", "null"],
+                },
+              },
             },
           },
           wpConfigDefines: {

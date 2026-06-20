@@ -244,6 +244,8 @@ export interface WorkspaceRecipeTypedArtifact {
 export interface WorkspaceRecipePluginRuntimePhp {
   memoryLimit?: string
   maxExecutionTime?: number
+  iniEntries?: Record<string, string | number | boolean | null>
+  bootstrapIniEntries?: Record<string, string | number | boolean | null>
 }
 
 export interface WorkspaceRecipePluginRuntimeHealthProbe {
