@@ -45,6 +45,11 @@ export interface BenchmarkArtifactRef {
   metadata?: Record<string, unknown>
 }
 
+export interface BenchmarkInlineArtifact {
+  schema: string
+  [key: string]: unknown
+}
+
 export interface BenchmarkScenarioRecord {
   id: string
   source: BenchmarkScenarioSource
@@ -57,7 +62,7 @@ export interface BenchmarkScenarioRecord {
   diagnostics: BenchmarkDiagnostic[]
   artifactRefs?: BenchmarkArtifactRef[]
   steps?: Array<Record<string, unknown>>
-  artifacts?: Record<string, BenchmarkArtifactRef>
+  artifacts?: Record<string, BenchmarkArtifactRef | BenchmarkInlineArtifact>
   metadata?: Record<string, unknown>
   provenance?: Record<string, unknown>
 }
@@ -267,7 +272,21 @@ function benchmarkSchemaDefs(): Record<string, unknown> {
     },
     artifactMap: {
       type: "object",
-      additionalProperties: { $ref: "#/$defs/artifactRef" },
+      additionalProperties: { anyOf: [{ $ref: "#/$defs/artifactRef" }, { $ref: "#/$defs/inlineBenchmarkArtifact" }] },
+    },
+    inlineBenchmarkArtifact: {
+      type: "object",
+      required: ["schema"],
+      properties: {
+        schema: {
+          enum: [
+            "wp-codebox/wordpress-db-inventory/v1",
+            "wp-codebox/wordpress-external-http-guardrail/v1",
+            "wp-codebox/wordpress-rest-db-query-profile/v1",
+          ],
+        },
+      },
+      additionalProperties: true,
     },
     lifecycle: {
       type: "object",
