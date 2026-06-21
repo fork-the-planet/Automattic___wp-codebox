@@ -52,19 +52,8 @@ assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilitie
 assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePublish), /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'publish_runner_workspace'\s*\)/)
 assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePublish), /'permission_callback'\s*=>\s*array\(\s*self::class,\s*'can_run_agent_task'\s*\)/)
 
-for (const backendAbility of [
-  "datamachine-code/workspace-adopt",
-  "datamachine-code/workspace-show",
-  "datamachine-code/workspace-clone",
-  "datamachine-code/workspace-worktree-add",
-  "datamachine-code/workspace-git-status",
-  "datamachine-code/workspace-git-diff",
-  "datamachine-code/publish-runner-workspace",
-  "datamachine-code/run-runner-workspace-command",
-  "datamachine-code/workspace-capabilities",
-]) {
-  assert.match(runnerWorkspacePhp, new RegExp(`'${backendAbility}'`))
-}
+assert.match(runnerWorkspacePhp, /apply_filters\(\s*'wp_codebox_runner_workspace_backend'/)
+assert.doesNotMatch(runnerWorkspacePhp, /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)
 
 const serialized = JSON.stringify(contract)
 assert.doesNotMatch(serialized, /datamachine|data machine|homeboy|wpsg|wp-site-generator|wp site generator/i)

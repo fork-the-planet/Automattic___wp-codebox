@@ -19,6 +19,7 @@ const playgroundPackage = await readJson("packages/runtime-playground/package.js
 
 assert.deepEqual(exportKeys(rootPackage), [
   "./core",
+  "./core/public",
   "./core/contracts",
   "./core/artifacts",
   "./core/internals",
@@ -32,6 +33,7 @@ assert.deepEqual(exportKeys(rootPackage), [
 
 assert.deepEqual(exportKeys(corePackage), [
   ".",
+  "./public",
   "./contracts",
   "./artifacts",
   "./internals",
@@ -46,6 +48,7 @@ const docs = await readFile(new URL("docs/public-api-contract.md", root), "utf8"
 
 for (const publicEntry of [
   "@automattic/wp-codebox-core",
+  "@automattic/wp-codebox-core/public",
   "@automattic/wp-codebox-core/contracts",
   "@automattic/wp-codebox-core/artifacts",
   "@automattic/wp-codebox-core/recipe-builders",
@@ -53,6 +56,7 @@ for (const publicEntry of [
   "@automattic/wp-codebox-core/runtime-presets",
   "@automattic/wp-codebox-playground",
   "@automattic/wp-codebox-cli",
+  "./cli/recipe-secret-env",
   "@automattic/wp-codebox-cli/recipe-secret-env",
 ]) {
   assert.match(docs, new RegExp(publicEntry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `docs must mention ${publicEntry}`)
@@ -63,6 +67,7 @@ for (const contractArea of [
   "Runner workspace",
   "Tool bridge",
   "Browser task and contained site",
+  "Browser SDK",
   "Artifacts",
   "Inspect",
 ]) {
@@ -71,5 +76,6 @@ for (const contractArea of [
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
 assert.match(docs, /not a stable compatibility surface for external integrations/)
+assert.match(docs, /New external TypeScript\s+consumers should prefer/)
 
 console.log("public API contract ok")
