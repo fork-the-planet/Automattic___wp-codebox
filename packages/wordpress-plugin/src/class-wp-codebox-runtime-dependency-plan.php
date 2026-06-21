@@ -225,13 +225,19 @@ final class WP_Codebox_Runtime_Dependency_Plan {
 			return array();
 		}
 
-		$preflight = is_array( $value['preflight'] ?? null ) ? $value['preflight'] : array();
+		$requirements = is_array( $value['requirements'] ?? null ) ? $value['requirements'] : array();
+		$preflight    = is_array( $value['preflight'] ?? null ) ? $value['preflight'] : array();
+		$secret_env   = self::secret_env_list( $value['secret_env'] ?? $preflight['secret_env'] ?? array() );
+		if ( empty( $requirements ) && empty( $preflight ) && empty( $secret_env ) ) {
+			return array();
+		}
+
 		return array_filter(
 			array(
 				'schema'       => 'wp-codebox/provider-credential-resolution/v1',
-				'requirements' => is_array( $value['requirements'] ?? null ) ? $value['requirements'] : array(),
+				'requirements' => $requirements,
 				'preflight'    => $preflight,
-				'secret_env'   => self::secret_env_list( $value['secret_env'] ?? $preflight['secret_env'] ?? array() ),
+				'secret_env'   => $secret_env,
 				'redacted'     => true,
 			),
 			static fn( mixed $entry ): bool => array() !== $entry && '' !== $entry
