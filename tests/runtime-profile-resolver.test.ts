@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import { phpStringLiteral, repoRoot, runPhpJson } from "../scripts/test-kit.js"
 
 const result = await runPhpJson<{
+  default_error: { code: string; data: { errors: Array<{ code: string; profile: string }> } }
   input: {
-    runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; resolved_profile: { schema: string; summary: { profiles: number } } }
+    runtime: { components: Array<{ slug: string }>; plugins: Array<{ slug: string }>; resolved_profile: { schema: string; summary: { profiles: number }; profiles: Array<{ id: string; aliases?: string[] }> } }
     runtime_profile: {
       schema: string
       capabilities: string[]
@@ -30,6 +31,7 @@ function apply_filters( $hook, $value, ...$args ) {
 		$value['content-runtime'] = array(
 			'id' => 'content-runtime',
 			'label' => 'Content runtime',
+			'aliases' => array( 'content-agent-runtime' ),
 			'capabilities' => array( 'content.runtime' ),
 			'requires' => array( 'agents-api' ),
 			'components' => array( array( 'slug' => 'content-runtime' ) ),
@@ -37,8 +39,9 @@ function apply_filters( $hook, $value, ...$args ) {
 		$value['workspace-runtime'] = array(
 			'id' => 'workspace-runtime',
 			'label' => 'Workspace runtime',
+			'aliases' => array( 'coding-agent-runtime' ),
 			'capabilities' => array( 'workspace.runtime' ),
-			'requires' => array( 'content-runtime' ),
+			'requires' => array( 'content-agent-runtime' ),
 			'components' => array( array( 'slug' => 'workspace-runtime' ) ),
 		);
 	}
@@ -54,10 +57,12 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-c
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-browser-task-builder.php`)};
 
+$default_resolution = WP_Codebox_Runtime_Profile_Resolver::resolve( array( 'profiles' => array( 'data-machine-code' ) ) );
+
 $input = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 	'sandbox_session_id' => 'runtime-profile-session',
 	'runtime_profile' => array(
-		'profiles' => array( 'workspace-runtime' ),
+		'profiles' => array( 'coding-agent-runtime' ),
 		'components' => array( 'workspace-overlay' ),
 		'capabilities' => array( 'provider.openai' ),
 		'runtime_overlays' => array( array( 'id' => 'codex-runtime-overlay' ) ),
@@ -71,9 +76,11 @@ $unresolved = WP_Codebox_Browser_Task_Builder::local_browser_task_input( array(
 	),
 ) );
 
-echo json_encode( array( 'input' => $input, 'unresolved' => $unresolved ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'default_error' => array( 'code' => $default_resolution->code, 'data' => $default_resolution->data ), 'input' => $input, 'unresolved' => $unresolved ), JSON_UNESCAPED_SLASHES );
 `)
 
+assert.equal(result.default_error.code, "wp_codebox_runtime_profile_unresolved")
+assert.deepEqual(result.default_error.data.errors, [{ code: "profile_not_registered", profile: "data-machine-code" }])
 assert.deepEqual(result.input.runtime.components.map((component) => component.slug), [
   "agents-api",
   "content-runtime",
@@ -86,10 +93,8 @@ assert.deepEqual(result.input.runtime_profile.capabilities, [
   "browser.preview",
   "agents-api",
   "agents.runtime",
-  "data-machine",
-  "datamachine.runtime",
-  "data-machine-code",
-  "datamachine-code.runtime",
+  "content.runtime",
+  "workspace.runtime",
   "provider.openai",
 ])
 assert.deepEqual(result.input.runtime.plugins.map((plugin) => plugin.slug), ["ai-provider-for-openai"])
@@ -103,6 +108,7 @@ assert.equal(result.input.runtime_profile.provenance.owner, "wp-codebox")
 assert.deepEqual(result.input.placement.required_capabilities, ["wordpress.playground", "browser.preview", "agents.runtime"])
 assert.equal(result.input.runtime.resolved_profile.schema, "wp-codebox/runtime-profile-resolution/v1")
 assert.equal(result.input.runtime.resolved_profile.summary.profiles, 5)
+assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "workspace-runtime")?.aliases?.[0], "coding-agent-runtime")
 assert.deepEqual(result.unresolved.runtime.components.map((component) => component.slug), ["repo-local-component"])
 
 console.log("runtime profile resolver ok")

@@ -58,6 +58,7 @@ assert.doesNotMatch(JSON.stringify(credentialResolution), /token-value|secret_en
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
 const runnerWorkspacePhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-runner-publication.php", "utf8")
+const runnerWorkspaceAdapterPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-adapter.php", "utf8")
 const providerCredentialsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-provider-credentials.php", "utf8")
 const registeredAbilityIds = [
   contract.abilities.workspacePrepare,
@@ -103,7 +104,7 @@ for (const [alias, canonical] of aliasExpectations) {
   assert.match(block, new RegExp(`'alias_of'\\s*=>\\s*'${canonical}'`))
 }
 
-assert.match(runnerWorkspacePhp, /apply_filters\(\s*'wp_codebox_runner_workspace_backend'/)
+assert.match(runnerWorkspaceAdapterPhp, /apply_filters\(\s*'wp_codebox_runner_workspace_backend'/)
 assert.match(providerCredentialsPhp, /wp_codebox_provider_credential_requirements/)
 assert.match(providerCredentialsPhp, /wp_codebox_resolve_provider_credentials/)
 assert.doesNotMatch(providerCredentialsPhp, /secret_env_values|access_token|refresh_token/i)
