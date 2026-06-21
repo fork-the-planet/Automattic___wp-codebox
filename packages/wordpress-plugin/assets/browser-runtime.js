@@ -3,6 +3,22 @@
 	const defaultRunnerUrlBase = '/wp-content/uploads/wp-codebox/runner';
 	const browserProviderProxySchema = 'wp-codebox/browser-provider-proxy-request/v1';
 	const browserProviderProxyMaxBytes = 1000000;
+	const browserSdkSchema = 'wp-codebox/browser-sdk/v1';
+	const browserSdkResultSchema = 'wp-codebox/browser-sdk-result/v1';
+	const browserSdkVersion = '1.0.0';
+	const browserSdkCapabilities = Object.freeze( [
+		'browser-runtime:info',
+		'browser-runtime:normalize-error',
+		'browser-runtime:normalize-result',
+		'browser-runtime:invoke-result',
+		'playground:run-php',
+		'playground:run-recipe',
+		'wordpress:operation',
+		'filesystem:write-file',
+		'filesystem:ensure-directory',
+		'review:write-file',
+		'contract:probe',
+	] );
 
 	const safeName = ( name ) => String( name || 'task' ).replace( /[^a-z0-9_-]/gi, '-' ).toLowerCase();
 
@@ -129,6 +145,78 @@
 		phase: error?.phase || 'runtime',
 		message: error?.message || String( error ),
 		data: error?.data ?? null,
+	} );
+
+	const normalizeBrowserSdkError = ( error, fallbackCode = 'runtime_error' ) => {
+		const details = errorDetails( error );
+		return {
+			schema: 'wp-codebox/browser-sdk-error/v1',
+			code: details.code || fallbackCode,
+			message: details.message || 'WP Codebox browser SDK operation failed.',
+			phase: details.phase || 'runtime',
+			status: error?.status ?? error?.httpStatusCode ?? null,
+			data: details.data,
+		};
+	};
+
+	const browserSdkResult = async ( operation, callback ) => {
+		try {
+			return {
+				schema: browserSdkResultSchema,
+				operation,
+				success: true,
+				data: await callback(),
+				error: null,
+			};
+		} catch ( error ) {
+			return {
+				schema: browserSdkResultSchema,
+				operation,
+				success: false,
+				data: null,
+				error: normalizeBrowserSdkError( error ),
+			};
+		}
+	};
+
+	const browserSdkInfo = () => ( {
+		schema: browserSdkSchema,
+		apiVersion: 'v1',
+		version: browserSdkVersion,
+		capabilities: [ ...browserSdkCapabilities ],
+		globals: {
+			name: 'wpCodeboxBrowser',
+			facade: 'wpCodeboxBrowser.v1',
+		},
+	} );
+
+	const browserSdkFacade = ( api ) => Object.freeze( {
+		schema: browserSdkSchema,
+		apiVersion: 'v1',
+		version: browserSdkVersion,
+		capabilities: () => browserSdkInfo().capabilities,
+		getCapabilities: () => browserSdkInfo(),
+		info: browserSdkInfo,
+		normalizeError: normalizeBrowserSdkError,
+		normalizeResult: normalizeOperationResult,
+		result: browserSdkResult,
+		methods: Object.freeze( {
+			activateTheme: api.activateTheme,
+			browserSessionRecipe: api.browserSessionRecipe,
+			ensureDirectory: api.ensureDirectory,
+			installTheme: api.installTheme,
+			preparedBrowserRuntimeContract: api.preparedBrowserRuntimeContract,
+			preparedBrowserRuntimeStatus: api.preparedBrowserRuntimeStatus,
+			runBrowserRuntimeContractProbe: api.runBrowserRuntimeContractProbe,
+			runBrowserSessionRecipe: api.runBrowserSessionRecipe,
+			runPhpRequest: api.runPhpRequest,
+			runRecipe: api.runRecipe,
+			runWordPressOperation: api.runWordPressOperation,
+			selectPreparedBrowserBlueprint: api.selectPreparedBrowserBlueprint,
+			setFrontendAdminBarVisible: api.setFrontendAdminBarVisible,
+			writeFile: api.writeFile,
+			writeReviewFile: api.writeReviewFile,
+		} ),
 	} );
 
 	const normalizePlaygroundAttempt = ( attempt, index, method ) => {
@@ -1663,7 +1751,7 @@ echo wp_json_encode( array(
 		};
 	};
 
-	window.wpCodeboxBrowser = {
+	const wpCodeboxBrowserApi = {
 		activateTheme,
 		browserSessionRecipe,
 		ensureDirectory,
@@ -1682,4 +1770,6 @@ echo wp_json_encode( array(
 		writeFile,
 		writeReviewFile,
 	};
+	wpCodeboxBrowserApi.v1 = browserSdkFacade( wpCodeboxBrowserApi );
+	window.wpCodeboxBrowser = wpCodeboxBrowserApi;
 } )();

@@ -67,6 +67,7 @@ for (const contractArea of [
   "Runner workspace",
   "Tool bridge",
   "Browser task and contained site",
+  "Browser SDK",
   "Artifacts",
   "Inspect",
 ]) {
