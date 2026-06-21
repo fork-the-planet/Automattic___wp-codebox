@@ -19,6 +19,8 @@ function apply_filters( string $hook, mixed $value, mixed ...$args ): mixed {
 }
 
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agent-workload.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php';
 
 function assert_same_contract( mixed $expected, mixed $actual, string $label ): void {
