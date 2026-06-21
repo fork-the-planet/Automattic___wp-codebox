@@ -10,12 +10,11 @@ sandbox.
 
 Use these package entrypoints from external integrations:
 
-- `@automattic/wp-codebox-core`: runtime, task/package, runner workspace, tool
-  bridge, parent tool bridge, browser task/contained-site, artifact metadata,
-  recipe, policy, and provider contract types and helpers.
+- `@automattic/wp-codebox-core`: broad compatibility barrel for existing
+  consumers. New integrations should use a focused entrypoint below.
 - `@automattic/wp-codebox-core/public`: curated public facade for runtime,
   task/package, runner workspace, tool bridge, parent tool bridge, browser,
-  artifact, recipe, policy, and provider contract types and helpers. New external TypeScript consumers should prefer
+  artifact, recipe, and policy contract types and helpers. New external TypeScript consumers should prefer
   this facade over the broad root barrel.
 - `@automattic/wp-codebox-core/contracts`: command catalog and inspectable
   contract metadata used by CLI and orchestrator consumers.
@@ -59,9 +58,8 @@ The workspace package mirrors the core entrypoints as `./core`,
 The stable public surface is grouped by lifecycle area rather than by product:
 
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
-  recipe source package, runtime workload, WordPress workload primitives,
-  runtime package execution, runtime policy, provider runtime, and command result
-  contracts. Playground-backed WordPress consumers can use
+  recipe source package, runtime workload, runtime package execution, runtime
+  policy, and command result contracts. Playground-backed WordPress consumers can use
   `createWordPressRuntime()`, `createWordPressEpisode()`, and
   `runWordPressEpisodeActions()` from `@automattic/wp-codebox-playground/public`
   instead of composing core runtime internals directly.
