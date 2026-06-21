@@ -24,6 +24,7 @@ require_once __DIR__ . '/src/class-wp-codebox-runtime-tool-policy-descriptor.php
 require_once __DIR__ . '/src/class-wp-codebox-sandbox-tool-policy-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-path-policy.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-task.php';
+require_once __DIR__ . '/src/class-wp-codebox-provider-credentials.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-dependency-plan.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-profile-resolver.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-recipe-resolver.php';
@@ -40,6 +41,7 @@ require_once __DIR__ . '/src/class-wp-codebox-host-recipe-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-status-taxonomy.php';
 require_once __DIR__ . '/src/class-wp-codebox-host-run-result-normalizer.php';
 require_once __DIR__ . '/src/class-wp-codebox-managed-host-command.php';
+require_once __DIR__ . '/src/class-wp-codebox-runner-workspace-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-parent-site-seed-exporter.php';
 require_once __DIR__ . '/src/class-wp-codebox-json.php';
 require_once __DIR__ . '/src/class-wp-codebox-run-plan.php';

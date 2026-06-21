@@ -30,6 +30,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:info",
     "browser-runtime:normalize-error",
     "browser-runtime:normalize-result",
+    "browser-runtime:normalize-browser-run-result",
     "browser-runtime:invoke-result",
     "playground:run-php",
     "playground:run-recipe",
@@ -47,6 +48,7 @@ assert.deepEqual(plain(api.v1.info()), {
 
 assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
+assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
 assert.deepEqual(plain(api.v1.normalizeError(Object.assign(new Error("Nope"), { code: "demo_error", phase: "probe", status: 418, data: { demo: true } }))), {
   schema: "wp-codebox/browser-sdk-error/v1",
   code: "demo_error",
@@ -72,5 +74,61 @@ assert.equal(failed.operation, "demo.fail")
 assert.equal(failed.success, false)
 assert.equal(failed.error.code, "demo_failed")
 assert.equal(failed.error.message, "Broken")
+
+const browserRun = api.v1.normalizeBrowserRunResult({
+  success: true,
+  data: {
+    artifact: { path: "files/browser/index.html", kind: "browser-html", sha256: "def" },
+    artifact_bundle: { id: "artifact-bundle-sha256-abc", directory: "artifacts/run-1", contentDigest: { algorithm: "sha256", value: "abc" } },
+  },
+}, "browser-session-recipe")
+assert.equal(browserRun.schema, "wp-codebox/browser-run-result/v1")
+assert.equal(browserRun.status, "completed")
+assert.equal(browserRun.success, true)
+assert.deepEqual(plain(browserRun.artifactRefs), [
+  { kind: "artifact-bundle", id: "artifact-bundle-sha256-abc", path: "artifacts/run-1", digest: { algorithm: "sha256", value: "abc" } },
+  { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
+])
+assert.equal(api.v1.browserArtifactPersistenceRef(browserRun.result).schema, "wp-codebox/browser-artifact-persistence/ref/v1")
+
+const canonicalBrowserRun = api.v1.normalizeBrowserRunResult({
+  schema: "wp-codebox/browser-run-result/v1",
+  operation: "legacy-operation",
+  status: "failed",
+  success: true,
+  result: "not-an-object",
+  artifactRefs: [
+    { kind: "browser-html", path: "files/browser/index.html", sha256: "def" },
+    { role: "browser-html", path: "files/browser/index.html", content_digest: "def" },
+  ],
+  diagnostics: [
+    { code: "capture-warning", message: "Captured with fallback.", severity: "notice" },
+    { code: "capture-failed", message: "Capture failed.", severity: "error", metadata: { path: "files/browser/index.html" } },
+  ],
+  error: { message: "failed from canonical input", code: "canonical-failed" },
+}, "browser-run")
+assert.equal(canonicalBrowserRun.schema, "wp-codebox/browser-run-result/v1")
+assert.equal(canonicalBrowserRun.operation, "legacy-operation")
+assert.equal(canonicalBrowserRun.status, "failed")
+assert.equal(canonicalBrowserRun.success, false)
+assert.equal(canonicalBrowserRun.result, null)
+assert.deepEqual(plain(canonicalBrowserRun.artifactRefs), [
+  { kind: "browser-html", path: "files/browser/index.html", digest: { algorithm: "sha256", value: "def" } },
+])
+assert.deepEqual(plain(canonicalBrowserRun.diagnostics), [
+  { code: "capture-warning", message: "Captured with fallback." },
+  { code: "capture-failed", message: "Capture failed.", severity: "error", metadata: { path: "files/browser/index.html" } },
+])
+assert.equal(canonicalBrowserRun.error.schema, "wp-codebox/browser-sdk-error/v1")
+assert.equal(canonicalBrowserRun.error.code, "canonical-failed")
+
+assert.deepEqual(plain(api.v1.browserArtifactPersistenceRef({
+  schema: "wp-codebox/browser-artifact-persistence/ref/v1",
+  artifactRefs: [
+    { kind: "artifact-bundle", id: "artifact-bundle-sha256-abc", directory: "artifacts/run-1", contentDigest: { algorithm: "sha256", value: "abc" } },
+  ],
+}).artifactRefs), [
+  { kind: "artifact-bundle", id: "artifact-bundle-sha256-abc", path: "artifacts/run-1", digest: { algorithm: "sha256", value: "abc" } },
+])
 
 console.log("browser sdk facade ok")
