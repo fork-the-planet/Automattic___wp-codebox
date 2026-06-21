@@ -52,6 +52,7 @@ require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-c
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-recipe-resolver.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-task-input-contract.php`)};
+require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agents-api-adapter.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-runtime-tool-policy-descriptor.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-sandbox-tool-policy-normalizer.php`)};
 require ${phpStringLiteral(`${repoRoot}/packages/wordpress-plugin/src/class-wp-codebox-agent-task.php`)};
@@ -107,9 +108,11 @@ assert.equal(result.input.runtime_profile.provenance.owner, "wp-codebox")
 assert.deepEqual(result.input.placement.required_capabilities, ["wordpress.playground", "browser.preview", "agents.runtime"])
 assert.equal(result.input.runtime.resolved_profile.schema, "wp-codebox/runtime-profile-resolution/v1")
 assert.equal(result.input.runtime.resolved_profile.summary.profiles, 5)
-assert.deepEqual(result.input.runtime.resolved_profile.capabilities, ["wordpress.playground", "browser.preview", "agents-api", "agents.runtime", "content.runtime", "workspace.runtime", "provider.openai"])
+assert.deepEqual(result.input.runtime.resolved_profile.capabilities, ["wordpress.playground", "browser.preview", "codebox.agent-runtime", "agents.runtime", "content.runtime", "workspace.runtime", "provider.openai"])
 assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "workspace-runtime")?.aliases?.[0], "coding-agent-runtime")
-assert.deepEqual(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "agents-api")?.internal?.provides, ["agents-api", "agents.runtime"])
+assert.equal(result.input.runtime.resolved_profile.profiles.some((profile) => profile.id === "agents-api"), false)
+assert.deepEqual(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.internal?.provides, ["codebox.agent-runtime", "agents.runtime"])
+assert.equal(result.input.runtime.resolved_profile.profiles.find((profile) => profile.id === "codebox-agent-runtime")?.aliases?.includes("agents-api"), false)
 assert.deepEqual(result.unresolved.runtime.components.map((component) => component.slug), ["repo-local-component"])
 
 console.log("runtime profile resolver ok")

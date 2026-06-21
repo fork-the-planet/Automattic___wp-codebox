@@ -197,7 +197,7 @@ final class WP_Codebox_Browser_Task_Builder {
 	/** @param array<int,string> $required_capabilities Additional required browser capabilities. @return array<string,mixed> */
 	public static function browser_execution_placement( array $required_capabilities = array() ): array {
 		return array(
-			'schema'                => 'agents-api/execution-placement/v1',
+			'schema'                => 'wp-codebox/execution-placement/v1',
 			'preferred_target'      => 'browser',
 			'allowed_targets'       => array( 'browser' ),
 			'resource_class'        => 'interactive',

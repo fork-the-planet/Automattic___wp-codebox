@@ -37,7 +37,7 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 		}
 
 		$target_id = WP_Codebox_Agents_API_Adapter::executor_target_id( $target, $request );
-		if ( ! in_array( $target_id, array( WP_Codebox_Agents_API_Adapter::BROWSER_TARGET, WP_Codebox_Agents_API_Adapter::HOST_TARGET ), true ) ) {
+		if ( ! in_array( $target_id, array( WP_Codebox_Agents_API_Adapter::browser_executor_target_id(), WP_Codebox_Agents_API_Adapter::host_executor_target_id() ), true ) ) {
 			return $pre;
 		}
 
@@ -46,7 +46,7 @@ trait WP_Codebox_Abilities_Agents_API_Executors {
 		}
 
 		$input = WP_Codebox_Agents_API_Adapter::task_request_input( $request );
-		return WP_Codebox_Agents_API_Adapter::BROWSER_TARGET === $target_id
+		return WP_Codebox_Agents_API_Adapter::browser_executor_target_id() === $target_id
 			? self::create_browser_task_contract( $input )
 			: self::run_agent_task( $input );
 	}

@@ -158,11 +158,11 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 				'public_capabilities'    => array( 'wordpress.sandbox', 'browser.preview' ),
 				'placement_capabilities' => array( 'wordpress.playground', 'browser.preview' ),
 			),
-			'agents-api' => array(
-				'id'                     => 'agents-api',
-				'label'                  => 'Agents API runtime',
-				'aliases'                => array( 'agent-runtime', 'wordpress-agent-runtime' ),
-				'capabilities'           => array( 'agents-api', 'agents.runtime' ),
+			'codebox-agent-runtime' => array(
+				'id'                     => 'codebox-agent-runtime',
+				'label'                  => 'WP Codebox agent runtime',
+				'aliases'                => array( 'agents-api', 'agent-runtime', 'wordpress-agent-runtime' ),
+				'capabilities'           => array( 'codebox.agent-runtime', 'agents.runtime' ),
 				'public_capabilities'    => array( 'codebox.agent-runtime' ),
 				'requires'                => array( 'wordpress-playground' ),
 				'components'              => array( array( 'slug' => 'agents-api' ) ),
@@ -435,7 +435,7 @@ final class WP_Codebox_Runtime_Profile_Resolver {
 			array(
 				'id'         => (string) ( $profile['id'] ?? '' ),
 				'label'      => (string) ( $profile['label'] ?? '' ),
-				'aliases'    => self::merge_string_lists( $profile['aliases'] ?? array() ),
+				'aliases'    => array_values( array_diff( self::merge_string_lists( $profile['aliases'] ?? array() ), array( 'agents-api' ) ) ),
 				'provides'   => self::profile_public_capabilities( $profile ),
 				'internal'   => array_filter(
 					array(
