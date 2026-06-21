@@ -192,6 +192,36 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+## Runtime Checkpoints
+
+Recipes can create named checkpoints and restore them later in the same run.
+Checkpoints are generic runtime isolation primitives for bounded mutation loops;
+they are not a high-volume fuzz runner.
+
+```json
+{
+  "workflow": {
+    "steps": [
+      { "command": "wp-codebox.checkpoint-create", "args": ["name=baseline"] },
+      { "command": "wordpress.run-php", "args": ["code=update_option( 'example_flag', 'mutated' );"] },
+      { "command": "wp-codebox.checkpoint-restore", "args": ["name=baseline"] },
+      { "command": "wp-codebox.checkpoint-list" }
+    ]
+  }
+}
+```
+
+Supported commands:
+
+- `wp-codebox.checkpoint-create` captures the current runtime state under `name`.
+- `wp-codebox.checkpoint-restore` restores a previously created `name`.
+- `wp-codebox.checkpoint-list` emits metadata for checkpoints created in the run.
+
+Checkpoint create accepts the same snapshot scoping arguments as
+`wordpress.capture-state-bundle`, plus optional `metadata-json`. Unsupported
+runtime backends fail closed with a structured
+`wp-codebox/runtime-checkpoint-failure/v1` diagnostic and exit code `1`.
+
 ## REST Benchmark Workloads
 
 Recipes can pass REST profiling workloads to `wordpress.bench` with
