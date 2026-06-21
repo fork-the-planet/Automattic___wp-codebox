@@ -24,10 +24,18 @@ Use these package entrypoints from external integrations:
   backend factory and backend-owned helper types.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
+- `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
+  parsing helpers shared by CLI consumers that need the same secret input shape.
+
+Browser Playground sessions that load the WordPress plugin browser runtime also
+publish `window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
+for product consumers running inside the browser. Legacy top-level
+`window.wpCodeboxBrowser` methods remain available for existing callers.
 
 The workspace package mirrors the core entrypoints as `./core`,
 `./core/contracts`, `./core/artifacts`, `./recipe-builders`,
-`./agent-task-recipe`, and `./runtime-presets` for local consumers in this repo.
+`./agent-task-recipe`, `./runtime-presets`, and `./cli/recipe-secret-env` for
+local consumers in this repo.
 
 ## Contract Areas
 
@@ -43,6 +51,11 @@ The stable public surface is grouped by lifecycle area rather than by product:
 - **Browser task and contained site:** browser interaction, callback, probe,
   review bridge, session origin, artifact lifecycle, result shape, and runtime
   boundary contracts.
+- **Browser SDK:** `window.wpCodeboxBrowser.v1.info()` reports SDK version,
+  capability strings, and global names; `normalizeError()` returns
+  `wp-codebox/browser-sdk-error/v1`; `result()` wraps async browser operations in
+  `wp-codebox/browser-sdk-result/v1`; `methods` exposes stable references to the
+  existing browser runtime helpers.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
