@@ -1,0 +1,137 @@
+{
+  "input": {
+    "plan": {
+      "id": "fanout-contract-fixture",
+      "workers": [
+        {
+          "id": "alpha",
+          "artifact_namespace": "workers/alpha"
+        },
+        {
+          "id": "beta",
+          "depends_on": [
+            "alpha"
+          ],
+          "artifact_namespace": "workers/beta"
+        }
+      ]
+    },
+    "policy": "fail",
+    "aggregation": {
+      "agent": "generic-aggregator",
+      "outputNamespace": "aggregate/final"
+    },
+    "worker_results": [
+      {
+        "worker_id": "alpha",
+        "status": "completed",
+        "success": true,
+        "result_ref": "fanout/workers/alpha/result.json",
+        "artifact_refs": [
+          {
+            "path": "fanout/workers/alpha/artifacts/report.json",
+            "final_path": "reports/alpha.json",
+            "kind": "worker-report"
+          }
+        ]
+      },
+      {
+        "worker_id": "beta",
+        "status": "succeeded",
+        "result_ref": "fanout/workers/beta/result.json",
+        "artifact_refs": [
+          {
+            "path": "fanout/workers/beta/artifacts/report.json",
+            "final_path": "reports/beta.json",
+            "kind": "worker-report"
+          }
+        ]
+      }
+    ]
+  },
+  "expectedOutput": {
+    "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+    "status": "succeeded",
+    "policy": "fail",
+    "plan": {
+      "id": "fanout-contract-fixture",
+      "workers": [
+        {
+          "id": "alpha",
+          "artifact_namespace": "workers/alpha",
+          "dependsOn": [],
+          "required": true,
+          "artifactNamespace": "workers/alpha"
+        },
+        {
+          "id": "beta",
+          "depends_on": [
+            "alpha"
+          ],
+          "artifact_namespace": "workers/beta",
+          "dependsOn": [
+            "alpha"
+          ],
+          "required": true,
+          "artifactNamespace": "workers/beta"
+        }
+      ]
+    },
+    "aggregator": {
+      "agent": "generic-aggregator",
+      "outputNamespace": "aggregate/final"
+    },
+    "workerResultRefs": [
+      {
+        "workerId": "alpha",
+        "status": "succeeded",
+        "required": true,
+        "resultRef": "fanout/workers/alpha/result.json",
+        "artifactRefs": [
+          {
+            "path": "fanout/workers/alpha/artifacts/report.json",
+            "kind": "worker-report",
+            "workerId": "alpha",
+            "finalPath": "reports/alpha.json"
+          }
+        ]
+      },
+      {
+        "workerId": "beta",
+        "status": "succeeded",
+        "required": true,
+        "resultRef": "fanout/workers/beta/result.json",
+        "artifactRefs": [
+          {
+            "path": "fanout/workers/beta/artifacts/report.json",
+            "kind": "worker-report",
+            "workerId": "beta",
+            "finalPath": "reports/beta.json"
+          }
+        ]
+      }
+    ],
+    "rawWorkerArtifactRefs": [
+      {
+        "path": "fanout/workers/alpha/artifacts/report.json",
+        "kind": "worker-report",
+        "workerId": "alpha",
+        "finalPath": "reports/alpha.json"
+      },
+      {
+        "path": "fanout/workers/beta/artifacts/report.json",
+        "kind": "worker-report",
+        "workerId": "beta",
+        "finalPath": "reports/beta.json"
+      }
+    ],
+    "finalArtifactRefs": [
+      {
+        "path": "aggregate/final/result.json",
+        "kind": "fanout-aggregate-output",
+        "contentType": "application/json"
+      }
+    ],
+    "conflicts": []
+  }
+}

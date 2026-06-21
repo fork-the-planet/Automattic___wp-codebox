@@ -31,6 +31,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:normalize-error",
     "browser-runtime:normalize-result",
     "browser-runtime:normalize-browser-run-result",
+    "browser-runtime:aggregate-fanout-outputs",
     "browser-runtime:invoke-result",
     "playground:run-php",
     "playground:run-recipe",

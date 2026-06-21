@@ -11,6 +11,7 @@
 		'browser-runtime:normalize-error',
 		'browser-runtime:normalize-result',
 		'browser-runtime:normalize-browser-run-result',
+		'browser-runtime:aggregate-fanout-outputs',
 		'browser-runtime:invoke-result',
 		'playground:run-php',
 		'playground:run-recipe',
@@ -339,6 +340,7 @@
 		normalizeError: normalizeBrowserSdkError,
 		normalizeBrowserRunResult,
 		browserArtifactPersistenceRef,
+		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),
 		normalizeResult: normalizeOperationResult,
 		result: browserSdkResult,
 		runBrowserSessionRecipe: async ( client, session, taskPayload, options = {} ) => normalizeBrowserRunResult( await api.runBrowserSessionRecipe( client, session, taskPayload, options ), 'browser-session-recipe' ),
@@ -347,6 +349,7 @@
 			browserSessionRecipe: api.browserSessionRecipe,
 			ensureDirectory: api.ensureDirectory,
 			installTheme: api.installTheme,
+			aggregateFanoutOutputs: api.aggregateFanoutOutputs,
 			preparedBrowserRuntimeContract: api.preparedBrowserRuntimeContract,
 			preparedBrowserRuntimeStatus: api.preparedBrowserRuntimeStatus,
 			runBrowserRuntimeContractProbe: api.runBrowserRuntimeContractProbe,
@@ -1248,9 +1251,10 @@ try {
 	const normalizeFanoutWorkerResultRef = ( worker ) => {
 		const artifactRefs = Array.isArray( worker?.artifactRefs ) ? worker.artifactRefs : Array.isArray( worker?.artifact_refs ) ? worker.artifact_refs : [];
 		const workerId = typeof worker?.workerId === 'string' ? worker.workerId : typeof worker?.worker_id === 'string' ? worker.worker_id : '';
+		const status = typeof worker?.status === 'string' && worker.status.length > 0 ? worker.status : 'missing';
 		return {
 			workerId,
-			status: typeof worker?.status === 'string' ? worker.status : 'missing',
+			status: status === 'completed' && worker?.success === true ? 'succeeded' : status,
 			required: worker?.required !== false,
 			resultRef: typeof worker?.resultRef === 'string' ? worker.resultRef : typeof worker?.result_ref === 'string' ? worker.result_ref : undefined,
 			artifactRefs: artifactRefs.map( ( artifact ) => normalizeFanoutArtifactRef( artifact, workerId ) ),
@@ -1273,6 +1277,7 @@ try {
 		const source = input && typeof input === 'object' ? input : {};
 		const workerResultRefs = ( Array.isArray( source.workerResultRefs ) ? source.workerResultRefs : Array.isArray( source.worker_results ) ? source.worker_results : Array.isArray( source.workerResults ) ? source.workerResults : [] ).map( normalizeFanoutWorkerResultRef );
 		const directArtifactRefs = ( Array.isArray( source.artifactRefs ) ? source.artifactRefs : Array.isArray( source.artifact_refs ) ? source.artifact_refs : [] ).map( ( artifact ) => normalizeFanoutArtifactRef( artifact ) );
+		const artifactRefs = source.schema === fanoutAggregationInputSchema ? directArtifactRefs : [ ...directArtifactRefs, ...workerResultRefs.flatMap( ( worker ) => worker.artifactRefs ) ];
 		return {
 			schema: fanoutAggregationInputSchema,
 			plan: {
@@ -1282,7 +1287,7 @@ try {
 			policy: typeof source.policy === 'string' ? source.policy : 'fail',
 			aggregator: source.aggregator && typeof source.aggregator === 'object' ? source.aggregator : source.aggregation && typeof source.aggregation === 'object' ? source.aggregation : undefined,
 			workerResultRefs,
-			artifactRefs: [ ...directArtifactRefs, ...workerResultRefs.flatMap( ( worker ) => worker.artifactRefs ) ],
+			artifactRefs,
 			conflictCandidates: ( Array.isArray( source.conflictCandidates ) ? source.conflictCandidates : Array.isArray( source.conflict_candidates ) ? source.conflict_candidates : [] ).map( normalizeFanoutConflict ),
 			...( source.metadata && typeof source.metadata === 'object' && ! Array.isArray( source.metadata ) ? { metadata: source.metadata } : {} ),
 		};
@@ -1381,10 +1386,7 @@ try {
 			rawWorkerArtifactRefs: normalized.artifactRefs,
 			finalArtifactRefs: hasErrors ? [] : [ { path: outputPath, kind: 'fanout-aggregate-output', contentType: 'application/json' } ],
 			conflicts,
-			metadata: {
-				...( normalized.metadata || {} ),
-				events: [ 'fanout.started', 'aggregation.started', 'aggregation.completed', hasErrors ? 'fanout.failed' : 'fanout.completed' ].map( ( event ) => ( { schema: 'wp-codebox/agent-fanout-event/v1', event } ) ),
-			},
+			metadata: normalized.metadata,
 		};
 	};
 
@@ -1895,6 +1897,7 @@ echo wp_json_encode( array(
 
 	const wpCodeboxBrowserApi = {
 		activateTheme,
+		aggregateFanoutOutputs,
 		browserSessionRecipe,
 		ensureDirectory,
 		installTheme,
