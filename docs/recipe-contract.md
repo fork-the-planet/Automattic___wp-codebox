@@ -192,6 +192,25 @@ Use `allowFailure: true` or `advisory: true` for evidence-only workflow steps.
 Failed advisory steps are reported in `advisoryFailures` and do not make an
 otherwise successful recipe return `success: false`.
 
+### Plugin State
+
+Use `wordpress.plugin-state` when a recipe or runtime caller needs structured
+WordPress plugin state instead of shelling out to `wp plugin` directly. The
+command accepts a plugin slug, plugin file, or plugin path and can report,
+activate, or deactivate the resolved plugin with WordPress plugin APIs.
+
+```json
+{
+  "command": "wordpress.plugin-state",
+  "args": ["action=activate", "plugin=my-plugin"]
+}
+```
+
+The result uses the `wp-codebox/wordpress-plugin-state/v1` schema and includes
+the requested action, resolved target identity, before/after active plugin
+lists, network-active plugin lists where multisite is available, multisite
+support notes, diagnostics, errors, and `artifactRefs`.
+
 ## REST Benchmark Workloads
 
 Recipes can pass REST profiling workloads to `wordpress.bench` with
