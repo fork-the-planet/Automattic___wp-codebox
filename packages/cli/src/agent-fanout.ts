@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { commandArgValue, createRunPlanEvent, executeRunPlan, FANOUT_EVENT_SCHEMA, FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, parseCommandJsonObject, type FanoutLifecycleEvent, type FanoutRequestContract, type RunPlanWorkerAdapter, type RunPlanWorkerDescriptor } from "@automattic/wp-codebox-core"
-import { agentTaskStatusSucceeded, aggregateFanoutOutputs, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
+import { agentTaskStatusSucceeded, aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, normalizeAgentTaskStatus, stripUndefined, type FanoutAggregationOutput } from "@automattic/wp-codebox-core/internals"
 import { runAgentTask, type AgentTaskRunInput, type AgentTaskRunOptions } from "./commands/agent-task-run.js"
 
 const MAX_FANOUT_CONCURRENCY = 8
@@ -102,19 +102,20 @@ export async function executeAgentFanoutRequest(request: FanoutRequestContract, 
   const workerResults: AgentFanoutWorkerResult[] = execution.workers.map(({ success: _success, workerId: _workerId, ...result }) => result as unknown as AgentFanoutWorkerResult)
 
   await emitEvent(eventsPath, { event: "aggregation.started", total: workers.length, completed: workerResults.filter((worker) => agentTaskStatusSucceeded(worker.status)).length, failed: workerResults.filter((worker) => !agentTaskStatusSucceeded(worker.status) && worker.status !== "skipped").length, skipped: workerResults.filter((worker) => worker.status === "skipped").length })
-  const aggregate = aggregateFanoutOutputs({
+  const aggregationInput = fanoutAggregationInputFromWorkerArtifacts({
     plan: { id: sessionId, workers: workers.map((worker) => ({ id: worker.id, dependsOn: worker.dependsOn, required: worker.required, artifactNamespace: worker.artifactNamespace })) },
     policy: stringValue(request.aggregation?.policy) || "fail",
-    aggregation: request.aggregation,
-    worker_results: workerResults.map((worker) => ({
-      worker_id: worker.worker_id,
+    aggregator: request.aggregation,
+    workerResultRefs: workerResults.map((worker) => ({
+      workerId: worker.worker_id,
       status: worker.status,
       required: worker.required,
-      result_ref: worker.result_ref,
-      artifact_refs: worker.artifact_refs,
+      resultRef: worker.result_ref,
+      artifactRefs: worker.artifact_refs,
       error: worker.error,
     })),
-  }, {
+  })
+  const aggregate = aggregateFanoutOutputs(aggregationInput, {
     finalArtifactRefs: [{ path: "aggregate/final/result.json", kind: "fanout-aggregate-output", namespace: "aggregate/final", contentType: "application/json" }],
   })
   await writeJson(join(aggregateRoot, "result.json"), aggregate)

@@ -101,6 +101,16 @@ export interface FanoutAggregationResultOptions {
   metadata?: Record<string, unknown>
 }
 
+export interface FanoutAggregationInputFromWorkerArtifactsOptions {
+  plan: FanoutPlan | FanoutAggregationInputRequest["plan"]
+  policy?: FanoutAggregationPolicy
+  aggregator?: FanoutAggregatorConfig
+  workerResultRefs?: Array<FanoutWorkerResultRef | Record<string, unknown>>
+  workerArtifacts?: Array<FanoutArtifactRef | Record<string, unknown>>
+  conflictCandidates?: Array<FanoutConflictRecord | Record<string, unknown>>
+  metadata?: Record<string, unknown>
+}
+
 export interface FanoutAggregationOutput {
   schema: typeof FANOUT_AGGREGATION_OUTPUT_SCHEMA
   status: FanoutAggregationOutputStatus
@@ -126,12 +136,24 @@ export type FanoutAggregationInputRequest = Partial<Omit<FanoutAggregationInput,
   aggregation?: FanoutAggregatorConfig
 }
 
+export function fanoutAggregationInputFromWorkerArtifacts(options: FanoutAggregationInputFromWorkerArtifactsOptions): FanoutAggregationInput {
+  return normalizeFanoutAggregationInput({
+    plan: options.plan,
+    policy: options.policy ?? "fail",
+    aggregator: options.aggregator,
+    workerResultRefs: options.workerResultRefs,
+    artifactRefs: options.workerArtifacts,
+    conflictCandidates: options.conflictCandidates,
+    metadata: options.metadata,
+  })
+}
+
 export function normalizeFanoutAggregationInput(input: FanoutAggregationInputRequest): FanoutAggregationInput {
   const workerResultRefs = (input.workerResultRefs ?? input.worker_results ?? input.workerResults ?? []).map(normalizeWorkerResultRef)
-  const artifactRefs = [
-    ...(input.artifactRefs ?? input.artifact_refs ?? []).map((artifact) => normalizeArtifactRef(artifact)),
-    ...workerResultRefs.flatMap((worker) => worker.artifactRefs),
-  ]
+  const inputArtifactRefs = (input.artifactRefs ?? input.artifact_refs ?? []).map((artifact) => normalizeArtifactRef(artifact))
+  const artifactRefs = input.schema === FANOUT_AGGREGATION_INPUT_SCHEMA
+    ? inputArtifactRefs
+    : [...inputArtifactRefs, ...workerResultRefs.flatMap((worker) => worker.artifactRefs)]
 
   return {
     schema: FANOUT_AGGREGATION_INPUT_SCHEMA,
