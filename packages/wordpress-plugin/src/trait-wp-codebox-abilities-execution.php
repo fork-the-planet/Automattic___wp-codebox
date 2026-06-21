@@ -748,7 +748,7 @@ private static function browser_contract_execution_metrics( array $primary, arra
 	return array_filter(
 		array(
 			'schema'           => 'wp-codebox/execution-metrics/v1',
-			'executor'         => 'wp-codebox/browser-playground',
+			'executor'         => WP_Codebox_Agents_API_Adapter::BROWSER_TARGET,
 			'phase'            => 'contract',
 			'status'           => true === ( $primary['success'] ?? false ) ? 'pending' : (string) ( $primary['status'] ?? 'blocked' ),
 			'execution'        => 'browser-playground',
