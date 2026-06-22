@@ -285,6 +285,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 	try {
 		return match ( $command ) {
 			'wordpress.ensure-plugin-active' => self::execute_fuzz_suite_plugin_activation( $args, $observation, $case_id ),
+			'wordpress.inventory-rest-routes', 'wordpress.rest-route-inventory' => self::execute_fuzz_suite_rest_route_inventory( $args, $observation, $case_id ),
 			'wordpress.rest-request' => self::execute_fuzz_suite_rest_request( $args, $observation, $case_id ),
 			'wordpress.http-request' => self::execute_fuzz_suite_http_request( $args, $observation, $case_id ),
 			'wordpress.ability' => self::execute_fuzz_suite_ability( $args, $observation, $case_id ),
@@ -295,6 +296,162 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 	} catch ( Throwable $throwable ) {
 		return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_step_exception', $throwable->getMessage(), array( 'case_id' => $case_id, 'command' => $command ) ) );
 	}
+}
+
+/** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_rest_route_inventory( array $args, array $observation, string $case_id ): array {
+	if ( ! function_exists( 'rest_get_server' ) ) {
+		require_once ABSPATH . WPINC . '/rest-api.php';
+	}
+	$server = rest_get_server();
+	$routes = $server ? $server->get_routes() : array();
+	$namespace_filter = array_values( array_filter( array_map( 'trim', explode( ',', (string) ( $args['namespaces'] ?? '' ) ) ) ) );
+	$items = array();
+	$namespaces = array();
+	foreach ( $routes as $route => $handlers ) {
+		$namespace = trim( strtok( ltrim( (string) $route, '/' ), '/' ) ?: '' );
+		if ( ! empty( $namespace_filter ) && ! self::rest_route_matches_namespace_filter( (string) $route, $namespace_filter ) ) {
+			continue;
+		}
+		$methods = array();
+		$arg_names = array();
+		$endpoints = array();
+		foreach ( is_array( $handlers ) ? $handlers : array() as $handler ) {
+			if ( ! is_array( $handler ) ) {
+				continue;
+			}
+			$endpoint_methods = self::rest_route_inventory_methods( $handler['methods'] ?? array() );
+			$endpoint_args = array();
+			foreach ( (array) ( $handler['args'] ?? array() ) as $arg_name => $arg_schema ) {
+				$arg_names[] = (string) $arg_name;
+				$endpoint_args[] = self::rest_route_inventory_arg( (string) $arg_name, is_array( $arg_schema ) ? $arg_schema : array() );
+			}
+			$methods = array_merge( $methods, $endpoint_methods );
+			$endpoints[] = array(
+				'methods'    => $endpoint_methods,
+				'permission' => self::rest_route_inventory_permission( $handler ),
+				'args'       => $endpoint_args,
+			);
+		}
+		$item = array(
+			'route'     => (string) $route,
+			'namespace' => $namespace,
+			'methods'   => array_values( array_unique( $methods ) ),
+			'argNames'  => array_values( array_unique( $arg_names ) ),
+			'endpoints' => $endpoints,
+		);
+		$route_schema = self::rest_route_inventory_schema( is_array( $handlers ) ? $handlers : array() );
+		if ( ! empty( $route_schema ) ) {
+			$item['schema'] = $route_schema;
+		}
+		$items[] = $item;
+		if ( '' !== $namespace ) {
+			$namespaces[] = $namespace;
+		}
+	}
+	$observation['artifact'] = (string) ( $args['artifact'] ?? 'route_inventory' );
+	$observation['route_count'] = count( $items );
+	$observation['namespaces'] = array_values( array_unique( $namespaces ) );
+	$observation['payload'] = array(
+		'schema'     => 'wp-codebox/wordpress-rest-route-inventory/v1',
+		'command'    => 'wordpress.inventory-rest-routes',
+		'routes'     => $items,
+		'namespaces' => $observation['namespaces'],
+	);
+	return array( 'status' => 'passed', 'observation' => $observation );
+}
+
+/** @param string[] $namespace_filter Namespace filters. */
+private static function rest_route_matches_namespace_filter( string $route, array $namespace_filter ): bool {
+	$route = '/' . ltrim( $route, '/' );
+	foreach ( $namespace_filter as $namespace ) {
+		$namespace = trim( (string) $namespace, '/' );
+		if ( '' !== $namespace && str_starts_with( $route, '/' . $namespace ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+private static function rest_route_inventory_methods( mixed $methods ): array {
+	if ( is_string( $methods ) ) {
+		return array_values( array_filter( array_map( 'trim', explode( ',', strtoupper( $methods ) ) ) ) );
+	}
+	$raw = array_merge( array_keys( (array) $methods ), array_values( (array) $methods ) );
+	$normalized = array();
+	foreach ( $raw as $method ) {
+		if ( is_string( $method ) && '' !== $method && strtoupper( $method ) === $method ) {
+			$normalized[] = $method;
+		}
+	}
+	return array_values( array_unique( $normalized ) );
+}
+
+private static function rest_route_inventory_permission( array $handler ): array {
+	if ( ! array_key_exists( 'permission_callback', $handler ) ) {
+		return array( 'mode' => 'none' );
+	}
+	$callback = $handler['permission_callback'];
+	if ( '__return_true' === $callback ) {
+		return array( 'mode' => 'public', 'callbackType' => 'function' );
+	}
+	return array( 'mode' => 'callback', 'callbackType' => self::rest_route_inventory_callback_type( $callback ) );
+}
+
+private static function rest_route_inventory_callback_type( mixed $callback ): string {
+	if ( is_string( $callback ) ) {
+		return 'function';
+	}
+	if ( is_array( $callback ) ) {
+		return 'method';
+	}
+	if ( $callback instanceof Closure ) {
+		return 'closure';
+	}
+	if ( is_object( $callback ) && is_callable( $callback ) ) {
+		return 'invokable';
+	}
+	return is_callable( $callback ) ? 'callable' : 'unknown';
+}
+
+private static function rest_route_inventory_arg( string $name, array $schema ): array {
+	$arg = array( 'name' => $name, 'required' => ! empty( $schema['required'] ) );
+	foreach ( array( 'type', 'format' ) as $key ) {
+		if ( isset( $schema[ $key ] ) && ( is_string( $schema[ $key ] ) || is_array( $schema[ $key ] ) ) ) {
+			$arg[ $key ] = $schema[ $key ];
+		}
+	}
+	if ( isset( $schema['enum'] ) && is_array( $schema['enum'] ) ) {
+		$arg['enum'] = array_slice( array_values( $schema['enum'] ), 0, 25 );
+	}
+	if ( isset( $schema['description'] ) && is_string( $schema['description'] ) ) {
+		$description = function_exists( 'wp_strip_all_tags' ) ? wp_strip_all_tags( $schema['description'] ) : strip_tags( $schema['description'] );
+		$arg['description'] = substr( $description, 0, 240 );
+	}
+	$arg['defaultPresent'] = array_key_exists( 'default', $schema );
+	$arg['validateCallback'] = array_key_exists( 'validate_callback', $schema );
+	$arg['sanitizeCallback'] = array_key_exists( 'sanitize_callback', $schema );
+	return $arg;
+}
+
+private static function rest_route_inventory_schema( array $handlers ): array {
+	foreach ( $handlers as $handler ) {
+		if ( ! is_array( $handler ) || ! isset( $handler['schema'] ) || ! is_array( $handler['schema'] ) ) {
+			continue;
+		}
+		$schema = $handler['schema'];
+		$descriptor = array();
+		foreach ( array( 'title', 'type' ) as $key ) {
+			if ( isset( $schema[ $key ] ) && ( is_string( $schema[ $key ] ) || is_array( $schema[ $key ] ) ) ) {
+				$descriptor[ $key ] = $schema[ $key ];
+			}
+		}
+		if ( isset( $schema['properties'] ) && is_array( $schema['properties'] ) ) {
+			$descriptor['properties'] = array_slice( array_values( array_map( 'strval', array_keys( $schema['properties'] ) ) ), 0, 100 );
+		}
+		return $descriptor;
+	}
+	return array();
 }
 
 /** @param string[] $args Args. @return array<string,string> */

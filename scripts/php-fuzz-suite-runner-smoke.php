@@ -38,6 +38,23 @@ function rest_do_request( WP_REST_Request $request ): WP_Codebox_Test_REST_Respo
 	return new WP_Codebox_Test_REST_Response( '/wp/v2/status' === $request->path ? 200 : 404 );
 }
 
+class WP_Codebox_Test_REST_Server {
+	public function get_routes(): array {
+		return array(
+			'/wp/v2/status' => array(
+				array( 'methods' => array( 'GET' => true ) ),
+			),
+			'/sample/v1/items' => array(
+				array( 'methods' => array( 'GET' => true, 'POST' => true ) ),
+			),
+		);
+	}
+}
+
+function rest_get_server(): WP_Codebox_Test_REST_Server {
+	return new WP_Codebox_Test_REST_Server();
+}
+
 function home_url( string $path = '' ): string {
 	return 'https://example.test' . $path;
 }
@@ -97,6 +114,14 @@ $result = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 				'id'     => 'rest-target',
 				'target' => array( 'kind' => 'rest', 'id' => '/wp/v2/status' ),
 				'input'  => array( 'method' => 'GET' ),
+			),
+			array(
+				'id'     => 'rest-route-inventory',
+				'phases' => array(
+					'action' => array(
+						array( 'command' => 'wordpress.inventory-rest-routes', 'args' => array( 'namespaces=sample/v1', 'artifact=route_inventory' ) ),
+					),
+				),
 			),
 			array(
 				'id'     => 'http-target',
@@ -166,8 +191,8 @@ assert( is_array( $result ) );
 assert( 'wp-codebox/fuzz-suite-result/v1' === $result['schema'] );
 assert( true === $result['success'] );
 assert( 'passed' === $result['status'] );
-assert( 16 === $result['summary']['total'] );
-assert( 5 === $result['summary']['passed'] );
+assert( 17 === $result['summary']['total'] );
+assert( 6 === $result['summary']['passed'] );
 assert( 11 === $result['summary']['skipped'] );
 assert( 'collect-artifact' === $result['cases'][0]['id'] );
 assert( 'passed' === $result['cases'][0]['status'] );
@@ -178,21 +203,25 @@ assert( 'passed' === $result['cases'][2]['status'] );
 assert( 'wordpress.rest-request' === $result['cases'][2]['metadata']['observations'][0]['command'] );
 assert( 'passed' === $result['cases'][3]['status'] );
 assert( 'passed' === $result['cases'][4]['status'] );
+assert( 'rest-route-inventory' === $result['cases'][4]['id'] );
+assert( 1 === $result['cases'][4]['metadata']['observations'][0]['route_count'] );
+assert( 'sample' === $result['cases'][4]['metadata']['observations'][0]['namespaces'][0] );
 assert( 'passed' === $result['cases'][5]['status'] );
-assert( 'command-target' === $result['cases'][6]['id'] );
-assert( 'wp_codebox_fuzz_target_command_unsupported' === $result['cases'][6]['skipReason'] );
-assert( 'runtime-target' === $result['cases'][7]['id'] );
+assert( 'passed' === $result['cases'][6]['status'] );
+assert( 'command-target' === $result['cases'][7]['id'] );
 assert( 'wp_codebox_fuzz_target_command_unsupported' === $result['cases'][7]['skipReason'] );
-assert( 'runtime-action-wp-cli' === $result['cases'][8]['id'] );
-assert( 'wp_codebox_fuzz_runtime_action_wp_cli_unsupported' === $result['cases'][8]['skipReason'] );
-assert( 'wordpress.wp-cli' === $result['cases'][8]['metadata']['observations'][0]['command'] );
-assert( 'wp_codebox_fuzz_runtime_action_php_unsupported' === $result['cases'][9]['skipReason'] );
-assert( 'wp_codebox_fuzz_runtime_action_browser_unsupported' === $result['cases'][10]['skipReason'] );
-assert( 'wp_codebox_fuzz_runtime_action_browser_probe_unsupported' === $result['cases'][11]['skipReason'] );
-assert( 'wp_codebox_fuzz_runtime_action_editor_open_unsupported' === $result['cases'][12]['skipReason'] );
-assert( 'wp_codebox_fuzz_runtime_action_admin_page_unsupported' === $result['cases'][13]['skipReason'] );
-assert( 'wp_codebox_fuzz_runtime_action_page_unsupported' === $result['cases'][14]['skipReason'] );
-assert( 'wp_codebox_fuzz_runtime_action_unsupported' === $result['cases'][15]['skipReason'] );
+assert( 'runtime-target' === $result['cases'][8]['id'] );
+assert( 'wp_codebox_fuzz_target_command_unsupported' === $result['cases'][8]['skipReason'] );
+assert( 'runtime-action-wp-cli' === $result['cases'][9]['id'] );
+assert( 'wp_codebox_fuzz_runtime_action_wp_cli_unsupported' === $result['cases'][9]['skipReason'] );
+assert( 'wordpress.wp-cli' === $result['cases'][9]['metadata']['observations'][0]['command'] );
+assert( 'wp_codebox_fuzz_runtime_action_php_unsupported' === $result['cases'][10]['skipReason'] );
+assert( 'wp_codebox_fuzz_runtime_action_browser_unsupported' === $result['cases'][11]['skipReason'] );
+assert( 'wp_codebox_fuzz_runtime_action_browser_probe_unsupported' === $result['cases'][12]['skipReason'] );
+assert( 'wp_codebox_fuzz_runtime_action_editor_open_unsupported' === $result['cases'][13]['skipReason'] );
+assert( 'wp_codebox_fuzz_runtime_action_admin_page_unsupported' === $result['cases'][14]['skipReason'] );
+assert( 'wp_codebox_fuzz_runtime_action_page_unsupported' === $result['cases'][15]['skipReason'] );
+assert( 'wp_codebox_fuzz_runtime_action_unsupported' === $result['cases'][16]['skipReason'] );
 
 $unsafe = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 	array(
