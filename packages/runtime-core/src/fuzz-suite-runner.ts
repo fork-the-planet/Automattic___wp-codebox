@@ -1,5 +1,6 @@
 import { stripUndefined } from "./object-utils.js"
 import { fuzzSuiteResultEnvelope, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
+import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 
 export interface FuzzSuiteCommandExecutor {
@@ -8,9 +9,22 @@ export interface FuzzSuiteCommandExecutor {
 
 export interface FuzzSuiteRunOptions {
   executor?: FuzzSuiteCommandExecutor | ((spec: ExecutionSpec) => Promise<ExecutionResult>)
+  runtimeActionExecutor?: FuzzSuiteRuntimeActionExecutor | ((input: FuzzSuiteRuntimeActionExecutionInput) => Promise<RuntimeActionObservation>)
   targetAdapters?: FuzzSuiteTargetAdapterRegistry | readonly FuzzSuiteTargetAdapter[]
   supportedTargetKinds?: readonly string[]
   metadata?: Record<string, unknown>
+}
+
+export interface FuzzSuiteRuntimeActionExecutionInput {
+  suite: FuzzSuiteContract
+  case: FuzzSuiteCase
+  caseIndex: number
+  target: FuzzSuiteTargetRef
+  action: RuntimeAction
+}
+
+export interface FuzzSuiteRuntimeActionExecutor {
+  executeRuntimeAction(input: FuzzSuiteRuntimeActionExecutionInput): Promise<RuntimeActionObservation>
 }
 
 export type FuzzSuiteTargetAdapterStatus = "supported" | "unsupported"
@@ -68,6 +82,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
   const cases: FuzzSuiteCaseResult[] = []
   const diagnostics: FuzzSuiteDiagnostic[] = []
   const execute = normalizeFuzzSuiteExecutor(options.executor)
+  const executeRuntimeAction = normalizeFuzzSuiteRuntimeActionExecutor(options.runtimeActionExecutor)
   const adapterRegistry = normalizeFuzzSuiteTargetAdapterRegistry(options.targetAdapters)
   const supportedTargetKinds = new Set(options.supportedTargetKinds ?? DEFAULT_SUPPORTED_TARGET_KINDS)
 
@@ -87,6 +102,69 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         diagnostics: planDiagnostics,
         metadata: stripUndefined({ replay: replayMetadata, adapter: plan.metadata }),
       })
+      continue
+    }
+
+    const runtimeAction = target?.kind === "runtime-action" && executeRuntimeAction ? fuzzSuiteRuntimeActionInput(fuzzCase.input) : undefined
+    if (runtimeAction?.status === "invalid") {
+      const diagnostic = target ? unsupportedInputAdapterResolution(fuzzCase, target, runtimeAction.message, { adapterKind: "runtime-action" }).diagnostics?.[0] : undefined
+      if (diagnostic) {
+        diagnostics.push(diagnostic)
+        cases.push({
+          id: fuzzCase.id,
+          status: "skipped",
+          success: false,
+          target,
+          skipReason: diagnostic.code,
+          diagnostics: [diagnostic],
+          metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action" } }),
+        })
+        continue
+      }
+    }
+
+    if (runtimeAction?.status === "valid" && executeRuntimeAction && target) {
+      try {
+        const observation = await executeRuntimeAction({ suite, case: fuzzCase, caseIndex: index, target, action: runtimeAction.action })
+        cases.push({
+          id: fuzzCase.id,
+          status: "passed",
+          success: true,
+          target,
+          diagnostics: [],
+          artifactRefs: fuzzSuiteRuntimeActionArtifactRefs(observation),
+          metadata: stripUndefined({
+            input: fuzzCase.input,
+            description: fuzzCase.description,
+            caseMetadata: fuzzCase.metadata,
+            adapter: { adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" },
+            replay: { ...replayMetadata, runtimeAction: runtimeAction.action },
+            observation: {
+              type: observation.type,
+              status: observation.status,
+              observedAt: observation.observedAt,
+              digest: observation.digest,
+            },
+          }),
+        })
+      } catch (error) {
+        const diagnostic: FuzzSuiteDiagnostic = {
+          severity: "error",
+          code: "fuzz_suite_runtime_action_execution_error",
+          caseId: fuzzCase.id,
+          target,
+          message: error instanceof Error ? error.message : String(error),
+        }
+        diagnostics.push(diagnostic)
+        cases.push({
+          id: fuzzCase.id,
+          status: "error",
+          success: false,
+          target,
+          diagnostics: [diagnostic],
+          metadata: stripUndefined({ replay: replayMetadata, adapter: { adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" } }),
+        })
+      }
       continue
     }
 
@@ -201,6 +279,16 @@ function normalizeFuzzSuiteExecutor(executor: FuzzSuiteRunOptions["executor"]): 
     return executor
   }
   return (spec) => executor.execute(spec)
+}
+
+function normalizeFuzzSuiteRuntimeActionExecutor(executor: FuzzSuiteRunOptions["runtimeActionExecutor"]): ((input: FuzzSuiteRuntimeActionExecutionInput) => Promise<RuntimeActionObservation>) | undefined {
+  if (!executor) {
+    return undefined
+  }
+  if (typeof executor === "function") {
+    return executor
+  }
+  return (input) => executor.executeRuntimeAction(input)
 }
 
 export function createFuzzSuiteTargetAdapterRegistry(adapters: readonly FuzzSuiteTargetAdapter[] = defaultFuzzSuiteTargetAdapters()): FuzzSuiteTargetAdapterRegistry {
@@ -574,6 +662,14 @@ function fuzzSuiteCaseRecordInput(input: unknown): { invalid?: false; payload: u
   }
 }
 
+function fuzzSuiteRuntimeActionInput(input: unknown): { status: "valid"; action: RuntimeAction } | { status: "invalid"; message: string } {
+  const normalized = fuzzSuiteCaseRecordInput(input)
+  if (normalized.invalid || !isRecord(normalized.payload) || typeof normalized.payload.type !== "string") {
+    return { status: "invalid", message: "Expected runtime-action input object with a type field." }
+  }
+  return { status: "valid", action: normalized.payload as unknown as RuntimeAction }
+}
+
 function isRecord(input: unknown): input is Record<string, unknown> {
   return Boolean(input) && typeof input === "object" && !Array.isArray(input)
 }
@@ -657,6 +753,11 @@ function jsonArg(name: string, value: unknown): string | undefined {
 
 function fuzzSuiteExecutionArtifactRefs(execution: ExecutionResult): FuzzSuiteArtifactRef[] | undefined {
   const refs = [...(execution.artifactRefs ?? []), ...(execution.result?.artifactRefs ?? [])].map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
+  return refs.length > 0 ? refs : undefined
+}
+
+function fuzzSuiteRuntimeActionArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] | undefined {
+  const refs = (observation.artifactRefs ?? []).map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
   return refs.length > 0 ? refs : undefined
 }
 

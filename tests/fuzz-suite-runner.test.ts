@@ -89,6 +89,35 @@ assert.equal(noExecutor.status, "skipped")
 assert.deepEqual(noExecutor.coverageSummary?.skippedReasons, [{ reason: "fuzz_suite_executor_unavailable", count: 1, caseIds: ["case-skipped"] }])
 assert.equal(noExecutor.cases[0]?.diagnostics[0]?.code, "fuzz_suite_executor_unavailable")
 
+const runtimeActions: string[] = []
+const runtimeActionResult = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-episode-actions",
+  target: { kind: "runtime-action" },
+  cases: [
+    { id: "browser-capture", input: { type: "browser", operation: "capture", capture: ["html"] } },
+    { id: "admin-page", input: { type: "admin_page", path: "plugins.php", capture: ["html"] } },
+  ],
+}), {
+  runtimeActionExecutor: async ({ action }) => {
+    runtimeActions.push(action.type)
+    return {
+      schema: "wp-codebox/runtime-action-observation/v1",
+      type: action.type,
+      status: "ok",
+      action,
+      data: { actionType: action.type },
+      observedAt: "2026-01-01T00:00:00.000Z",
+      artifactRefs: [{ kind: "runtime-action", id: `${action.type}-artifact`, path: `files/${action.type}.json`, digest: { algorithm: "sha256", value: `sha-${action.type}` } }],
+      digest: { algorithm: "sha256", value: `digest-${action.type}` },
+    }
+  },
+})
+assert.equal(runtimeActionResult.status, "passed")
+assert.deepEqual(runtimeActionResult.summary, { total: 2, passed: 2, failed: 0, error: 0, skipped: 0 })
+assert.deepEqual(runtimeActions, ["browser", "admin_page"])
+assert.equal(runtimeActionResult.cases[0]?.artifactRefs?.[0]?.path, "files/browser.json")
+assert.equal((runtimeActionResult.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.executorKind, "episode")
+
 const restMatrix = wordpressRestMatrixContract({
   id: "rest-matrix-001",
   cases: [{ id: "get-posts", method: "GET", path: "/wp/v2/posts", params: { per_page: 1 }, headers: { accept: "application/json" }, session: "admin" }],
