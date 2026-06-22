@@ -101,6 +101,18 @@ assert.doesNotMatch(sandboxAgentCode, /wp_codebox_register_sandbox_chat_handler\
 assert.doesNotMatch(sandboxAgentCode, /wp_agent_chat_handler/)
 assert.doesNotMatch(sandboxAgentCode, /wp_codebox_execute_sandbox_chat_turn/)
 
+const sandboxAgentCodeWithRuntimeTask = await resolveSandboxTaskCode({
+  task: "Run fuzz suite",
+  agent: "wp-codebox-sandbox",
+  runtimeTask: {
+    ability: "wp-codebox/fuzz-suite",
+    input: { metadata: { workload_path: "${package.root}/bench/fuzz.php" } },
+  },
+  sandboxToolPolicy: { schema: "wp-codebox/sandbox-tool-policy/v1", version: 1, tools: [] },
+})
+assert.match(sandboxAgentCodeWithRuntimeTask, /json_decode\(<<<'WP_CODEBOX_LITERAL_/)
+assert.doesNotMatch(sandboxAgentCodeWithRuntimeTask, /json_decode\(".*\$\{package\.root\}/s)
+
 const sandboxAgentCodeWithTools = await resolveSandboxTaskCode({
   task: "Inspect workspace",
   agent: "wp-codebox-sandbox",
@@ -125,5 +137,5 @@ const sandboxAgentCodeWithTools = await resolveSandboxTaskCode({
     ],
   },
 })
-assert.match(sandboxAgentCodeWithTools, /\\"allow_only\\":\[\\"workspace_ls\\"\]/)
-assert.match(sandboxAgentCodeWithTools, /\\"completion_assertions\\":\{\\"required_tool_names\\":\[\\"workspace_ls\\"\]\}/)
+assert.match(sandboxAgentCodeWithTools, /"allow_only":\["workspace_ls"\]/)
+assert.match(sandboxAgentCodeWithTools, /"completion_assertions":\{"required_tool_names":\["workspace_ls"\]\}/)

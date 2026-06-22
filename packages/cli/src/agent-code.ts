@@ -100,11 +100,11 @@ if (${timeoutLimit} > 0 && function_exists('set_time_limit')) {
     set_time_limit(${timeoutLimit});
 }
 
-$sandbox_agent_bundles = json_decode(${JSON.stringify(JSON.stringify(agentBundles))}, true);
+$sandbox_agent_bundles = json_decode(${phpStringLiteral(JSON.stringify(agentBundles))}, true);
 $sandbox_agent_bundle_imports = wp_codebox_import_sandbox_agent_bundles(is_array($sandbox_agent_bundles) ? $sandbox_agent_bundles : array());
 $sandbox_stack['agent_bundle_imports'] = $sandbox_agent_bundle_imports;
 $sandbox_agent_bundle_import_failures = array_filter($sandbox_agent_bundle_imports, static fn($import) => is_array($import) && empty($import['success']));
-$sandbox_runtime_task = json_decode(${JSON.stringify(JSON.stringify(runtimeTask))}, true);
+$sandbox_runtime_task = json_decode(${phpStringLiteral(JSON.stringify(runtimeTask))}, true);
 $sandbox_stack['runtime_task'] = is_array($sandbox_runtime_task) ? $sandbox_runtime_task : null;
 
 add_filter('agents_chat_runtime_principal_permission', static function (bool $allowed, $principal, array $input): bool {
@@ -126,7 +126,7 @@ add_filter('agents_chat_runtime_principal_permission', static function (bool $al
 $sandbox_default_agent = sanitize_title((string) (${JSON.stringify(input.agent)}));
 $sandbox_stack['default_agent'] = wp_codebox_ensure_sandbox_default_agent(
     $sandbox_default_agent,
-    json_decode(${JSON.stringify(JSON.stringify(input))}, true)
+    json_decode(${phpStringLiteral(JSON.stringify(input))}, true)
 );
 
 function wp_codebox_ensure_sandbox_default_agent(string $agent_slug, array $agent_input): array {
@@ -327,7 +327,7 @@ $sandbox_stack['abilities'] = array(
     'requested' => $ability_name,
     'requested_available' => null !== $ability,
 );
-$agent_input = ${JSON.stringify(JSON.stringify(input))};
+$agent_input = ${phpStringLiteral(JSON.stringify(input))};
 $decoded_agent_input = json_decode($agent_input, true);
 $provider_validation_error = wp_codebox_validate_requested_provider(is_array($decoded_agent_input) ? $decoded_agent_input : array(), $sandbox_stack);
 if (!empty($sandbox_agent_bundle_import_failures)) {
@@ -518,7 +518,7 @@ require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
 $plugins = array_merge(array(
     'agents-api/agents-api.php',
-), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
+), wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)));
 
 ${providerPluginResolutionPhp()}
 
@@ -573,8 +573,8 @@ $sandbox_stack = array(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
             'agents_registry_class' => class_exists('WP_Agents_Registry'),
             'runtime_lifecycle' => $runtime_lifecycle,
-            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
-            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)),
         ),
 );
 
@@ -609,7 +609,7 @@ require_once ABSPATH . 'wp-admin/includes/plugin.php';
 
 $plugins = array_merge(array(
     'agents-api/agents-api.php',
-), wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)));
+), wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)));
 
 ${providerPluginResolutionPhp()}
 
@@ -647,8 +647,8 @@ echo json_encode(
             'agents_api_loaded' => defined('AGENTS_API_LOADED'),
             'agents_registry_class' => class_exists('WP_Agents_Registry'),
             'runtime_lifecycle' => $runtime_lifecycle,
-            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
-            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${JSON.stringify(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugins' => wp_codebox_provider_plugin_entries(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)),
+            'provider_plugin_files' => wp_codebox_provider_plugin_file_diagnostics(json_decode(${phpStringLiteral(JSON.stringify(providerPlugins))}, true)),
         ),
     ),
     JSON_PRETTY_PRINT
