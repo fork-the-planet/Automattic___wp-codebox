@@ -28,6 +28,7 @@ import {
   CODEBOX_PUBLIC_RUNTIME_ABILITIES,
   CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
+  FUZZ_COVERAGE_PLAN_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
@@ -36,6 +37,7 @@ import {
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
+  fuzzCoveragePlanContract,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
 import * as runResultsApi from "../packages/runtime-core/src/run-results.js"
@@ -136,6 +138,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./evidence-artifact-envelope.js",
   "./fanout-contracts.js",
   "./fixture-import-primitives.js",
+  "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
   "./fuzz-suite-runner.js",
   "./rest-matrix-contracts.js",
@@ -229,6 +232,7 @@ for (const publicModule of [
   "./agent-task-run-result.js",
   "./artifact-result-envelope.js",
   "./browser-callback-contracts.js",
+  "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
   "./rest-matrix-contracts.js",
   "./parent-tool-bridge.js",
@@ -338,6 +342,7 @@ assert.equal(typeof normalizeRuntimeProfile, "function")
 assert.equal(typeof normalizeTypedArtifactDTO, "function")
 assert.equal(typeof normalizePreviewReviewerAccess, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
+assert.equal(typeof fuzzCoveragePlanContract, "function")
 assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof wordpressRestMatrixContract, "function")
@@ -363,6 +368,7 @@ assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", path: "fi
 assert.equal(normalizePreviewReviewerAccess(undefined).status, "unavailable")
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
+assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({
   suite: { id: "ability-boundary" },
