@@ -7,16 +7,22 @@ import {
   buildRuntimePackageRunRecipe,
   browserArtifactPersistenceProjection,
   browserRunResultEnvelope,
+  fuzzSuiteContract,
+  fuzzSuiteResultEnvelope,
   normalizeAgentTaskRunResult,
   normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
   parentToolBridgeContract,
+  performanceObservation,
   runtimePackageExecutionInput,
   runtimeProfile,
   persistedBrowserArtifactRefs,
   AGENT_TASK_RUN_RESULT_SCHEMA,
   ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+  FUZZ_SUITE_RESULT_SCHEMA,
+  FUZZ_SUITE_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
+  PERFORMANCE_OBSERVATION_SCHEMA,
   RUNTIME_PROFILE_SCHEMA,
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
@@ -101,6 +107,8 @@ for (const contractArea of [
   "Browser task and contained site",
   "Browser SDK",
   "Browser metrics",
+  "Performance observation",
+  "Fuzz suite",
   "Artifacts",
   "Inspect",
 ]) {
@@ -112,7 +120,9 @@ for (const publicModule of [
   "./agent-task-run-result.js",
   "./artifact-result-envelope.js",
   "./browser-callback-contracts.js",
+  "./fuzz-suite-contracts.js",
   "./parent-tool-bridge.js",
+  "./performance-observation.js",
   "./recipe-builders.js",
   "./runtime-boundary-contracts.js",
   "./runtime-contracts.js",
@@ -130,6 +140,7 @@ for (const internalModule of [
   "./prepared-source-staging.js",
   "./provider-runtime-contracts.js",
   "./runtime-action-adapter.js",
+  "./wordpress-runtime-actions.js",
   "./wordpress-workload-primitives.js",
 ]) {
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
@@ -144,6 +155,10 @@ for (const internalExport of [
   "PROVIDER_RUNTIME_INVOCATION_CONTRACT_SCHEMA",
   "providerRuntimeInvocationContract",
   "PROVIDER_RUNTIME_TASK_NAMES",
+  "requestWordPressRest",
+  "runWordPressPhp",
+  "runWordPressWpCli",
+  "WORDPRESS_RUNTIME_ACTION_SCHEMA",
   "WORDPRESS_WORKLOAD_RUN_SCHEMA",
   "wordpressAbilityStep",
   "wordpressWorkloadRunRecipe",
@@ -156,15 +171,14 @@ for (const internalExport of [
 }
 
 assert.match(docs, /@automattic\/wp-codebox-core\/internals` exists for this monorepo's package split/)
-assert.match(docs, /not a stable compatibility surface for external integrations/)
+assert.match(docs, /External integrations use the stable entrypoints listed above/)
 assert.match(docs, /New external TypeScript\s+consumers should prefer/)
 assert.match(docs, /## Integration Boundary/)
-assert.match(docs, /Codebox may adapt those upstream systems into\s+generic Codebox inputs internally/)
-assert.match(docs, /Data Machine must not parse, validate, or emit\s+WP Codebox-specific schemas as a compatibility requirement/)
-assert.match(docs, /Codebox adapter translates from generic\s+Data Machine inputs into the Codebox task\/recipe\/runtime contracts/)
-assert.match(docs, /RUNNER_WORKSPACE_BACKEND_FILTER/)
-assert.match(docs, /RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS/)
-assert.match(docs, /RunnerWorkspaceBackendConfig/)
+assert.match(docs, /Codebox adapts those upstream systems into\s+generic Codebox inputs/)
+assert.match(docs, /Codebox adapter translates from generic Data Machine inputs into the Codebox\s+task\/recipe\/runtime contracts/)
+assert.match(docs, /wp-codebox\/runner-workspace-backend\/v1/)
+assert.match(docs, /backend adapter config schema/)
+assert.match(docs, /adapter config maps each operation to its\s+integration-provided backend ability/)
 
 assert.equal(typeof normalizeBrowserRunResult, "function")
 assert.equal(typeof browserRunResultEnvelope, "function")
@@ -176,6 +190,8 @@ assert.equal(typeof artifactResultEnvelope, "function")
 assert.equal(typeof normalizeArtifactResultEnvelope, "function")
 assert.equal(typeof runtimeProfile, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
+assert.equal(typeof fuzzSuiteContract, "function")
+assert.equal(typeof fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof buildRuntimePackageRunRecipe, "function")
 assert.equal(typeof runtimePackageExecutionInput, "function")
 assert.equal(normalizeAgentTaskRunResult({ status: "completed", success: true }).schema, AGENT_TASK_RUN_RESULT_SCHEMA)
@@ -183,6 +199,16 @@ assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ART
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
+assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
+assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
+assert.deepEqual(fuzzSuiteResultEnvelope({
+  suite: { id: "ability-boundary" },
+  cases: [
+    { id: "empty-input", status: "passed", success: true, diagnostics: [], artifactRefs: [{ path: "fuzz/case.json", kind: "json" }] },
+    { id: "bad-input", status: "failed", success: false, diagnostics: [{ severity: "error", message: "Rejected bad input." }] },
+  ],
+}).summary, { total: 2, passed: 1, failed: 1, error: 0, skipped: 0 })
+assert.equal(fuzzSuiteResultEnvelope({ suite: { id: "ability-boundary" } }).schema, FUZZ_SUITE_RESULT_SCHEMA)
 assert.equal(RUNNER_WORKSPACE_BACKEND_FILTER, "wp_codebox_runner_workspace_backend")
 assert.ok(RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS.includes("publish_runner_workspace"))
 assert.match(runnerWorkspaceAdapter, new RegExp(escapeRegExp(RUNNER_WORKSPACE_BACKEND_FILTER)))

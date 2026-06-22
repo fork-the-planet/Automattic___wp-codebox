@@ -49,6 +49,8 @@ export interface WordPressBenchRecipeOptions {
   scenarioIds?: string[]
   lifecycle?: JsonObject
   resetPolicy?: JsonObject
+  prepareSteps?: WorkspaceRecipeStep[]
+  postSteps?: WorkspaceRecipeStep[]
 }
 
 export function normalizeRecipeMounts(mounts: readonly WorkspaceRecipeMount[] = [], options: NormalizeRecipeMountsOptions = {}): WorkspaceRecipeMount[] {
@@ -126,6 +128,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
       mounts: normalizeRecipeMounts(options.mounts, { defaultMode: "readonly" }),
     },
     workflow: {
+      ...(options.prepareSteps && options.prepareSteps.length > 0 ? { before: normalizeRecipeSteps(options.prepareSteps, "prepareSteps") } : {}),
       steps: [{
         command: "wordpress.bench",
         args: [
@@ -141,7 +144,7 @@ export function buildWordPressBenchRecipe(options: WordPressBenchRecipeOptions):
           commandJsonArg("lifecycle-json", options.lifecycle ?? {}),
           commandJsonArg("reset-policy-json", options.resetPolicy ?? {}),
         ],
-      }],
+      }, ...normalizeRecipeSteps(options.postSteps ?? [], "postSteps")],
     },
   }
 }
