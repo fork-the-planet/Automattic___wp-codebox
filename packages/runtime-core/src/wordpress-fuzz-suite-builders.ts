@@ -1,3 +1,4 @@
+import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem, type FuzzCoveragePlanParameterGenerationHook, type FuzzCoveragePlanReason } from "./fuzz-coverage-plan-contracts.js"
 import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { stripUndefined } from "./object-utils.js"
 import type { WordPressAdminPageDescriptor, WordPressAdminPageInventory, WordPressFrontendUrlDescriptor, WordPressFrontendUrlInventory, WordPressRestRouteDescriptor, WordPressRestRouteEndpointDescriptor, WordPressRestRouteInventory } from "./wordpress-runtime-discovery-contracts.js"
@@ -40,6 +41,18 @@ const FRONTEND_PAGE_LOAD_TARGET: FuzzSuiteTargetRef = {
   label: "WordPress frontend page load",
 }
 
+const REST_PARAMETER_GENERATION_HOOK: FuzzCoveragePlanParameterGenerationHook = {
+  id: "wordpress.rest-route-parameters",
+  label: "WordPress REST route parameter generator",
+  description: "Placeholder hook for consumers that can generate concrete REST path/query/body parameters from discovered route args.",
+}
+
+const REST_MUTATING_OPT_IN_HOOK: FuzzCoveragePlanParameterGenerationHook = {
+  id: "wordpress.rest-mutating-route-opt-in",
+  label: "WordPress REST mutating route opt-in",
+  description: "Placeholder hook for consumers that explicitly choose safe fixtures and authorization for mutating REST methods.",
+}
+
 export function restRouteInventoryToFuzzSuite(inventory: WordPressRestRouteInventory, options: WordPressInventoryFuzzSuiteOptions = {}): FuzzSuiteContract {
   return fuzzSuiteContract({
     id: options.id ?? "wordpress-rest-route-inventory-fuzz-suite",
@@ -66,6 +79,52 @@ export function frontendUrlInventoryToFuzzSuite(inventory: WordPressFrontendUrlI
     version: options.version,
     target: FRONTEND_PAGE_LOAD_TARGET,
     cases: inventory.urls.map((url) => frontendUrlFuzzSuiteCase(url, inventory.homeUrl, options)),
+    metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, homeUrl: inventory.homeUrl, permalinkStructure: inventory.permalinkStructure }),
+  })
+}
+
+export function restRouteInventoryToCoveragePlan(inventory: WordPressRestRouteInventory, options: WordPressInventoryFuzzSuiteOptions = {}): FuzzCoveragePlanContract {
+  const discovered = inventory.routes.flatMap((route) => restRouteCoveragePlanItems(route, options))
+  const executable = discovered.filter((item) => item.input !== undefined && !item.reason)
+  const untested = discovered.filter((item) => item.reason)
+
+  return fuzzCoveragePlanContract({
+    id: options.id ?? "wordpress-rest-route-inventory-coverage-plan",
+    version: options.version,
+    discovered,
+    generated: discovered,
+    executable,
+    untested,
+    parameterGenerationHooks: [REST_PARAMETER_GENERATION_HOOK, REST_MUTATING_OPT_IN_HOOK],
+    metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status }),
+  })
+}
+
+export function adminPageInventoryToCoveragePlan(inventory: WordPressAdminPageInventory, options: WordPressInventoryFuzzSuiteOptions = {}): FuzzCoveragePlanContract {
+  const discovered = inventory.pages.map((page) => adminPageCoveragePlanItem(page, options))
+  const executable = discovered.filter((item) => !item.reason)
+  const skipped = discovered.filter((item) => item.reason?.code === "admin_page_capability_denied")
+
+  return fuzzCoveragePlanContract({
+    id: options.id ?? "wordpress-admin-page-inventory-coverage-plan",
+    version: options.version,
+    discovered,
+    generated: discovered,
+    executable,
+    skipped,
+    metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, adminUrl: inventory.adminUrl, menuLoaded: inventory.menuLoaded }),
+  })
+}
+
+export function frontendUrlInventoryToCoveragePlan(inventory: WordPressFrontendUrlInventory, options: WordPressInventoryFuzzSuiteOptions = {}): FuzzCoveragePlanContract {
+  const discovered = inventory.urls.map((url) => frontendUrlCoveragePlanItem(url, inventory.homeUrl, options))
+
+  return fuzzCoveragePlanContract({
+    id: options.id ?? "wordpress-frontend-url-inventory-coverage-plan",
+    version: options.version,
+    discovered,
+    generated: discovered,
+    executable: discovered,
     metadata: stripUndefined({ ...options.metadata, sourceSchema: inventory.schema, sourceCommand: inventory.command, inventoryStatus: inventory.status, homeUrl: inventory.homeUrl, permalinkStructure: inventory.permalinkStructure }),
   })
 }
@@ -109,6 +168,58 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
   })
 }
 
+function restRouteCoveragePlanItems(route: WordPressRestRouteDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem[] {
+  const endpointItems = route.endpoints?.flatMap((endpoint, endpointIndex) => endpoint.methods.map((method) => restRouteCoveragePlanItem(route, method, options, endpoint, endpointIndex)))
+  if (endpointItems?.length) {
+    return endpointItems
+  }
+  return route.methods.map((method) => restRouteCoveragePlanItem(route, method, options))
+}
+
+function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor, endpointIndex?: number): FuzzCoveragePlanItem {
+  const normalizedMethod = method.toUpperCase()
+  const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
+  const concreteRoute = !route.route.includes("(?P<") && requiredArgs.length === 0
+  const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
+  const executable = safeMethod && concreteRoute
+  const reason = executable ? undefined : restRouteUntestedReason(safeMethod, requiredArgs)
+  const parameterGeneration = executable ? undefined : stripUndefined({
+    hook: safeMethod ? REST_PARAMETER_GENERATION_HOOK.id : REST_MUTATING_OPT_IN_HOOK.id,
+    requiredInputs: requiredArgs.length ? requiredArgs : undefined,
+  })
+
+  return stripUndefined({
+    id: restRouteCaseId(route.route, normalizedMethod, endpointIndex),
+    target: executable ? REST_REQUEST_TARGET : PLANNED_REST_REQUEST_TARGET,
+    description: `${normalizedMethod} ${route.route}`,
+    input: executable ? stripUndefined({ method: normalizedMethod, path: route.route, user: options.user, session: options.session }) : undefined,
+    reason,
+    parameterGeneration,
+    metadata: stripUndefined({
+      source: "wordpress.rest-route-inventory",
+      route: route.route,
+      namespace: route.namespace,
+      method: normalizedMethod,
+      permission: endpoint?.permission,
+      argNames: route.argNames,
+    }),
+  })
+}
+
+function restRouteUntestedReason(safeMethod: boolean, requiredArgs: string[]): FuzzCoveragePlanReason {
+  if (safeMethod) {
+    return stripUndefined({
+      code: "route_requires_discovered_parameters",
+      message: "The REST route requires concrete discovered parameters before it can be executed safely.",
+      data: requiredArgs.length ? { requiredArgs } : undefined,
+    })
+  }
+  return {
+    code: "mutating_rest_method_requires_explicit_opt_in",
+    message: "The REST route uses a mutating method and requires explicit opt-in with safe fixtures before execution.",
+  }
+}
+
 function adminPageFuzzSuiteCase(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
   const path = adminPagePath(page)
   return stripUndefined({
@@ -122,6 +233,18 @@ function adminPageFuzzSuiteCase(page: WordPressAdminPageDescriptor, options: Wor
   })
 }
 
+function adminPageCoveragePlanItem(page: WordPressAdminPageDescriptor, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem {
+  const path = adminPagePath(page)
+  return stripUndefined({
+    id: `admin-page-${slugify(page.menuSlug)}`,
+    target: ADMIN_PAGE_LOAD_TARGET,
+    description: page.pageTitle || page.menuTitle,
+    input: page.canAccess === false ? undefined : { args: [`path=${path}`, optionalArg("user", options.user), optionalArg("session", options.session)].filter((arg): arg is string => Boolean(arg)) },
+    reason: page.canAccess === false ? { code: "admin_page_capability_denied", message: "The discovered admin page is not accessible to the current runtime user.", data: { capability: page.capability } } : undefined,
+    metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, parentSlug: page.parentSlug, capability: page.capability }),
+  })
+}
+
 function frontendUrlFuzzSuiteCase(url: WordPressFrontendUrlDescriptor, homeUrl: string, options: WordPressInventoryFuzzSuiteOptions): FuzzSuiteCase {
   const path = frontendPath(url.url, homeUrl)
   return stripUndefined({
@@ -132,6 +255,17 @@ function frontendUrlFuzzSuiteCase(url: WordPressFrontendUrlDescriptor, homeUrl: 
       args: [`path=${path}`, optionalArg("user", options.user), optionalArg("session", options.session)].filter((arg): arg is string => Boolean(arg)),
     },
     metadata: stripUndefined({ source: "wordpress.frontend-url-inventory", url: url.url, sourceKind: url.source, pattern: url.pattern, query: url.query, safety: { executable: true, safeMethod: true } }),
+  })
+}
+
+function frontendUrlCoveragePlanItem(url: WordPressFrontendUrlDescriptor, homeUrl: string, options: WordPressInventoryFuzzSuiteOptions): FuzzCoveragePlanItem {
+  const path = frontendPath(url.url, homeUrl)
+  return stripUndefined({
+    id: `frontend-url-${slugify(path)}`,
+    target: FRONTEND_PAGE_LOAD_TARGET,
+    description: `Load ${path}`,
+    input: { args: [`path=${path}`, optionalArg("user", options.user), optionalArg("session", options.session)].filter((arg): arg is string => Boolean(arg)) },
+    metadata: stripUndefined({ source: "wordpress.frontend-url-inventory", url: url.url, sourceKind: url.source, pattern: url.pattern, query: url.query }),
   })
 }
 
@@ -157,6 +291,10 @@ function frontendPath(url: string, homeUrl: string): string {
 
 function optionalArg(name: string, value: string | undefined): string | undefined {
   return value === undefined ? undefined : `${name}=${value}`
+}
+
+function restRouteCaseId(route: string, method: string, endpointIndex?: number): string {
+  return `rest-${slugify(method)}-${slugify(route)}${endpointIndex === undefined ? "" : `-${endpointIndex}`}`
 }
 
 function slugify(input: string): string {
