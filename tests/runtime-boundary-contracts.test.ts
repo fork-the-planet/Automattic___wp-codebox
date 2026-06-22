@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, compileRuntimeProfile, previewLease, previewLeaseStatus, runtimeProfile, runtimeProfilePreflight } from "../packages/runtime-core/src/index.js"
+import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, browserContainedSiteOpenEnvelope, browserContainedSiteStatus, compileRuntimeProfile, normalizeRuntimeProfile, previewLease, previewLeaseStatus, runtimeProfile, runtimeProfilePreflight } from "../packages/runtime-core/src/index.js"
 
 const profile = runtimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,
@@ -22,6 +22,7 @@ assert.deepEqual(profile.capabilities, ["agents.runtime", "provider.openai"])
 assert.equal(profile.components[0].slug, "agent-runtime")
 assert.deepEqual(profile.bootstrap?.steps, ["install", "activate"])
 assert.deepEqual(profile.env, { WP_ENVIRONMENT_TYPE: "local" })
+assert.deepEqual(normalizeRuntimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).components, [])
 
 const executionPlan = compileRuntimeProfile({
   schema: RUNTIME_PROFILE_SCHEMA,

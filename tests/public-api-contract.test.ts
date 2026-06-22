@@ -12,6 +12,9 @@ import {
   normalizeAgentTaskRunResult,
   normalizeArtifactResultEnvelope,
   normalizeBrowserRunResult,
+  normalizePreviewReviewerAccess,
+  normalizeRuntimeProfile,
+  normalizeTypedArtifactDTO,
   parentToolBridgeContract,
   performanceObservation,
   runtimePackageExecutionInput,
@@ -331,6 +334,9 @@ assert.equal(typeof runResultsApi.createRuntimeCommandResultEnvelope, "function"
 assert.equal(typeof runResultsApi.normalizeRecipeRunSummary, "function")
 assert.equal(typeof runResultsApi.fuzzSuiteResultEnvelope, "function")
 assert.equal(typeof runtimeProfile, "function")
+assert.equal(typeof normalizeRuntimeProfile, "function")
+assert.equal(typeof normalizeTypedArtifactDTO, "function")
+assert.equal(typeof normalizePreviewReviewerAccess, "function")
 assert.equal(typeof parentToolBridgeContract, "function")
 assert.equal(typeof fuzzSuiteContract, "function")
 assert.equal(typeof fuzzSuiteResultEnvelope, "function")
@@ -352,6 +358,9 @@ assert.equal(wordpressRestMatrixContract({ id: "public-rest-matrix" }).schema, W
 assert.equal(artifactResultEnvelope({ operation: "agent-task-run" }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(normalizeArtifactResultEnvelope({ success: true }).schema, ARTIFACT_RESULT_ENVELOPE_SCHEMA)
 assert.equal(runtimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
+assert.equal(normalizeRuntimeProfile({ schema: RUNTIME_PROFILE_SCHEMA, components: [] }).schema, RUNTIME_PROFILE_SCHEMA)
+assert.equal(normalizeTypedArtifactDTO({ name: "report", type: "json", path: "files/report.json", sha256: "a".repeat(64) })?.artifact.kind, "typed-artifact")
+assert.equal(normalizePreviewReviewerAccess(undefined).status, "unavailable")
 assert.equal(parentToolBridgeContract({ allowedTools: ["workspace.read"], dispatcher: { mode: "host_command", command: { argv: ["dispatch"] } } }).schema, PARENT_TOOL_BRIDGE_SCHEMA)
 assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { durationMs: 12.5 }, memory: { deltaBytes: 1024 } }).schema, PERFORMANCE_OBSERVATION_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)

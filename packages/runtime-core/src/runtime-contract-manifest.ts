@@ -10,7 +10,8 @@ import { PROVIDER_CREDENTIAL_PREFLIGHT_SCHEMA, PROVIDER_CREDENTIAL_REQUIREMENTS_
 import { RUNTIME_RUN_RESULT_SCHEMA } from "./run-registry.js"
 import { CODEBOX_RUN_RUNTIME_PACKAGE_ABILITY, RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA, RUNTIME_PACKAGE_EXECUTION_INPUT_SCHEMA, RUNTIME_PACKAGE_EXECUTION_RESULT_SCHEMA, RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA } from "./runtime-package-execution.js"
 import { WORDPRESS_REST_MATRIX_RESULT_SCHEMA, WORDPRESS_REST_MATRIX_SCHEMA } from "./rest-matrix-contracts.js"
-import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, RUNTIME_PROFILE_SCHEMA, runtimeProfile, type RuntimeProfile } from "./runtime-boundary-contracts.js"
+import { BROWSER_CONTAINED_SITE_OPEN_SCHEMA, BROWSER_CONTAINED_SITE_STATUS_SCHEMA, BROWSER_PREVIEW_BOOT_CONFIG_SCHEMA, BROWSER_SESSION_PRODUCT_DTO_SCHEMA, PREVIEW_LEASE_SCHEMA, PREVIEW_REVIEWER_ACCESS_SCHEMA, RUNTIME_PROFILE_SCHEMA, normalizePreviewReviewerAccess, normalizeRuntimeProfile, type RuntimeProfile } from "./runtime-boundary-contracts.js"
+import { STRUCTURED_ARTIFACT_SCHEMA, TYPED_ARTIFACT_INDEX_SCHEMA, normalizeTypedArtifactDTO, normalizeTypedArtifactIndex, type TypedArtifactIndex, type TypedArtifactRef } from "./structured-artifacts.js"
 import {
   RUNNER_WORKSPACE_CAPTURE_REQUEST_SCHEMA,
   RUNNER_WORKSPACE_CAPTURE_RESULT_SCHEMA,
@@ -76,9 +77,12 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
   },
   preview: {
     lease: PREVIEW_LEASE_SCHEMA,
+    reviewerAccess: PREVIEW_REVIEWER_ACCESS_SCHEMA,
   },
   artifact: {
     resultEnvelope: ARTIFACT_RESULT_ENVELOPE_SCHEMA,
+    typedArtifact: STRUCTURED_ARTIFACT_SCHEMA,
+    typedArtifactIndex: TYPED_ARTIFACT_INDEX_SCHEMA,
     runtimePackageDeclaration: RUNTIME_PACKAGE_ARTIFACT_DECLARATION_SCHEMA,
     runtimePackageProjection: RUNTIME_PACKAGE_OUTPUT_PROJECTION_SCHEMA,
     bundleFileManifest: ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA,
@@ -184,11 +188,17 @@ export const RUNTIME_CONTRACT_NORMALIZERS = {
   artifactResultEnvelope: normalizeArtifactResultEnvelope,
   fanoutAggregationInput: normalizeFanoutAggregationInput,
   fanoutAggregationOutput: aggregateFanoutOutputs,
-  runtimeProfile,
+  runtimeProfile: normalizeRuntimeProfile,
+  previewReviewerAccess: normalizePreviewReviewerAccess,
+  typedArtifact: normalizeTypedArtifactDTO,
+  typedArtifactIndex: normalizeTypedArtifactIndex,
 } satisfies {
   agentTaskRunResult: (input: unknown) => AgentTaskRunResultSummary
   artifactResultEnvelope: (input: unknown) => ArtifactResultEnvelope
   fanoutAggregationInput: (input: FanoutAggregationInputRequest) => FanoutAggregationInput
   fanoutAggregationOutput: (input: FanoutAggregationInputRequest) => FanoutAggregationOutput
   runtimeProfile: (input: unknown) => RuntimeProfile
+  previewReviewerAccess: typeof normalizePreviewReviewerAccess
+  typedArtifact: (input: unknown) => TypedArtifactRef | undefined
+  typedArtifactIndex: (input: unknown) => TypedArtifactIndex
 }
