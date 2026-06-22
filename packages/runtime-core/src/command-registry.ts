@@ -533,9 +533,9 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.db-operation",
-    description: "Execute a bounded generic WordPress database operation envelope for schema inspection, safe reads, and query summaries across discovered prefixed WordPress tables. Generic writes are explicitly rejected by the foundational contract.",
+    description: "Execute a bounded generic WordPress database operation envelope for schema/table inspection, safe reads, and query summaries across discovered prefixed WordPress tables. Generic writes are explicitly rejected by the foundational contract.",
     acceptedArgs: [
-      { name: "operation-json", description: "Inline wp-codebox/wordpress-db-operation/v1 operation envelope. Supports schema, read, query-summary, and guarded write operations. Reads require a discovered prefixed table and described table columns.", required: true, format: "JSON object" },
+      { name: "operation-json", description: "Inline wp-codebox/wordpress-db-operation/v1 operation envelope. Supports schema, read, inspect, query-summary, and guarded write operations. Reads and inspections require a discovered prefixed table and described table columns.", required: true, format: "JSON object" },
     ],
     outputShape: "wp-codebox/wordpress-db-result/v1 JSON with command, status, normalized operation, optional item/items, diagnostics, errors, artifactRefs, and metadata. Schema results classify tables as core, prefixed, or external where observable and may include bounded columns, indexes, and status metadata. Generic DB writes return status=error with db-write-unsupported.",
     outputSchema: {

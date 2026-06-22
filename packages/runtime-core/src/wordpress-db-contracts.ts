@@ -3,7 +3,7 @@ import type { BackendNeutralArtifactRef } from "./runtime-neutral-contracts.js"
 export const WORDPRESS_DB_OPERATION_SCHEMA = "wp-codebox/wordpress-db-operation/v1" as const
 export const WORDPRESS_DB_RESULT_SCHEMA = "wp-codebox/wordpress-db-result/v1" as const
 
-export type WordPressDbVerb = "schema" | "read" | "query-summary" | "write"
+export type WordPressDbVerb = "schema" | "read" | "inspect" | "query-summary" | "write"
 export type WordPressDbResultStatus = "ok" | "unsupported" | "error"
 
 export interface WordPressDbResourceRef {
@@ -56,7 +56,7 @@ export const WORDPRESS_DB_OPERATION_JSON_SCHEMA = {
   required: ["schema", "operation"],
   properties: {
     schema: { const: WORDPRESS_DB_OPERATION_SCHEMA },
-    operation: { enum: ["schema", "read", "query-summary", "write"] },
+    operation: { enum: ["schema", "read", "inspect", "query-summary", "write"] },
     resource: {
       type: "object",
       additionalProperties: false,
@@ -107,7 +107,7 @@ export function normalizeWordPressDbOperation(input: unknown): WordPressDbOperat
   const value = requireObject(input, "wordpress.db-operation") as Partial<WordPressDbOperation>
   const operation = requiredString(value.operation, "wordpress.db-operation.operation")
   if (!isWordPressDbVerb(operation)) {
-    throw new Error("wordpress.db-operation.operation must be schema, read, query-summary, or write.")
+    throw new Error("wordpress.db-operation.operation must be schema, read, inspect, query-summary, or write.")
   }
 
   return stripUndefined({
@@ -189,7 +189,7 @@ function normalizeOptionalLimit(input: unknown): number | undefined {
 }
 
 function isWordPressDbVerb(value: string): value is WordPressDbVerb {
-  return value === "schema" || value === "read" || value === "query-summary" || value === "write"
+  return value === "schema" || value === "read" || value === "inspect" || value === "query-summary" || value === "write"
 }
 
 function normalizeOptionalObject(value: unknown, label: string): Record<string, unknown> | undefined {
