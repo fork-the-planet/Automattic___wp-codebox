@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { SandboxToolPolicySnapshot } from "./sandbox-tool-policy.js"
 import type { StructuredArtifactPayload } from "./structured-artifacts.js"
 import type { TaskInput } from "./task-input.js"
@@ -188,12 +189,19 @@ function defaultRuntimeComponentPlugins(): WorkspaceRecipeExtraPlugin[] {
 }
 
 function defaultRuntimeComponentPaths(): string[] {
-  return (process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
+  return [
+    ...(process.env.CONTAINED_RUNTIME_COMPONENT_PATHS ?? process.env.WP_CODEBOX_AGENT_RUNTIME_COMPONENT_PATHS ?? "")
     .split(/[,:]/)
     .map((value) => value.trim())
-    .filter(Boolean)
+    .filter(Boolean),
+    ...bundledRuntimeComponentPaths(),
+  ]
     .map((value) => resolve(value))
-    .filter((source) => existsSync(source))
+    .filter((source, index, sources) => existsSync(source) && sources.indexOf(source) === index)
+}
+
+function bundledRuntimeComponentPaths(): string[] {
+  return [resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "wordpress-plugin")]
 }
 
 export function componentManifestForRuntimePlugins(componentPlugins: WorkspaceRecipeExtraPlugin[], providerPlugins: WorkspaceRecipeExtraPlugin[]): WorkspaceRecipeComponentManifest {
