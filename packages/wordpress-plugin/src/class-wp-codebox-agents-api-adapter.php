@@ -15,25 +15,36 @@ defined( 'ABSPATH' ) || exit;
  */
 final class WP_Codebox_Agents_API_Adapter {
 
-	public const CHAT                 = 'agents/chat';
-	public const RUN_TASK             = 'agents/run-task';
-	public const RUN_RUNTIME_PACKAGE  = 'agents/run-runtime-package';
-	public const GET_TASK_RUN         = 'agents/get-task-run';
-	public const CANCEL_TASK_RUN      = 'agents/cancel-task-run';
-	public const GET_CHAT_RUN         = 'agents/get-chat-run';
-	public const CANCEL_CHAT_RUN      = 'agents/cancel-chat-run';
-	public const QUEUE_CHAT_MESSAGE   = 'agents/queue-chat-message';
-	public const LIST_CHAT_RUN_EVENTS = 'agents/list-chat-run-events';
+	private const CHAT                 = 'agents/chat';
+	private const RUN_TASK             = 'agents/run-task';
+	private const RUN_RUNTIME_PACKAGE  = 'agents/run-runtime-package';
+	private const GET_TASK_RUN         = 'agents/get-task-run';
+	private const CANCEL_TASK_RUN      = 'agents/cancel-task-run';
+	private const GET_CHAT_RUN         = 'agents/get-chat-run';
+	private const CANCEL_CHAT_RUN      = 'agents/cancel-chat-run';
+	private const QUEUE_CHAT_MESSAGE   = 'agents/queue-chat-message';
+	private const LIST_CHAT_RUN_EVENTS = 'agents/list-chat-run-events';
 
-	public const TASK_INPUT_SCHEMA      = 'agents-api/task-input/v1';
-	public const EXECUTOR_TARGET_SCHEMA = 'agents-api/executor-target/v1';
-	public const BROWSER_TARGET         = 'wp-codebox/browser-playground';
-	public const HOST_TARGET            = 'wp-codebox/host-playground';
-	public const IMPORT_RUNTIME_BUNDLES_FUNCTION = 'wp_agent_import_runtime_bundles';
-	public const RUNTIME_BUNDLE_IMPORT_FILTER = 'wp_agent_runtime_import_bundle';
-	public const LEGACY_RESOLVED_TOOLS_FILTER = 'agents_api_resolved_tools';
-	public const RUNTIME_RESOLVED_TOOLS_FILTER = 'wp_agent_runtime_resolved_tools';
-	public const CHAT_RUNTIME_PRINCIPAL_PERMISSION_FILTER = 'agents_chat_runtime_principal_permission';
+	private const EXECUTOR_TARGET_SCHEMA = 'wp-codebox/executor-target/v1';
+	private const BROWSER_TARGET         = 'wp-codebox/browser-playground';
+	private const HOST_TARGET            = 'wp-codebox/host-playground';
+	private const IMPORT_RUNTIME_BUNDLES_FUNCTION = 'wp_agent_import_runtime_bundles';
+	private const RUNTIME_BUNDLE_IMPORT_FILTER = 'wp_agent_runtime_import_bundle';
+	private const LEGACY_RESOLVED_TOOLS_FILTER = 'agents_api_resolved_tools';
+	private const RUNTIME_RESOLVED_TOOLS_FILTER = 'wp_agent_runtime_resolved_tools';
+	private const CHAT_RUNTIME_PRINCIPAL_PERMISSION_FILTER = 'agents_chat_runtime_principal_permission';
+
+	private const RESPONSE_SCHEMAS = array(
+		self::CHAT                 => 'wp-codebox/agent-chat-result/v1',
+		self::RUN_TASK             => 'wp-codebox/agent-task-result/v1',
+		self::RUN_RUNTIME_PACKAGE  => 'wp-codebox/runtime-package-result/v1',
+		self::GET_TASK_RUN         => 'wp-codebox/agent-task-run/v1',
+		self::CANCEL_TASK_RUN      => 'wp-codebox/agent-task-cancel-result/v1',
+		self::GET_CHAT_RUN         => 'wp-codebox/agent-chat-run/v1',
+		self::CANCEL_CHAT_RUN      => 'wp-codebox/agent-chat-cancel-result/v1',
+		self::QUEUE_CHAT_MESSAGE   => 'wp-codebox/agent-chat-message-result/v1',
+		self::LIST_CHAT_RUN_EVENTS => 'wp-codebox/agent-chat-run-events/v1',
+	);
 
 	private const EXECUTOR_TARGET_FILTERS = array(
 		'agents_api_executor_targets',
@@ -63,6 +74,14 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	public static function default_chat_ability(): string {
 		return self::CHAT;
+	}
+
+	public static function browser_executor_target_id(): string {
+		return self::BROWSER_TARGET;
+	}
+
+	public static function host_executor_target_id(): string {
+		return self::HOST_TARGET;
 	}
 
 	public static function import_runtime_bundles_function(): string {
@@ -113,9 +132,9 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	/** @param array<string,mixed> $task_input_schema Codebox task input schema. @return array<string,mixed> */
 	public static function task_input_schema( array $task_input_schema ): array {
-		$task_input_schema['$id'] = self::TASK_INPUT_SCHEMA;
-		$task_input_schema['properties']['schema']['const'] = self::TASK_INPUT_SCHEMA;
-		$task_input_schema['properties']['schema']['description'] = 'Generic Agents API task input schema id.';
+		$task_input_schema['$id'] = WP_Codebox_Task_Input_Contract::SCHEMA;
+		$task_input_schema['properties']['schema']['const'] = WP_Codebox_Task_Input_Contract::SCHEMA;
+		$task_input_schema['properties']['schema']['description'] = 'WP Codebox task input schema id.';
 
 		return $task_input_schema;
 	}
@@ -190,7 +209,7 @@ final class WP_Codebox_Agents_API_Adapter {
 			$input = $normalized_workload;
 		}
 
-		if ( self::TASK_INPUT_SCHEMA === (string) ( $input['schema'] ?? '' ) ) {
+		if ( str_starts_with( (string) ( $input['schema'] ?? '' ), 'agents-api/' ) ) {
 			$input['schema'] = WP_Codebox_Task_Input_Contract::SCHEMA;
 		}
 
@@ -315,6 +334,35 @@ final class WP_Codebox_Agents_API_Adapter {
 			return new WP_Error( 'wp_codebox_agents_api_invalid_result', 'The requested Agents API ability returned an invalid result.', array( 'status' => 500, 'ability' => $ability_name ) );
 		}
 
-		return $result;
+		return self::public_response( $ability_name, $result );
+	}
+
+	/** @param array<string,mixed> $result Upstream result. @return array<string,mixed> */
+	private static function public_response( string $ability_name, array $result ): array {
+		if ( isset( self::RESPONSE_SCHEMAS[ $ability_name ] ) ) {
+			$result['schema'] = self::RESPONSE_SCHEMAS[ $ability_name ];
+		}
+
+		return self::sanitize_public_value( $result );
+	}
+
+	/** @param array<string,mixed> $value Public response value. @return array<string,mixed> */
+	private static function sanitize_public_value( array $value ): array {
+		foreach ( $value as $key => $item ) {
+			if ( is_string( $item ) && self::is_upstream_schema_name( $item ) ) {
+				$value[ $key ] = 'wp-codebox/upstream-adapter-value/v1';
+				continue;
+			}
+			if ( is_array( $item ) ) {
+				$value[ $key ] = self::sanitize_public_value( $item );
+			}
+		}
+
+		return $value;
+	}
+
+	private static function is_upstream_schema_name( string $value ): bool {
+		return 1 === preg_match( '#^agents-api(?:[./][A-Za-z0-9_-]+)*/v[0-9]+$#', $value )
+			|| 1 === preg_match( '#^agents-api\.[A-Za-z0-9_.-]+$#', $value );
 	}
 }

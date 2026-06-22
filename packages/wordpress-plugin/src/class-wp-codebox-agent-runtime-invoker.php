@@ -25,7 +25,7 @@ final class WP_Codebox_Agent_Runtime_Invoker {
 	}
 
 	public function is_agents_api_ready(): bool {
-		return $this->is_ability_available( WP_Codebox_Agents_API_Adapter::CHAT );
+		return $this->is_ability_available( WP_Codebox_Agents_API_Adapter::default_chat_ability() );
 	}
 
 	public function is_ability_available( string $name ): bool {
