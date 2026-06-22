@@ -1,4 +1,4 @@
-import { runRuntimeAction, type RuntimeActionObservation, type RuntimeAdminPageAction, type RuntimeBrowserAction, type RuntimeBrowserProbeAction, type RuntimeEditorOpenAction, type RuntimePageAction, type RuntimePhpAction, type RuntimeRestRequestAction, type RuntimeWpCliAction } from "./runtime-action-adapter.js"
+import { runRuntimeAction, type RuntimeActionObservation, type RuntimeAdminPageAction, type RuntimeBrowserAction, type RuntimeBrowserProbeAction, type RuntimeEditorOpenAction, type RuntimePageAction, type RuntimePhpAction, type RuntimeRestRequestAction, type RuntimeWordPressPluginSetupAction, type RuntimeWordPressPluginStateAction, type RuntimeWordPressThemeSetupAction, type RuntimeWpCliAction } from "./runtime-action-adapter.js"
 import type { ArtifactSpec } from "./artifact-manifest.js"
 import type { FuzzSuiteContract, FuzzSuiteResultEnvelope } from "./fuzz-suite-contracts.js"
 import { runFuzzSuite, type FuzzSuiteRunOptions } from "./fuzz-suite-runner.js"
@@ -21,6 +21,10 @@ export type WordPressBrowserProbeOptions = Omit<RuntimeBrowserProbeAction, "type
 export type WordPressEditorOpenOptions = Omit<RuntimeEditorOpenAction, "type">
 export type WordPressAdminPageOptions = Omit<RuntimeAdminPageAction, "type">
 export type WordPressPageOptions = Omit<RuntimePageAction, "type">
+
+export type WordPressPluginSetupOptions = Omit<RuntimeWordPressPluginSetupAction, "type">
+export type WordPressPluginStateOptions = Omit<RuntimeWordPressPluginStateAction, "type">
+export type WordPressThemeSetupOptions = Omit<RuntimeWordPressThemeSetupAction, "type">
 
 export interface WordPressRuntimeDiscoveryOptions {
   surfaces?: readonly WordPressRuntimeDiscoverySurface[]
@@ -86,6 +90,18 @@ export function openWordPressAdminPage(episode: WordPressRuntimeActionEpisode, p
 
 export function visitWordPressPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageOptions): Promise<RuntimeActionObservation> {
   return runRuntimeAction(episode as RuntimeEpisode, { type: "page", ...page })
+}
+
+export function setupWordPressPlugin(episode: WordPressRuntimeActionEpisode, options: WordPressPluginSetupOptions = {}): Promise<RuntimeActionObservation> {
+  return runRuntimeAction(episode as RuntimeEpisode, { type: "wordpress_plugin_setup", ...options })
+}
+
+export function setWordPressPluginState(episode: WordPressRuntimeActionEpisode, options: WordPressPluginStateOptions): Promise<RuntimeActionObservation> {
+  return runRuntimeAction(episode as RuntimeEpisode, { type: "wordpress_plugin_state", ...options })
+}
+
+export function setupWordPressTheme(episode: WordPressRuntimeActionEpisode, options: WordPressThemeSetupOptions = {}): Promise<RuntimeActionObservation> {
+  return runRuntimeAction(episode as RuntimeEpisode, { type: "wordpress_theme_setup", ...options })
 }
 
 export function discoverWordPressRuntime(episode: WordPressRuntimeActionEpisode, options: WordPressRuntimeDiscoveryOptions = {}): Promise<RuntimeEpisodeStepResult> {
