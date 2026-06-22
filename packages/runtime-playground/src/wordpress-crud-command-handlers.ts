@@ -344,6 +344,38 @@ function wp_codebox_emit_db_result( $operation ) {
             return;
         }
 
+        if ( $verb === 'inspect' ) {
+            $requested = wp_codebox_db_resolve_table( $operation );
+            if ( isset( $operation['resource']['table'] ) && ! $requested ) {
+                wp_codebox_db_emit_result( wp_codebox_db_error( $operation, 'unsafe-table', 'DB inspection requires a discovered prefixed WordPress table name or base name.' ) );
+                return;
+            }
+
+            $table_infos = array();
+            if ( $requested ) {
+                $table_infos[] = $requested;
+            } else {
+                $table_infos = array_values( array_filter( wp_codebox_db_discovered_tables(), static function ( $table, $key ) { return $table['name'] === $key; }, ARRAY_FILTER_USE_BOTH ) );
+            }
+
+            $tables = array();
+            foreach ( $table_infos as $table ) {
+                $quoted = wp_codebox_db_quote_identifier( $table['name'] );
+                $row_count = $wpdb->get_var( 'SELECT COUNT(*) FROM ' . $quoted );
+                $indexes = $wpdb->get_results( 'SHOW INDEX FROM ' . $quoted, ARRAY_A );
+                $tables[] = array(
+                    'name' => $table['name'],
+                    'baseName' => $table['baseName'],
+                    'classification' => $table['classification'],
+                    'rowCount' => $row_count === null ? null : (int) $row_count,
+                    'indexes' => is_array( $indexes ) ? $indexes : array(),
+                );
+            }
+
+            wp_codebox_db_emit_result( wp_codebox_db_result( $operation, 'ok', array( 'items' => $tables, 'metadata' => array( 'tableCount' => count( $tables ), 'attribution' => array( 'command' => 'wordpress.db-operation', 'operation' => 'inspect' ) ) ) ) );
+            return;
+        }
+
         if ( $verb === 'query-summary' ) {
             $sql = isset( $query['sql'] ) ? trim( (string) $query['sql'] ) : '';
             if ( $sql === '' ) {

@@ -39,7 +39,7 @@ export type WordPressCrudOperationOptions = Omit<WordPressCrudOperation, "schema
   schema?: typeof WORDPRESS_CRUD_OPERATION_SCHEMA
 }
 
-export type WordPressDatabaseReadOperation = Extract<WordPressDbVerb, "schema" | "read" | "query-summary">
+export type WordPressDatabaseReadOperation = Extract<WordPressDbVerb, "schema" | "read" | "inspect" | "query-summary">
 
 export type WordPressDatabaseReadOptions = Omit<WordPressDbOperation, "schema" | "operation"> & {
   schema?: typeof WORDPRESS_DB_OPERATION_SCHEMA

@@ -30,6 +30,7 @@ Foundational supported operations:
 
 - `schema` lists discovered prefixed WordPress tables using `SHOW TABLES`, classifies tables as `core`, `prefixed`, or `external` where observable, and includes bounded column, index, and table-status metadata when available.
 - `read` performs bounded reads against discovered prefixed WordPress table names or base names, allowlists selected and filtered columns against `DESCRIBE`, supports scalar equality filters, and caps results at 100 rows.
+- `inspect` returns read-only inventory metadata for discovered prefixed WordPress table names or base names, including row counts and index metadata from `SHOW INDEX`.
 - `query-summary` summarizes the current `$wpdb` query count or runs bounded read-only `SELECT`, `SHOW`, `DESCRIBE`, or `EXPLAIN` SQL.
 
 DB write guardrails:
