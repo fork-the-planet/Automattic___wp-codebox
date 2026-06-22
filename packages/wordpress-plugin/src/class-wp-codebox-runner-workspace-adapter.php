@@ -46,11 +46,11 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 
 	/** @return array<string,mixed> */
 	public function prepare( array $input ): array {
-		$abilities     = $this->abilities();
-		$adopt_ability = (string) ( $abilities['workspace_adopt'] ?? '' );
-		$show_ability  = (string) ( $abilities['workspace_show'] ?? '' );
-		$clone_ability = (string) ( $abilities['workspace_clone'] ?? '' );
-		$add_ability   = (string) ( $abilities['workspace_worktree_add'] ?? '' );
+		$operations    = $this->operations();
+		$adopt_ability = (string) ( $operations[ WP_Codebox_Runner_Workspace_Backend::OPERATION_WORKSPACE_ADOPT ] ?? '' );
+		$show_ability  = (string) ( $operations[ WP_Codebox_Runner_Workspace_Backend::OPERATION_WORKSPACE_SHOW ] ?? '' );
+		$clone_ability = (string) ( $operations[ WP_Codebox_Runner_Workspace_Backend::OPERATION_WORKSPACE_CLONE ] ?? '' );
+		$add_ability   = (string) ( $operations[ WP_Codebox_Runner_Workspace_Backend::OPERATION_WORKSPACE_WORKTREE_ADD ] ?? '' );
 
 		$checkout_path           = (string) $input['checkout_path'];
 		$workspace_root_constant = (string) ( $this->config()['workspace_root_constant'] ?? '' );
@@ -133,22 +133,22 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
 	public function publish( array $input ): array {
-		return $this->execute_named( 'publish_runner_workspace', $input );
+		return $this->execute_named( WP_Codebox_Runner_Workspace_Backend::OPERATION_PUBLISH_RUNNER_WORKSPACE, $input );
 	}
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
 	public function git_status( string $workspace ): array {
-		return $this->execute_named( 'workspace_git_status', array( 'name' => $workspace ) );
+		return $this->execute_named( WP_Codebox_Runner_Workspace_Backend::OPERATION_WORKSPACE_GIT_STATUS, array( 'name' => $workspace ) );
 	}
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
 	public function git_diff( array $input ): array {
-		return $this->execute_named( 'workspace_git_diff', $input );
+		return $this->execute_named( WP_Codebox_Runner_Workspace_Backend::OPERATION_WORKSPACE_GIT_DIFF, $input );
 	}
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
 	public function run_command( array $input ): array {
-		return $this->execute_named( 'run_runner_workspace_command', $input );
+		return $this->execute_named( WP_Codebox_Runner_Workspace_Backend::OPERATION_RUN_WORKSPACE_COMMAND, $input );
 	}
 
 	/** @return array<string,mixed> */
@@ -169,7 +169,7 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 	}
 
 	/** @return array<string,mixed> */
-	private function abilities(): array {
+	private function operations(): array {
 		$config = $this->config();
 		if ( ! empty( $config['issues'] ) ) {
 			return array();
@@ -214,8 +214,8 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
 	private function execute_named( string $key, array $input ): array {
-		$abilities = $this->abilities();
-		return $this->execute( (string) ( $abilities[ $key ] ?? '' ), $input );
+		$operations = $this->operations();
+		return $this->execute( (string) ( $operations[ $key ] ?? '' ), $input, $key );
 	}
 
 	/** @return array<string,string> */
@@ -241,7 +241,7 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 	}
 
 	/** @return array{success:bool,result?:array<string,mixed>,failure_type?:string,error?:array<string,mixed>} */
-	private function execute( string $ability_name, array $input ): array {
+	private function execute( string $ability_name, array $input, string $operation = '' ): array {
 		if ( ! $this->valid_ability_name( $ability_name ) ) {
 			return $this->failure( 'backend_unavailable', 'wp_codebox_runner_workspace_backend_unavailable', 'Runner workspace backend is not available for this operation.' );
 		}
@@ -256,11 +256,7 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 			return array(
 				'success'      => false,
 				'failure_type' => 'backend_error',
-				'error'        => array(
-					'code'    => $result->get_error_code(),
-					'message' => $result->get_error_message(),
-					'data'    => $result->get_error_data(),
-				),
+				'error'        => $this->backend_error( $operation ),
 			);
 		}
 
@@ -271,8 +267,8 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 		if ( false === ( $result['success'] ?? true ) ) {
 			return array(
 				'success'      => false,
-				'failure_type' => (string) ( $result['failure_type'] ?? 'backend_failed' ),
-				'error'        => is_array( $result['error'] ?? null ) ? $result['error'] : array( 'message' => (string) ( $result['error'] ?? 'Runner workspace backend operation failed.' ) ),
+				'failure_type' => 'backend_failed',
+				'error'        => $this->backend_error( $operation ),
 			);
 		}
 
@@ -290,6 +286,18 @@ final class WP_Codebox_Runner_Workspace_Adapter {
 
 	private function valid_ability_name( string $ability_name ): bool {
 		return '' !== $ability_name && 1 === preg_match( self::ABILITY_NAME_PATTERN, $ability_name );
+	}
+
+	/** @return array<string,string> */
+	private function backend_error( string $operation ): array {
+		return array_filter(
+			array(
+				'code'      => 'wp_codebox_runner_workspace_backend_error',
+				'message'   => 'Runner workspace backend operation failed.',
+				'operation' => $operation,
+			),
+			static fn( mixed $value ): bool => '' !== $value
+		);
 	}
 
 	/** @return array{success:bool,failure_type:string,error:array<string,string>} */
