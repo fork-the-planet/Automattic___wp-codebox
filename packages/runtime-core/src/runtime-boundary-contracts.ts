@@ -1,5 +1,6 @@
 export const RUNTIME_PROFILE_SCHEMA = "wp-codebox/runtime-profile/v1" as const
 export const PREVIEW_LEASE_SCHEMA = "wp-codebox/preview-lease/v1" as const
+export const PREVIEW_REVIEWER_ACCESS_SCHEMA = "wp-codebox/preview-reviewer-access/v1" as const
 export const BROWSER_CONTAINED_SITE_STATUS_SCHEMA = "wp-codebox/browser-contained-site-status/v1" as const
 export const BROWSER_CONTAINED_SITE_OPEN_SCHEMA = "wp-codebox/browser-contained-site-open/v1" as const
 export const BROWSER_SESSION_PRODUCT_DTO_SCHEMA = "wp-codebox/browser-session-product-dto/v1" as const
@@ -231,6 +232,10 @@ export function runtimeProfile(input: unknown): RuntimeProfile {
   }
 }
 
+export function normalizeRuntimeProfile(input: unknown): RuntimeProfile {
+  return runtimeProfile(input)
+}
+
 export function previewLease(input: unknown): PreviewLease {
   const value = requireObject(input, "Preview lease") as Partial<PreviewLease>
   const publicUrl = optionalString(value.public_url, "public_url") ?? optionalString(value.preview_public_url, "preview_public_url")
@@ -273,6 +278,82 @@ export function previewLeaseStatus(input: PreviewLease | unknown, now = new Date
 export function isPreviewLease(input: unknown): input is PreviewLease {
   return Boolean(input && typeof input === "object" && !Array.isArray(input) && (input as { schema?: unknown }).schema === PREVIEW_LEASE_SCHEMA)
 }
+
+export function previewReviewerAccess(preview: {
+  status?: unknown
+  lifecycle?: unknown
+  publicUrl?: unknown
+  url?: unknown
+  expiresAt?: unknown
+  reviewerAuthBootstrap?: unknown
+  blockers?: unknown
+} | undefined): import("./runtime-contracts.js").ArtifactPreviewReviewerAccess {
+  if (!preview || preview.status !== "available" || preview.lifecycle !== "held-after-run") {
+    return {
+      schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
+      status: "unavailable",
+      outcome: "blocked",
+      mode: "none",
+      reviewerSafe: false,
+      reason: "preview-not-held",
+    }
+  }
+
+  const reviewerAuthBootstrap = normalizeReviewerAuthBootstrap(preview.reviewerAuthBootstrap)
+  if (reviewerAuthBootstrap) {
+    return {
+      schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
+      status: "ready",
+      outcome: "bootstrap",
+      mode: "auth-bootstrap",
+      reviewerSafe: true,
+      openUrl: reviewerAuthBootstrap.bootstrapUrl,
+      targetUrl: reviewerAuthBootstrap.redirectUrl,
+      expiresAt: reviewerAuthBootstrap.expiresAt,
+      bootstrap: reviewerAuthBootstrap,
+    }
+  }
+
+  const blockers = normalizePreviewBlockers(preview.blockers)
+  if (blockers.length > 0) {
+    return {
+      schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
+      status: "blocked",
+      outcome: blockers.some((blocker) => blocker.code === "external-wordpress-admin-auth-unavailable") ? "auth-required" : "blocked",
+      mode: "none",
+      reviewerSafe: false,
+      blockers,
+      expiresAt: optionalString(preview.expiresAt, "expiresAt"),
+      reason: blockers[0]?.code,
+    }
+  }
+
+  const safeUrl = safeNonLocalPreviewUrl(optionalString(preview.publicUrl, "publicUrl")) ?? safeNonLocalPreviewUrl(optionalString(preview.url, "url"))
+  if (safeUrl) {
+    return {
+      schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
+      status: "ready",
+      outcome: "public",
+      mode: "direct-url",
+      reviewerSafe: true,
+      openUrl: safeUrl,
+      targetUrl: safeUrl,
+      expiresAt: optionalString(preview.expiresAt, "expiresAt"),
+    }
+  }
+
+  return {
+    schema: PREVIEW_REVIEWER_ACCESS_SCHEMA,
+    status: "blocked",
+    outcome: "local",
+    mode: "none",
+    reviewerSafe: false,
+    expiresAt: optionalString(preview.expiresAt, "expiresAt"),
+    reason: "local-preview-requires-auth-bootstrap-or-public-url",
+  }
+}
+
+export const normalizePreviewReviewerAccess = previewReviewerAccess
 
 export function browserContainedSiteStatus(input: unknown): BrowserContainedSiteStatus {
   const value = requireObject(input, "Browser contained site status") as Partial<BrowserContainedSiteStatus>
@@ -402,6 +483,72 @@ function normalizeBrowserSessionProductDto(input: unknown): BrowserSessionProduc
     signals: normalizeOptionalObject(value.signals, "preview_session.signals"),
     artifacts: normalizeOptionalObject(value.artifacts, "preview_session.artifacts"),
     error: normalizeOptionalObject(value.error, "preview_session.error"),
+  }
+}
+
+function normalizeReviewerAuthBootstrap(input: unknown): import("./runtime-contracts.js").ArtifactReviewerAuthBootstrap | undefined {
+  if (input === undefined) return undefined
+  const value = requireObject(input, "reviewerAuthBootstrap") as Partial<import("./runtime-contracts.js").ArtifactReviewerAuthBootstrap>
+  const evidence = requireObject(value.evidence, "reviewerAuthBootstrap.evidence") as Record<string, unknown>
+  return {
+    schema: "wp-codebox/reviewer-auth-bootstrap/v1",
+    kind: "local-wordpress-admin-fixture",
+    reviewerSafe: true,
+    bootstrapUrl: requiredUrl(value.bootstrapUrl, "reviewerAuthBootstrap.bootstrapUrl"),
+    redirectUrl: requiredUrl(value.redirectUrl, "reviewerAuthBootstrap.redirectUrl"),
+    expiresAt: requiredIdentifier(value.expiresAt, "reviewerAuthBootstrap.expiresAt"),
+    evidence: {
+      command: requiredIdentifier(evidence.command, "reviewerAuthBootstrap.evidence.command"),
+      auth: "wordpress-admin",
+      userId: typeof evidence.userId === "number" ? evidence.userId : Number(evidence.userId),
+    },
+  }
+}
+
+function normalizePreviewBlockers(input: unknown): import("./runtime-contracts.js").ArtifactPreviewBlocker[] {
+  if (!Array.isArray(input)) return []
+  return input.map((entry, index) => {
+    const value = requireObject(entry, `preview.blockers[${index}]`) as Partial<import("./runtime-contracts.js").ArtifactPreviewBlocker>
+    const evidence = requireObject(value.evidence, `preview.blockers[${index}].evidence`) as Record<string, unknown>
+    return {
+      schema: "wp-codebox/preview-blocker/v1",
+      kind: "unsupported-preview",
+      code: requiredIdentifier(value.code, `preview.blockers[${index}].code`),
+      message: optionalString(value.message, `preview.blockers[${index}].message`) ?? value.code ?? "Preview is blocked.",
+      retryable: false,
+      reviewerSafe: false,
+      evidence: {
+        command: requiredIdentifier(evidence.command, `preview.blockers[${index}].evidence.command`),
+        auth: requiredIdentifier(evidence.auth, `preview.blockers[${index}].evidence.auth`) as "wordpress-admin" | (string & {}),
+      },
+    }
+  })
+}
+
+function safeNonLocalPreviewUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined
+    return isLocalPreviewHost(parsed.hostname) ? undefined : url
+  } catch {
+    return undefined
+  }
+}
+
+function isLocalPreviewHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  return normalized === "localhost" || normalized === "0.0.0.0" || normalized === "127.0.0.1" || normalized === "::1" || normalized.startsWith("127.")
+}
+
+function requiredUrl(value: unknown, label: string): string {
+  const url = optionalString(value, label)
+  if (!url) throw new Error(`${label} must be a URL.`)
+  try {
+    new URL(url)
+    return url
+  } catch {
+    throw new Error(`${label} must be a URL.`)
   }
 }
 

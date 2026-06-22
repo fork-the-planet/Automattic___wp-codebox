@@ -3,12 +3,15 @@ import assert from "node:assert/strict"
 import {
   BROWSER_SESSION_PRODUCT_DTO_SCHEMA,
   PUBLIC_ARTIFACT_REF_DTO_SCHEMA,
+  TYPED_ARTIFACT_INDEX_SCHEMA,
   changedFilesArtifactRefs,
   findChangedFilesArtifactRef,
   findPatchArtifactRef,
   normalizeBrowserSessionProductDTO,
   normalizePublicArtifactRefDTO,
   normalizePublicArtifactRefDTOs,
+  normalizeTypedArtifactDTO,
+  normalizeTypedArtifactIndex,
   patchArtifactRefs,
   publicArtifactRefGroups,
 } from "../packages/runtime-core/src/index.js"
@@ -87,5 +90,34 @@ assert.equal(session.contained_site?.api_key, "[redacted]")
 assert.equal(session.artifacts?.content, undefined)
 assert.equal(session.artifact_refs.changed_files[0]?.path, "artifacts/browser-session-1/files/changed-files.json")
 assert.equal(session.artifact_refs.patches[0]?.path, "artifacts/browser-session-1/files/patch.diff")
+
+const typedArtifact = normalizeTypedArtifactDTO({
+  name: "review-summary",
+  kind: "review",
+  payloadSchema: "example/review/v1",
+  payload: { status: "passed" },
+  source: "runtime-command",
+  artifact_path: "files/typed/review-summary.json",
+  content_type: "application/json",
+  digest: { algorithm: "sha256", value: "d".repeat(64) },
+  metadata: { scenario: "homepage" },
+})
+
+assert.equal(typedArtifact?.schema, "wp-codebox/structured-artifact/v1")
+assert.equal(typedArtifact?.name, "review-summary")
+assert.equal(typedArtifact?.type, "review")
+assert.equal(typedArtifact?.payload_schema, "example/review/v1")
+assert.deepEqual(typedArtifact?.payload, { status: "passed" })
+assert.equal(typedArtifact?.provenance.source, "runtime-command")
+assert.equal(typedArtifact?.artifact.path, "files/typed/review-summary.json")
+assert.equal(typedArtifact?.artifact.kind, "typed-artifact")
+assert.equal(typedArtifact?.artifact.contentType, "application/json")
+assert.equal(typedArtifact?.artifact.sha256, "d".repeat(64))
+
+const typedIndex = normalizeTypedArtifactIndex({ artifacts: [typedArtifact, { name: "bad", type: "missing-artifact" }] })
+assert.equal(typedIndex.schema, TYPED_ARTIFACT_INDEX_SCHEMA)
+assert.equal(typedIndex.direction, "output")
+assert.equal(typedIndex.artifacts.length, 1)
+assert.equal(typedIndex.artifacts[0]?.artifact.path, "files/typed/review-summary.json")
 
 console.log("artifact reference dto helpers passed")

@@ -60,6 +60,13 @@ export interface TypedArtifactIndex {
   artifacts: TypedArtifactRef[]
 }
 
+export interface NormalizeTypedArtifactDTODefaults {
+  name?: string
+  type?: string
+  source?: string
+  contentType?: string
+}
+
 export interface MaterializedStructuredArtifactRef extends Omit<StructuredArtifactPayload, "payload"> {
   payload?: unknown
   artifact?: {
@@ -166,6 +173,60 @@ export function normalizeStructuredArtifacts(value: unknown, direction: Structur
   })
 }
 
+export function normalizeTypedArtifactDTO(input: unknown, defaults: NormalizeTypedArtifactDTODefaults = {}): TypedArtifactRef | undefined {
+  const entry = isPlainObject(input) ? input : undefined
+  if (!entry) return undefined
+
+  const name = stringValue(entry.name) || defaults.name || ""
+  const type = stringValue(entry.type) || stringValue(entry.kind) || defaults.type || ""
+  if (!name || !type) return undefined
+
+  const artifact = typedArtifactFile(entry.artifact ?? entry.file ?? entry.ref ?? entry, defaults)
+  if (!artifact) return undefined
+
+  const provenance = isPlainObject(entry.provenance) ? entry.provenance : {}
+  const source = stringValue(provenance.source) || stringValue(entry.source) || defaults.source || "runtime"
+  const payloadSchema = structuredPayloadSchema(entry.payload_schema ?? entry.payloadSchema ?? entry.artifact_schema ?? entry.artifactSchema)
+
+  return stripUndefined({
+    schema: STRUCTURED_ARTIFACT_SCHEMA,
+    name,
+    type,
+    ...(payloadSchema !== undefined ? { payload_schema: payloadSchema } : {}),
+    ...("payload" in entry ? { payload: entry.payload } : {}),
+    metadata: isPlainObject(entry.metadata) ? entry.metadata : {},
+    provenance: {
+      ...provenance,
+      direction: "output",
+      source,
+    },
+    artifact,
+  }) as TypedArtifactRef
+}
+
+export function normalizeTypedArtifactDTOs(input: unknown): TypedArtifactRef[] {
+  const artifacts = Array.isArray(input)
+    ? input
+    : isPlainObject(input) && Array.isArray(input.artifacts)
+      ? input.artifacts
+      : []
+  return artifacts.flatMap((entry) => {
+    const artifact = normalizeTypedArtifactDTO(entry)
+    return artifact ? [artifact] : []
+  })
+}
+
+export function normalizeTypedArtifactIndex(input: unknown): TypedArtifactIndex {
+  return {
+    schema: TYPED_ARTIFACT_INDEX_SCHEMA,
+    direction: "output",
+    artifacts: normalizeTypedArtifactDTOs(input),
+  }
+}
+
+export const normalizeTypedArtifactRef = normalizeTypedArtifactDTO
+export const normalizeTypedArtifactRefs = normalizeTypedArtifactDTOs
+
 function structuredPayloadSchema(value: unknown): string | Record<string, unknown> | undefined {
   if (typeof value === "string" && value.trim()) return value.trim()
   if (isPlainObject(value)) return value
@@ -174,6 +235,24 @@ function structuredPayloadSchema(value: unknown): string | Record<string, unknow
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function typedArtifactFile(input: unknown, defaults: NormalizeTypedArtifactDTODefaults): TypedArtifactRef["artifact"] | undefined {
+  const value = isPlainObject(input) ? input : undefined
+  if (!value) return undefined
+  const path = stringValue(value.path) || stringValue(value.relativePath) || stringValue(value.artifact_path) || stringValue(value.artifactPath)
+  const sha256 = stringValue(value.sha256) || stringValue(value.digest) || digestValue(value.digest) || digestValue(value.contentDigest)
+  if (!path || !sha256) return undefined
+  return {
+    path,
+    kind: "typed-artifact",
+    contentType: stringValue(value.contentType) || stringValue(value.content_type) || stringValue(value.mimeType) || stringValue(value.mime) || defaults.contentType || "application/octet-stream",
+    sha256,
+  }
+}
+
+function digestValue(input: unknown): string {
+  return isPlainObject(input) && input.algorithm === "sha256" ? stringValue(input.value) : ""
 }
 
 function safeStructuredArtifactName(name: string): string {
