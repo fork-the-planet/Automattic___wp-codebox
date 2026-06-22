@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
+import { fuzzSuiteContract, runFuzzSuite } from "../packages/runtime-core/src/index.js"
 import {
   collectWordPressArtifacts,
+  createWordPressFuzzSuiteRuntimeActionExecutor,
   discoverWordPressRuntime,
   executeFuzzSuite,
   executeWordPressRestMatrix,
@@ -153,5 +155,27 @@ assert.equal(restMatrixResult.success, true)
 
 const artifactBundle = { id: "bundle", directory: "artifacts/runtime", contentDigest: "digest", createdAt: "2026-01-01T00:00:00.000Z" }
 assert.equal(await collectWordPressArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)
+
+const beforeFuzzCalls = calls.length
+const fuzzResult = await runFuzzSuite(fuzzSuiteContract({
+  id: "wordpress-episode-runtime-actions",
+  target: { kind: "runtime-action" },
+  cases: [
+    { id: "browser", input: { type: "browser", operation: "capture", capture: ["html"] } },
+    { id: "editor", input: { type: "editor_open", target: "post-new", post_type: "page" } },
+    { id: "admin", input: { type: "admin_page", path: "plugins.php" } },
+    { id: "page", input: { type: "page", path: "/sample-page/" } },
+  ],
+}), {
+  runtimeActionExecutor: createWordPressFuzzSuiteRuntimeActionExecutor(fakeEpisode),
+})
+assert.equal(fuzzResult.status, "passed")
+assert.deepEqual(fuzzResult.summary, { total: 4, passed: 4, failed: 0, error: 0, skipped: 0 })
+assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
+  "wordpress.browser-actions",
+  "wordpress.editor-open",
+  "wordpress.browser-probe",
+  "wordpress.browser-probe",
+])
 
 console.log("wordpress runtime actions ok")

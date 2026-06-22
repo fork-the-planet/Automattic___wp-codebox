@@ -1,8 +1,17 @@
 import {
   createRuntime,
   createRuntimeEpisode,
+  openWordPressAdminPage,
+  openWordPressEditor,
+  probeWordPressBrowser,
+  requestWordPressRest,
+  runWordPressBrowserAction,
+  runWordPressPhp,
+  runWordPressWpCli,
+  visitWordPressPage,
   type ArtifactBundle,
   type ArtifactSpec,
+  type FuzzSuiteRuntimeActionExecutor,
   type ObservationSpec,
   type Runtime,
   type RuntimeCreateSpec,
@@ -34,6 +43,9 @@ export {
   setupWordPressPlugin,
   setupWordPressTheme,
   visitWordPressPage,
+}
+export {
+  collectWordPressArtifacts,
   type RuntimeActionObservation,
   type WordPressAdminPageOptions,
   type WordPressBrowserActionOptions,
@@ -109,6 +121,38 @@ export async function runWordPressEpisodeActions(
   }
 
   return results
+}
+
+export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<RuntimeEpisode, "step">): FuzzSuiteRuntimeActionExecutor {
+  return {
+    async executeRuntimeAction({ action }) {
+      if (action.type === "wp_cli") {
+        return runWordPressWpCli(episode, action)
+      }
+      if (action.type === "php") {
+        return runWordPressPhp(episode, action)
+      }
+      if (action.type === "rest_request") {
+        return requestWordPressRest(episode, action)
+      }
+      if (action.type === "browser") {
+        return runWordPressBrowserAction(episode, action)
+      }
+      if (action.type === "browser_probe") {
+        return probeWordPressBrowser(episode, action)
+      }
+      if (action.type === "editor_open") {
+        return openWordPressEditor(episode, action)
+      }
+      if (action.type === "admin_page") {
+        return openWordPressAdminPage(episode, action)
+      }
+      if (action.type === "page") {
+        return visitWordPressPage(episode, action)
+      }
+      throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
+    },
+  }
 }
 
 export async function collectWordPressRuntimeArtifacts(runtime: Pick<Runtime, "collectArtifacts">, spec?: ArtifactSpec): Promise<ArtifactBundle> {
