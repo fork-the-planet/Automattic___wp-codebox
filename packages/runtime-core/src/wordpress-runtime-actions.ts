@@ -35,6 +35,40 @@ export interface WordPressRuntimeInventoryOptions {
   timeoutMs?: number
 }
 
+export interface WordPressRestPerformanceObservationOptions {
+  method?: string
+  path: string
+  params?: Record<string, unknown>
+  user?: string
+  session?: string
+  queryFingerprintLimit?: number
+  queryLengthLimit?: number
+  hookSampleLimit?: number
+  hookLimit?: number
+  timeoutMs?: number
+}
+
+export interface WordPressRuntimeCheckpointOptions {
+  name: string
+  metadata?: Record<string, unknown>
+  snapshotIncludeWpContent?: readonly string[]
+  snapshotExcludeWpContent?: readonly string[]
+  snapshotDatabaseTables?: readonly string[]
+  snapshotExcludeDatabaseTables?: readonly string[]
+  snapshotOptionNames?: readonly string[]
+  snapshotPostTypes?: readonly string[]
+  timeoutMs?: number
+}
+
+export interface WordPressRuntimeCheckpointRestoreOptions {
+  name: string
+  timeoutMs?: number
+}
+
+export interface WordPressRuntimeCheckpointListOptions {
+  timeoutMs?: number
+}
+
 export type WordPressCrudOperationOptions = Omit<WordPressCrudOperation, "schema"> & {
   schema?: typeof WORDPRESS_CRUD_OPERATION_SCHEMA
 }
@@ -122,6 +156,37 @@ export function inventoryWordPressDatabase(episode: WordPressRuntimeActionEpisod
   return runWordPressCommand(episode, "wordpress.inventory-database", [], options.timeoutMs)
 }
 
+export function observeWordPressRestPerformance(episode: WordPressRuntimeActionEpisode, options: WordPressRestPerformanceObservationOptions): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wordpress.rest-performance-observation", [
+    ...(options.method ? [`method=${options.method}`] : []),
+    `path=${options.path}`,
+    ...(options.params ? [`params-json=${JSON.stringify(options.params)}`] : []),
+    ...(options.user ? [`user=${options.user}`] : []),
+    ...(options.session ? [`session=${options.session}`] : []),
+    ...(options.queryFingerprintLimit !== undefined ? [`query-fingerprint-limit=${options.queryFingerprintLimit}`] : []),
+    ...(options.queryLengthLimit !== undefined ? [`query-length-limit=${options.queryLengthLimit}`] : []),
+    ...(options.hookSampleLimit !== undefined ? [`hook-sample-limit=${options.hookSampleLimit}`] : []),
+    ...(options.hookLimit !== undefined ? [`hook-limit=${options.hookLimit}`] : []),
+  ], options.timeoutMs)
+}
+
+export function createWordPressRuntimeCheckpoint(episode: WordPressRuntimeActionEpisode, options: WordPressRuntimeCheckpointOptions): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wp-codebox.checkpoint-create", [
+    `name=${options.name}`,
+    ...(options.metadata ? [`metadata-json=${JSON.stringify(options.metadata)}`] : []),
+    ...runtimeCheckpointSnapshotScopeArgs(options),
+  ], options.timeoutMs)
+}
+
+export function restoreWordPressRuntimeCheckpoint(episode: WordPressRuntimeActionEpisode, options: string | WordPressRuntimeCheckpointRestoreOptions): Promise<RuntimeEpisodeStepResult> {
+  const checkpoint = typeof options === "string" ? { name: options } : options
+  return runWordPressCommand(episode, "wp-codebox.checkpoint-restore", [`name=${checkpoint.name}`], checkpoint.timeoutMs)
+}
+
+export function listWordPressRuntimeCheckpoints(episode: WordPressRuntimeActionEpisode, options: WordPressRuntimeCheckpointListOptions = {}): Promise<RuntimeEpisodeStepResult> {
+  return runWordPressCommand(episode, "wp-codebox.checkpoint-list", [], options.timeoutMs)
+}
+
 export function inventoryWordPressFrontendUrls(episode: WordPressRuntimeActionEpisode, options: WordPressRuntimeInventoryOptions = {}): Promise<RuntimeEpisodeStepResult> {
   return runWordPressCommand(episode, "wordpress.frontend-url-inventory", [], options.timeoutMs)
 }
@@ -158,6 +223,17 @@ export type { RuntimeActionObservation }
 
 function runWordPressCommand(episode: WordPressRuntimeActionEpisode, command: string, args: string[], timeoutMs?: number): Promise<RuntimeEpisodeStepResult> {
   return episode.step({ kind: "command", command, args, ...(timeoutMs !== undefined ? { timeoutMs } : {}) }, { type: "command-result" })
+}
+
+function runtimeCheckpointSnapshotScopeArgs(options: WordPressRuntimeCheckpointOptions): string[] {
+  return [
+    ...(options.snapshotIncludeWpContent?.length ? [`snapshot-include-wp-content=${options.snapshotIncludeWpContent.join(",")}`] : []),
+    ...(options.snapshotExcludeWpContent?.length ? [`snapshot-exclude-wp-content=${options.snapshotExcludeWpContent.join(",")}`] : []),
+    ...(options.snapshotDatabaseTables?.length ? [`snapshot-database-tables=${options.snapshotDatabaseTables.join(",")}`] : []),
+    ...(options.snapshotExcludeDatabaseTables?.length ? [`snapshot-exclude-database-tables=${options.snapshotExcludeDatabaseTables.join(",")}`] : []),
+    ...(options.snapshotOptionNames?.length ? [`snapshot-option-names=${options.snapshotOptionNames.join(",")}`] : []),
+    ...(options.snapshotPostTypes?.length ? [`snapshot-post-types=${options.snapshotPostTypes.join(",")}`] : []),
+  ]
 }
 
 function pageLoadArgs(options: WordPressPageLoadOptions): string[] {
