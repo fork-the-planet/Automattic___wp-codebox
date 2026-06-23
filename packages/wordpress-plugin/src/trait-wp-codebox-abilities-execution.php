@@ -1031,6 +1031,7 @@ private static function execute_fuzz_suite_json_rest_db_query_profiler_step( arr
 /** @param array<string,mixed> $case Case. @return array<string,mixed> */
 private static function profile_fuzz_suite_rest_request_queries( array $case, int $sample_limit, int $query_length_limit ): array {
 	global $wpdb;
+	self::ensure_fuzz_suite_rest_routes_registered();
 	$path = (string) ( $case['path'] ?? '' );
 	$request = new WP_REST_Request( strtoupper( (string) ( $case['method'] ?? 'GET' ) ), $path );
 	foreach ( is_array( $case['params'] ?? null ) ? $case['params'] : array() as $key => $value ) {
@@ -1041,6 +1042,20 @@ private static function profile_fuzz_suite_rest_request_queries( array $case, in
 	$after_queries = is_object( $wpdb ) && is_array( $wpdb->queries ?? null ) ? array_slice( $wpdb->queries, $before ) : array();
 	$queries = array_slice( array_map( static fn( mixed $query ): array => self::normalize_fuzz_suite_query_sample( $query, $query_length_limit ), $after_queries ), 0, max( 0, $sample_limit ) );
 	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'queryCount' => count( $after_queries ), 'sampledQueries' => $queries );
+}
+
+private static function ensure_fuzz_suite_rest_routes_registered(): void {
+	static $registered = false;
+	if ( $registered ) {
+		return;
+	}
+	$registered = true;
+	if ( function_exists( 'rest_get_server' ) ) {
+		rest_get_server();
+	}
+	if ( function_exists( 'do_action' ) ) {
+		do_action( 'rest_api_init' );
+	}
 }
 
 /** @return array<string,mixed> */
