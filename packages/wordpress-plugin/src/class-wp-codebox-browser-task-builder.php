@@ -596,6 +596,13 @@ final class WP_Codebox_Browser_Task_Builder {
 				}
 			}
 
+			if ( is_array( $envelope['recovery']['input'] ?? null ) ) {
+				$prepared = self::browser_prepared_runtime_from_envelope( $envelope['recovery']['input'] );
+				if ( ! empty( $prepared ) ) {
+					return $prepared;
+				}
+			}
+
 			foreach ( array( 'playground', 'runtime', 'contained_site' ) as $field ) {
 				if ( is_array( $envelope[ $field ] ?? null ) ) {
 					$prepared = self::browser_prepared_runtime_from_envelope( $envelope[ $field ] );

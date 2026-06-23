@@ -340,4 +340,31 @@ expect( false === str_contains( wp_json_encode( $evidence ), '<h1>Preview</h1>' 
 $executable_ref = WP_Codebox_Browser_Task_Builder::executable_blueprint_ref( $product_session );
 expect( $product_session['blueprint_ref'] === $executable_ref, 'Expected executable blueprint ref from product DTO.' );
 
+$compact_product_session = array(
+	'success'        => true,
+	'schema'         => 'wp-codebox/browser-session-product-dto/v1',
+	'session_id'     => 'compact-product-smoke-session',
+	'preview_boot'   => array(
+		'schema'        => 'wp-codebox/browser-preview-boot-config/v1',
+		'blueprint_ref' => 'inline-session-blueprint',
+	),
+	'contained_site' => array(
+		'schema'   => 'wp-codebox/browser-contained-site/v1',
+		'site_id'  => 'product-smoke-cache',
+		'status'   => 'ready',
+		'recovery' => array(
+			'input' => array(
+				'schema'     => 'wp-codebox/browser-prepared-runtime/v1',
+				'cache_key'  => 'product-smoke-cache',
+				'input_hash' => $source_digest,
+				'status'     => 'ready',
+			),
+		),
+	),
+);
+
+$compact_executable_ref = WP_Codebox_Browser_Task_Builder::executable_blueprint_ref( $compact_product_session );
+expect( 'prepared:product-smoke-cache:' . $source_digest === $compact_executable_ref['ref'], 'Expected executable blueprint ref from compact contained-site recovery input.' );
+expect( isset( $compact_executable_ref['hydration_endpoint'] ), 'Expected compact executable ref hydration endpoint.' );
+
 fwrite( STDOUT, "PHP browser contained site contract smoke passed\n" );
