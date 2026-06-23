@@ -1434,6 +1434,10 @@ foreach ($plugins as $plugin) {
     if (is_file($autoload)) {
         $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
     }
+    $package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
+    if (is_file($package_autoload)) {
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload_packages.php';";
+    }
 }
 if (false === file_put_contents($loader, implode("\n", $lines) . "\n")) {
     throw new RuntimeException('Could not write WP Codebox Composer autoloader loader.');
