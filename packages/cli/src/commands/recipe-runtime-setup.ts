@@ -2,7 +2,7 @@ import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { phpRuntimeComponentLifecycleReplayFunction, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
-import { installMuPluginsCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
+import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
@@ -172,11 +172,16 @@ export async function applyRecipeRuntimeSetup(args: {
     executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2, "extra-plugin.install-mu-loader"))
   }
 
+  const composerAutoloaderInstallCode = installPluginComposerAutoloadersCode(extraPlugins)
+  if (composerAutoloaderInstallCode) {
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${composerAutoloaderInstallCode}`] }), "setup", -2, "extra-plugin.install-composer-autoloaders"))
+  }
+
   const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
   if (activatedPlugins.length > 0) {
     const activePluginsAfterActivation = await phaseTracker.run("activate_plugins", phasePluginActivationData(activatedPlugins), async () => {
       for (const plugin of activatedPlugins) {
-        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${activateExtraPluginCode(plugin.pluginFile)}`] }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
+        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${activateExtraPluginCode(plugin)}`] }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
         interruption?.throwIfInterrupted()
       }
       return await activePlugins(runtime)
@@ -385,10 +390,16 @@ function shouldCopyInputMountBaselineEntry(sourceRoot: string, entry: string): b
   return firstSegment !== ".git" && firstSegment !== "node_modules"
 }
 
-function activateExtraPluginCode(pluginFile: string): string {
+function activateExtraPluginCode(plugin: PreparedExtraPlugin): string {
+  const pluginFile = plugin.pluginFile
   return `${phpRuntimeComponentLifecycleReplayFunction("wp_codebox_activate_plugin")}
 $plugin_file = ${JSON.stringify(pluginFile)};
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
+$plugin_dir = dirname($plugin_file);
+$plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
+    require_once $plugin_autoload;
+}
 if (is_plugin_active($plugin_file)) {
     deactivate_plugins($plugin_file, true, false);
 }

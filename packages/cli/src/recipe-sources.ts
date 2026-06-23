@@ -1397,3 +1397,46 @@ if (false === file_put_contents($loader, implode("\\n", $lines) . "\\n")) {
 }
 echo wp_json_encode(array('command' => 'install-mu-plugins', 'plugins' => $plugins, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
 }
+
+export function installPluginComposerAutoloadersCode(extraPlugins: PreparedExtraPlugin[]): string | null {
+  const plugins = extraPlugins
+    .filter((plugin) => plugin.loadAs === "plugin")
+    .map((plugin) => plugin.pluginFile)
+
+  if (plugins.length === 0) {
+    return null
+  }
+
+  return `$plugins = ${JSON.stringify(plugins)};
+if (!is_dir(WPMU_PLUGIN_DIR) && !mkdir(WPMU_PLUGIN_DIR, 0777, true) && !is_dir(WPMU_PLUGIN_DIR)) {
+    throw new RuntimeException('Could not create mu-plugins directory.');
+}
+$loader = WPMU_PLUGIN_DIR . '/wp-codebox-composer-autoloaders.php';
+$lines = array(
+    '<?php',
+    '/**',
+    ' * Plugin Name: WP Codebox Composer Autoloaders',
+    ' * Description: Preloads Composer autoloaders for mounted WP Codebox plugins.',
+    ' */',
+    '',
+    "defined( 'ABSPATH' ) || exit;",
+    '',
+);
+foreach ($plugins as $plugin) {
+    if ('' === $plugin || str_starts_with($plugin, '/') || str_contains($plugin, '..') || !str_ends_with($plugin, '.php')) {
+        throw new RuntimeException('Unsafe WP Codebox Composer autoloader plugin entry.');
+    }
+    $plugin_dir = dirname($plugin);
+    if ('.' === $plugin_dir || '' === $plugin_dir) {
+        throw new RuntimeException('WP Codebox Composer autoloader plugin entry must include a directory.');
+    }
+    $autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+    if (is_file($autoload)) {
+        $lines[] = "require_once WP_PLUGIN_DIR . '/" . str_replace("'", "\\'", $plugin_dir) . "/vendor/autoload.php';";
+    }
+}
+if (false === file_put_contents($loader, implode("\n", $lines) . "\n")) {
+    throw new RuntimeException('Could not write WP Codebox Composer autoloader loader.');
+}
+echo wp_json_encode(array('command' => 'install-composer-autoloaders', 'plugins' => $plugins, 'loader' => $loader), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);`
+}
