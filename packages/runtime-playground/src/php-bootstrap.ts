@@ -114,6 +114,11 @@ function contained_runtime_run_php_include_active_plugin(array $plugin): void {
     if (!is_file($absolute_plugin_file) || !is_readable($absolute_plugin_file)) {
         throw new RuntimeException('wordpress.run-php cannot include recipe plugin file "' . $plugin_file . '". ' . contained_runtime_run_php_plugin_load_diagnostic($plugin, 'missing or unreadable plugin file'));
     }
+    $plugin_dir = dirname($plugin_file);
+    $plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
+    if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
+        require_once $plugin_autoload;
+    }
     $lifecycle = contained_runtime_run_php_component_lifecycle_replay_prepare();
     try {
         require_once $absolute_plugin_file;
