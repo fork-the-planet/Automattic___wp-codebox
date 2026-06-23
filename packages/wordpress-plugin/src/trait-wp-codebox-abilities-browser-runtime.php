@@ -493,12 +493,13 @@ private static function browser_runtime_plugin_specs( array $plugins ): array|WP
 			$resolved[] = array_merge(
 				$plugin,
 				array(
-					'slug'          => $slug,
-					'url'           => $package['url'],
+					'slug'                    => $slug,
+					'url'                     => $package['url'],
 					'local_package_fetch_url' => $package['fetch_url'],
-					'sha256'        => $package['sha256'],
-					'local_package' => true,
-					'provenance'    => array(
+					'targetFolderName'        => self::safe_key( (string) ( $plugin['targetFolderName'] ?? $slug ) ),
+					'sha256'                  => $package['sha256'],
+					'local_package'           => true,
+					'provenance'              => array(
 						'schema' => 'wp-codebox/browser-plugin-provenance/v1',
 						'source' => 'runtime-plugin-remote-package',
 						'url'    => (string) ( $plugin['url'] ?? '' ),
@@ -533,6 +534,7 @@ private static function browser_runtime_plugin_specs( array $plugins ): array|WP
 				'slug'                    => $slug,
 				'url'                     => $package['url'],
 				'local_package_fetch_url' => $package['fetch_url'],
+				'targetFolderName'        => self::safe_key( (string) ( $plugin['targetFolderName'] ?? $slug ) ),
 				'sha256'                  => $package['sha256'],
 				'local_package'           => true,
 				'provenance'              => array(
@@ -588,6 +590,7 @@ private static function browser_component_plugins( array $input, array $declared
 				'activate'                => (bool) ( $contract['activate'] ?? true ),
 				'local_package'           => true,
 				'local_package_fetch_url' => $package['fetch_url'],
+				'targetFolderName'        => $slug,
 				'sha256'                  => $package['sha256'],
 				'provenance'              => array(
 					'schema' => 'wp-codebox/browser-component-plugin-provenance/v1',
@@ -613,6 +616,7 @@ private static function browser_component_plugins( array $input, array $declared
 			$component['url']                     = $package['url'];
 			$component['local_package']           = true;
 			$component['local_package_fetch_url'] = $package['fetch_url'];
+			$component['targetFolderName']        = self::safe_key( (string) ( $component['targetFolderName'] ?? $slug ) );
 			$component['sha256']                  = $package['sha256'];
 		}
 
@@ -1168,7 +1172,7 @@ private static function normalize_browser_plugins( array $plugins, string $field
 			'ref'              => sanitize_text_field( (string) ( $plugin['ref'] ?? '' ) ),
 			'refType'          => sanitize_key( (string) ( $plugin['refType'] ?? '' ) ),
 			'path'             => 'git:directory' === $resource ? ltrim( str_replace( '\\', '/', (string) ( $plugin['path'] ?? '' ) ), '/' ) : '',
-			'targetFolderName' => sanitize_key( (string) ( $plugin['targetFolderName'] ?? '' ) ),
+			'targetFolderName' => sanitize_key( (string) ( $plugin['targetFolderName'] ?? ( ! empty( $plugin['local_package'] ) ? $slug : '' ) ) ),
 			'provenance'       => array_filter(
 				array(
 					'schema' => 'wp-codebox/browser-plugin-provenance/v1',

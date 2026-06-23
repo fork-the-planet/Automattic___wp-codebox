@@ -225,6 +225,7 @@ $local_package_install_plugin_steps = array_values( array_filter( $local_package
 expect( 1 === count( $local_package_run_php_steps ), 'Expected local package data URL to use a runPHP installer step.' );
 expect( 0 === count( $local_package_install_plugin_steps ), 'Expected local package data URL to avoid installPlugin.' );
 expect( str_contains( (string) ( $local_package_run_php_steps[0]['code'] ?? '' ), 'activate_plugin' ), 'Expected local package runPHP installer to activate the plugin.' );
+expect( str_contains( (string) ( $local_package_run_php_steps[0]['code'] ?? '' ), '$target_folder = \'runtime-smoke\'' ), 'Expected local package runPHP installer to scan the plugin slug folder.' );
 
 $function_recipe = $recipe_method->invoke(
 	null,
