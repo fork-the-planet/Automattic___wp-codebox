@@ -33,7 +33,7 @@ ${runtimeEnvPhp(spec)}
 ${secretEnvPhp(spec)}
 ${componentManifestPhp(spec)}
 require_once '/wordpress/wp-load.php';
-${recipeActivePluginBootstrapPhp(spec)}
+${recipeActivePluginBootstrapPhp(spec, args)}
 ${wpCliBridge ? `putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_URL=${wpCliBridge.url}`)});
 putenv(${JSON.stringify(`WP_CODEBOX_TERMINAL_ACTION_TOKEN=${wpCliBridge.token}`)});
 ` : ""}
@@ -76,7 +76,11 @@ interface RecipePluginMetadata {
   loadAs?: unknown
 }
 
-function recipeActivePluginBootstrapPhp(spec: RuntimeCreateSpec): string {
+function recipeActivePluginBootstrapPhp(spec: RuntimeCreateSpec, args: string[]): string {
+  if (argValue(args, "recipe-active-plugins") === "none") {
+    return ""
+  }
+
   const plugins = recipeActivePluginMetadata(spec)
   if (plugins.length === 0) {
     return ""
