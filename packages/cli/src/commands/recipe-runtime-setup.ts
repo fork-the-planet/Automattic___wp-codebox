@@ -169,19 +169,19 @@ export async function applyRecipeRuntimeSetup(args: {
 
   const muPluginInstallCode = installMuPluginsCode(extraPlugins)
   if (muPluginInstallCode) {
-    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${muPluginInstallCode}`] }), "setup", -2, "extra-plugin.install-mu-loader"))
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(muPluginInstallCode) }), "setup", -2, "extra-plugin.install-mu-loader"))
   }
 
   const composerAutoloaderInstallCode = installPluginComposerAutoloadersCode(extraPlugins)
   if (composerAutoloaderInstallCode) {
-    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${composerAutoloaderInstallCode}`] }), "setup", -2, "extra-plugin.install-composer-autoloaders"))
+    executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(composerAutoloaderInstallCode) }), "setup", -2, "extra-plugin.install-composer-autoloaders"))
   }
 
   const activatedPlugins = extraPlugins.filter((plugin) => plugin.loadAs === "plugin" && plugin.activate !== false)
   if (activatedPlugins.length > 0) {
     const activePluginsAfterActivation = await phaseTracker.run("activate_plugins", phasePluginActivationData(activatedPlugins), async () => {
       for (const plugin of activatedPlugins) {
-        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: [`code=${activateExtraPluginCode(plugin)}`] }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
+        executions.push(withRecipeExecutionPhase(await runtime.execute({ command: "wordpress.run-php", args: setupPhpArgs(activateExtraPluginCode(plugin)) }), "setup", -1, `extra-plugin.activate:${plugin.pluginFile}`))
         interruption?.throwIfInterrupted()
       }
       return await activePlugins(runtime)
@@ -290,10 +290,14 @@ async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: Wo
 async function activePlugins(runtime: Runtime): Promise<string[]> {
   const execution = await runtime.execute({
     command: "wordpress.run-php",
-    args: ["code=echo wp_json_encode(array_values((array) get_option('active_plugins', array())));"],
+    args: setupPhpArgs("echo wp_json_encode(array_values((array) get_option('active_plugins', array())));"),
   })
   const parsed = JSON.parse(execution.stdout.trim() || "[]") as unknown
   return Array.isArray(parsed) ? parsed.filter((plugin): plugin is string => typeof plugin === "string") : []
+}
+
+function setupPhpArgs(code: string): string[] {
+  return ["recipe-active-plugins=none", `code=${code}`]
 }
 
 function phasePluginMountData(extraPlugins: PreparedExtraPlugin[]): Record<string, unknown> {
