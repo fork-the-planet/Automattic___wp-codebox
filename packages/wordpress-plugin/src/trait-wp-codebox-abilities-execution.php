@@ -294,7 +294,7 @@ private static function execute_fuzz_suite_step( array $step, array $case, array
 			'wordpress.trace-browser-coverage' => self::execute_fuzz_suite_browser_coverage( $args, $case, $suite, $observation, $case_id ),
 			'wordpress.ability' => self::execute_fuzz_suite_ability( $args, $observation, $case_id ),
 			'wordpress.collect-workload-result' => self::execute_fuzz_suite_collect_artifact( $args, $case, $observation ),
-			'wordpress.run-workload', 'wordpress.run-declarative-fuzz' => self::execute_fuzz_suite_workload_step( $args, $command, $observation, $case_id ),
+			'wordpress.run-workload', 'wordpress.run-declarative-fuzz' => self::execute_fuzz_suite_workload_step( $args, $command, $case, $observation, $case_id ),
 			default => self::fuzz_suite_step_unsupported( $command, $observation, $case_id ),
 		};
 	} catch ( Throwable $throwable ) {
@@ -891,14 +891,17 @@ private static function execute_fuzz_suite_collect_artifact( array $args, array 
 	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $refs );
 }
 
-/** @param array<string,string> $args Args. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
-private static function execute_fuzz_suite_workload_step( array $args, string $command, array $observation, string $case_id ): array {
+/** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_workload_step( array $args, string $command, array $case, array $observation, string $case_id ): array {
 	$path = (string) ( $args['path'] ?? $args['manifest'] ?? '' );
 	$resolved = self::resolve_fuzz_suite_file_path( $path );
 	if ( '' === $resolved ) {
 		return array( 'status' => 'skipped', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_workload_unavailable', 'Workload file is not available inside this runtime.', array( 'case_id' => $case_id, 'command' => $command, 'path' => $path ) ) );
 	}
 	$observation['path'] = $resolved;
+	if ( 'json' === strtolower( pathinfo( $resolved, PATHINFO_EXTENSION ) ) ) {
+		return self::execute_fuzz_suite_json_workload( $resolved, $case, $observation, $case_id );
+	}
 	if ( 'wordpress.run-declarative-fuzz' === $command ) {
 		return array( 'status' => 'passed', 'observation' => $observation );
 	}
@@ -908,6 +911,143 @@ private static function execute_fuzz_suite_workload_step( array $args, string $c
 	$observation['output_bytes'] = strlen( (string) $output );
 	$observation['return_type'] = gettype( $result );
 	return array( 'status' => false === $result ? 'failed' : 'passed', 'observation' => $observation );
+}
+
+/** @param array<string,mixed> $case Case. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
+private static function execute_fuzz_suite_json_workload( string $resolved, array $case, array $observation, string $case_id ): array {
+	$decoded = json_decode( (string) file_get_contents( $resolved ), true );
+	if ( ! is_array( $decoded ) ) {
+		return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_workload_json_invalid', 'JSON workload file could not be decoded.', array( 'case_id' => $case_id, 'path' => $resolved ) ) );
+	}
+
+	$steps = is_array( $decoded['run'] ?? null ) ? $decoded['run'] : array();
+	if ( empty( $steps ) ) {
+		return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_workload_run_missing', 'JSON workload requires at least one run step.', array( 'case_id' => $case_id, 'path' => $resolved ) ) );
+	}
+
+	$step_results = array();
+	$diagnostics = array();
+	$status = 'passed';
+	foreach ( $steps as $index => $step ) {
+		if ( ! is_array( $step ) ) {
+			$diagnostics[] = self::fuzz_suite_diagnostic( 'error', 'wp_codebox_fuzz_workload_step_invalid', 'JSON workload run steps must be objects.', array( 'case_id' => $case_id, 'step_index' => $index ) );
+			$status = 'error';
+			break;
+		}
+
+		$result = self::execute_fuzz_suite_json_workload_run_step( $step, $index );
+		$step_results[] = $result;
+		foreach ( is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array() as $diagnostic ) {
+			$diagnostics[] = $diagnostic;
+		}
+		if ( 'passed' !== ( $result['status'] ?? 'error' ) ) {
+			$status = (string) ( $result['status'] ?? 'error' );
+			break;
+		}
+	}
+
+	$report = array(
+		'schema'      => 'wp-codebox/json-workload-result/v1',
+		'caseId'      => $case_id,
+		'workload'    => array_filter( array( 'id' => (string) ( $decoded['id'] ?? '' ), 'source' => (string) ( $decoded['source'] ?? '' ) ), static fn( mixed $value ): bool => '' !== $value ),
+		'status'      => $status,
+		'generatedAt' => gmdate( 'Y-m-d\TH:i:s\Z' ),
+		'steps'       => $step_results,
+		'diagnostics' => $diagnostics,
+		'metadata'    => is_array( $decoded['metadata'] ?? null ) ? $decoded['metadata'] : array(),
+	);
+
+	$artifact_result = self::write_fuzz_suite_workload_artifact( $report, $case, (string) ( $decoded['id'] ?? $case_id ) );
+	if ( is_wp_error( $artifact_result ) ) {
+		return array( 'status' => 'error', 'observation' => $observation, 'diagnostic' => self::fuzz_suite_diagnostic( 'error', $artifact_result->code, $artifact_result->get_error_message(), array( 'case_id' => $case_id ) ) );
+	}
+
+	$observation['workload_id'] = (string) ( $decoded['id'] ?? '' );
+	$observation['step_count'] = count( $step_results );
+	$observation['artifact'] = $artifact_result['path'];
+	$observation['payload'] = $report;
+	return array( 'status' => $status, 'observation' => $observation, 'artifactRefs' => array( self::fuzz_suite_workload_artifact_ref( $artifact_result['path'] ) ), 'diagnostic' => $diagnostics[0] ?? null );
+}
+
+/** @param array<string,mixed> $step Step. @return array<string,mixed> */
+private static function execute_fuzz_suite_json_workload_run_step( array $step, int $index ): array {
+	$type = (string) ( $step['type'] ?? '' );
+	return match ( $type ) {
+		'php'                    => self::execute_fuzz_suite_json_php_step( $step, $index ),
+		'rest-db-query-profiler' => self::execute_fuzz_suite_json_rest_db_query_profiler_step( $step, $index ),
+		default                  => array( 'type' => $type, 'index' => $index, 'status' => 'skipped', 'diagnostics' => array( self::fuzz_suite_diagnostic( 'warning', 'wp_codebox_fuzz_workload_step_unsupported', 'JSON workload run step type is not supported by this runner.', array( 'step_index' => $index, 'type' => $type ) ) ) ),
+	};
+}
+
+/** @param array<string,mixed> $step Step. @return array<string,mixed> */
+private static function execute_fuzz_suite_json_php_step( array $step, int $index ): array {
+	$code = (string) ( $step['code'] ?? '' );
+	ob_start();
+	try {
+		$result = eval( $code );
+	} finally {
+		$output = ob_get_clean();
+	}
+	return array_filter(
+		array(
+			'type'        => 'php',
+			'index'       => $index,
+			'success'     => true,
+			'status'      => 'passed',
+			'observation' => array_filter( array( 'outputBytes' => strlen( (string) $output ), 'returnType' => gettype( $result ), 'result' => is_array( $result ) ? $result : null ), static fn( mixed $value ): bool => null !== $value ),
+		),
+		static fn( mixed $value ): bool => ! ( is_array( $value ) && empty( $value ) )
+	);
+}
+
+/** @param array<string,mixed> $step Step. @return array<string,mixed> */
+private static function execute_fuzz_suite_json_rest_db_query_profiler_step( array $step, int $index ): array {
+	$cases = is_array( $step['rest_request_cases'] ?? null ) ? $step['rest_request_cases'] : array();
+	$requests = array();
+	$failed = 0;
+	foreach ( $cases as $case ) {
+		if ( ! is_array( $case ) ) {
+			continue;
+		}
+		$request_result = self::profile_fuzz_suite_rest_request_queries( $case, (int) ( $step['sampleLimit'] ?? 50 ), (int) ( $step['queryLengthLimit'] ?? 500 ) );
+		if ( (int) ( $request_result['status'] ?? 0 ) >= 500 ) {
+			++$failed;
+		}
+		$requests[] = $request_result;
+	}
+
+	$total_queries = array_sum( array_map( static fn( array $request ): int => (int) ( $request['queryCount'] ?? 0 ), $requests ) );
+	return array(
+		'type'        => 'rest-db-query-profiler',
+		'index'       => $index,
+		'success'     => 0 === $failed,
+		'status'      => 0 === $failed ? 'passed' : 'failed',
+		'observation' => array( 'metricPrefix' => (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ), 'requestCount' => count( $requests ), 'queryCount' => $total_queries ),
+		'metrics'     => array( (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.query_count' => $total_queries, (string) ( $step['metric-prefix'] ?? 'rest_db_query_profile' ) . '.request_count' => count( $requests ) ),
+		'requests'    => $requests,
+	);
+}
+
+/** @param array<string,mixed> $case Case. @return array<string,mixed> */
+private static function profile_fuzz_suite_rest_request_queries( array $case, int $sample_limit, int $query_length_limit ): array {
+	global $wpdb;
+	$path = (string) ( $case['path'] ?? '' );
+	$request = new WP_REST_Request( strtoupper( (string) ( $case['method'] ?? 'GET' ) ), $path );
+	foreach ( is_array( $case['params'] ?? null ) ? $case['params'] : array() as $key => $value ) {
+		$request->set_param( (string) $key, $value );
+	}
+	$before = is_object( $wpdb ) && is_array( $wpdb->queries ?? null ) ? count( $wpdb->queries ) : 0;
+	$response = rest_do_request( $request );
+	$after_queries = is_object( $wpdb ) && is_array( $wpdb->queries ?? null ) ? array_slice( $wpdb->queries, $before ) : array();
+	$queries = array_slice( array_map( static fn( mixed $query ): array => self::normalize_fuzz_suite_query_sample( $query, $query_length_limit ), $after_queries ), 0, max( 0, $sample_limit ) );
+	return array( 'id' => (string) ( $case['id'] ?? $path ), 'method' => strtoupper( (string) ( $case['method'] ?? 'GET' ) ), 'path' => $path, 'status' => (int) $response->get_status(), 'queryCount' => count( $after_queries ), 'sampledQueries' => $queries );
+}
+
+/** @return array<string,mixed> */
+private static function normalize_fuzz_suite_query_sample( mixed $query, int $query_length_limit ): array {
+	$sql = is_array( $query ) ? (string) ( $query[0] ?? '' ) : (string) $query;
+	$time = is_array( $query ) ? (float) ( $query[1] ?? 0 ) : 0.0;
+	return array_filter( array( 'sql' => substr( $sql, 0, max( 0, $query_length_limit ) ), 'time' => $time ), static fn( mixed $value ): bool => '' !== $value && 0.0 !== $value );
 }
 
 /** @param array<string,mixed> $observation Observation. @return array<string,mixed> */
@@ -1079,6 +1219,39 @@ private static function write_fuzz_suite_browser_coverage_artifact( array $repor
 		return new WP_Error( 'wp_codebox_fuzz_browser_coverage_artifact_write_failed', 'Browser coverage could not write the artifact JSON file.' );
 	}
 	return array( 'path' => $relative_path, 'bytes' => strlen( $encoded ) + 1 );
+}
+
+/** @param array<string,mixed> $report Report. @param array<string,mixed> $case Case. @return array{path:string,bytes:int}|WP_Error */
+private static function write_fuzz_suite_workload_artifact( array $report, array $case, string $workload_id ): array|WP_Error {
+	$refs = self::fuzz_suite_declared_artifact_refs( $case );
+	$ref = $refs[0] ?? null;
+	$relative_path = is_array( $ref ) ? (string) ( $ref['path'] ?? '' ) : '';
+	if ( '' === $relative_path ) {
+		$safe_id = preg_replace( '/[^A-Za-z0-9_.-]+/', '-', '' === $workload_id ? 'workload' : $workload_id );
+		$relative_path = 'workloads/' . trim( (string) $safe_id, '-.' ) . '.json';
+	}
+	if ( '' === $relative_path || str_starts_with( $relative_path, '/' ) || str_contains( $relative_path, '..' ) || str_contains( $relative_path, "\0" ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_workload_artifact_path_invalid', 'JSON workload requires a safe relative artifact path.' );
+	}
+
+	$upload_dir = function_exists( 'wp_upload_dir' ) ? wp_upload_dir( null, false ) : array();
+	$base_dir = is_array( $upload_dir ) && ! empty( $upload_dir['basedir'] ) ? (string) $upload_dir['basedir'] : rtrim( WP_CONTENT_DIR, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . 'uploads';
+	$absolute = rtrim( $base_dir, DIRECTORY_SEPARATOR ) . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_path );
+	$directory = dirname( $absolute );
+	if ( ! self::ensure_fuzz_suite_directory( $directory ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_workload_artifact_directory_failed', 'JSON workload could not create the artifact directory.' );
+	}
+
+	$encoded = wp_json_encode( $report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+	if ( ! is_string( $encoded ) || false === file_put_contents( $absolute, $encoded . "\n" ) ) {
+		return new WP_Error( 'wp_codebox_fuzz_workload_artifact_write_failed', 'JSON workload could not write the artifact JSON file.' );
+	}
+	return array( 'path' => $relative_path, 'bytes' => strlen( $encoded ) + 1 );
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_workload_artifact_ref( string $path ): array {
+	return array( 'name' => 'workload_result', 'path' => $path, 'kind' => 'fuzz_report', 'contentType' => 'application/json', 'metadata' => array( 'semantic_key' => 'fuzz.report' ) );
 }
 
 private static function ensure_fuzz_suite_directory( string $directory ): bool {
