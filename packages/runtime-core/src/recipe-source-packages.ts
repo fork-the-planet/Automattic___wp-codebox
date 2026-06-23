@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { safeArtifactRelativePath } from "./artifact-paths.js"
@@ -212,7 +212,9 @@ export function prepareRecipeSourcePackageSync(options: PreparedRecipeSourcePack
       preserveExistingComposerVendor(originalPluginSource, preparedPluginSource)
       return preparedPluginSource
     }
-    return installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
+    const installedSource = installComposerDependenciesForSourcePackageSync(preparedPluginSource, options.slug, preparedRoot, options.composerInstallArgs)
+    bridgePackageAutoloaderToComposerAutoload(installedSource)
+    return installedSource
   }
 
   return prepareRecipeSourcePackageWithoutArtifacts(source, source, options.slug, "")
@@ -225,6 +227,17 @@ function preserveExistingComposerVendor(originalPluginSource: string, preparedPl
   rmSync(preparedVendor, { recursive: true, force: true })
   mkdirSync(preparedPluginSource, { recursive: true })
   cpSync(originalVendor, preparedVendor, { recursive: true })
+}
+
+export function bridgePackageAutoloaderToComposerAutoload(pluginSource: string): void {
+  const packageAutoloader = join(pluginSource, "vendor", "autoload_packages.php")
+  const composerAutoloader = join(pluginSource, "vendor", "autoload.php")
+  if (!pathExists(packageAutoloader) || !pathExists(composerAutoloader)) return
+
+  const bridge = "require_once __DIR__ . '/autoload.php';"
+  const contents = readFileSync(packageAutoloader, "utf8")
+  if (contents.includes(bridge)) return
+  writeFileSync(packageAutoloader, `${contents.trimEnd()}\n${bridge}\n`)
 }
 
 export function composerManagedHostEnv(): Record<string, string> {
