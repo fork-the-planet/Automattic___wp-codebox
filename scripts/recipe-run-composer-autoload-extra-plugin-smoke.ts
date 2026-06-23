@@ -33,11 +33,6 @@ writeFileSync(resolve(pluginSource, "composer-autoload-smoke.php"), `<?php
 
 defined( 'ABSPATH' ) || exit;
 
-$autoload = __DIR__ . '/vendor/autoload.php';
-if ( is_file( $autoload ) ) {
-	require_once $autoload;
-}
-
 register_activation_hook( __FILE__, static function (): void {
 	if ( ! class_exists( \\WpCodeboxComposerSmoke\\Fixture::class ) ) {
 		throw new RuntimeException( 'Composer classmap fixture was not autoloaded.' );
