@@ -404,6 +404,10 @@ $plugin_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload.php';
 if ('.' !== $plugin_dir && is_file($plugin_autoload)) {
     require_once $plugin_autoload;
 }
+$plugin_package_autoload = WP_PLUGIN_DIR . '/' . $plugin_dir . '/vendor/autoload_packages.php';
+if ('.' !== $plugin_dir && is_file($plugin_package_autoload)) {
+    require_once $plugin_package_autoload;
+}
 if (is_plugin_active($plugin_file)) {
     deactivate_plugins($plugin_file, true, false);
 }
