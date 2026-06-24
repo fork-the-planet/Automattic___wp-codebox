@@ -37,16 +37,21 @@ export {
   discoverWordPressRuntime,
   executeFuzzSuite,
   executeWordPressRestMatrix,
+  createWordPressRuntimeCheckpoint,
   inventoryWordPressAdminPages,
+  inventoryWordPressDatabase,
   inventoryWordPressFrontendUrls,
   inventoryWordPressRestRoutes,
+  listWordPressRuntimeCheckpoints,
   loadWordPressAdminPage,
   loadWordPressFrontendPage,
+  observeWordPressRestPerformance,
   openWordPressAdminPage,
   openWordPressEditor,
   probeWordPressBrowser,
   readWordPressDatabase,
   requestWordPressRest,
+  restoreWordPressRuntimeCheckpoint,
   runWordPressCrudOperation,
   runWordPressBrowserAction,
   runWordPressPhp,
@@ -73,6 +78,10 @@ export {
   type WordPressRuntimeArtifactSource,
   type WordPressRuntimeDiscoveryOptions,
   type WordPressRuntimeInventoryOptions,
+  type WordPressRestPerformanceObservationOptions,
+  type WordPressRuntimeCheckpointListOptions,
+  type WordPressRuntimeCheckpointOptions,
+  type WordPressRuntimeCheckpointRestoreOptions,
   type WordPressThemeSetupOptions,
   type WordPressWpCliOptions,
 } from "@automattic/wp-codebox-core"
@@ -224,8 +233,19 @@ export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpiso
         }
       }
       if (policy.mode === "restore-snapshot") {
-        const reset = await episode.reset()
-        return { mode: policy.mode, status: "passed", snapshotRef: policy.snapshotRef ?? policy.snapshot_ref, fixtureRefs, metadata: { resetId: reset.id, runtime: reset.runtime } }
+        return {
+          mode: policy.mode,
+          status: "unsupported",
+          snapshotRef: policy.snapshotRef ?? policy.snapshot_ref,
+          fixtureRefs,
+          diagnostics: [{
+            severity: "error",
+            code: "fuzz_suite_snapshot_restore_unsupported",
+            caseId: fuzzCase.id,
+            message: "The public Playground episode facade cannot restore arbitrary snapshotRef values; use checkpoint-per-case for same-run runtime restoration.",
+          }],
+          metadata: { resetPerformed: false, restorePerformed: false, supportedResetModes: ["none", "checkpoint-per-case"] },
+        }
       }
       return { mode: "none", status: "not-required" }
     },

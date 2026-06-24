@@ -120,7 +120,7 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
   ],
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
   runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "editor_open", "page", "php", "rest_request", "wp_cli"],
-  commands: ["wordpress.ability", "wordpress.admin-page-load", "wordpress.browser-actions", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.editor-open", "wordpress.frontend-page-load", "wordpress.http-request", "wordpress.rest-request", "wordpress.run-php", "wordpress.wp-cli"],
+  commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.admin-page-load", "wordpress.browser-actions", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.editor-open", "wordpress.frontend-page-load", "wordpress.http-request", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
 }
 
