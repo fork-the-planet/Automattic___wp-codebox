@@ -81,6 +81,10 @@ DTOs by default. Those DTOs expose stable session ids, contained-site and previe
 refs, preview URLs, artifact refs, status, and compact diagnostics. Raw
 Playground/runtime contracts, recipes, task payloads, sandbox paths, and
 implementation diagnostics stay behind explicit internal/debug raw-contract flags.
+`wp-codebox/create-browser-task-contract` is the public browser handoff surface:
+WP Codebox owns the contract envelope, phase descriptors, callback capability
+shape, and artifact refs; callers own durable job state, callback transport,
+review decisions, and final result handling.
 
 Runtime orchestrators can pass `agent_bundles` plus a generic `runtime_task`
 payload to run caller-owned bundle logic without injecting PHP code. WP Codebox
@@ -229,6 +233,14 @@ They verify the bundle, copy it into the configured artifact store when needed,
 and return a stable `wp-codebox/artifact-result-envelope/v1`. Repeating the same
 import without `replace` returns `status: "existing"` with the same artifact
 reference, so parent orchestrators can safely retry after transport failures.
+Browser hosts that produce files outside the sandbox should use
+`normalize-browser-artifact-bundle` to validate the caller-owned bundle shape,
+`persist-browser-artifact` to store browser-produced files as a canonical WP
+Codebox artifact bundle, and `import-artifact-bundle` or
+`reimport-artifact-bundle` to rehydrate an existing bundle into the configured
+artifact store. WP Codebox preserves caller metadata and returns artifact result
+envelopes; the caller owns product interpretation, review state, and apply
+decisions.
 
 Browser-contained preview consumers can call `preview-reuse-decision` before
 opening a preview. It returns an explicit `action` such as `hydrate-ref` or
