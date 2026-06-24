@@ -2202,10 +2202,20 @@ public static function open_browser_contained_site( array $input ): array|WP_Err
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function open_or_create_browser_contained_site( array $input ): array|WP_Error {
+	$mode = self::browser_contained_site_start_mode( $input );
+	if ( is_wp_error( $mode ) ) {
+		return $mode;
+	}
+
+	if ( 'prepare-new' === $mode ) {
+		return self::create_browser_contained_site_start_result( $input, array(), $mode );
+	}
+
 	$decision = self::preview_reuse_decision( $input );
 	if ( is_wp_error( $decision ) ) {
 		return $decision;
 	}
+	$decision['mode'] = $mode;
 
 	$action = (string) ( $decision['action'] ?? 'create-new' );
 	if ( in_array( $action, array( 'reuse-current', 'hydrate-ref' ), true ) ) {
@@ -2219,6 +2229,7 @@ public static function open_or_create_browser_contained_site( array $input ): ar
 				array(
 					'success'         => true,
 					'schema'          => 'wp-codebox/browser-contained-site-open-or-create/v1',
+					'mode'            => $mode,
 					'action'          => 'opened',
 					'decision'        => $decision,
 					'identity_key'    => (string) ( $decision['identity_key'] ?? '' ),
@@ -2235,11 +2246,12 @@ public static function open_or_create_browser_contained_site( array $input ): ar
 		}
 	}
 
-	if ( empty( $input['fallback_create'] ) ) {
+	if ( 'open-only' === $mode ) {
 		return array_filter(
 			array(
 				'success'         => false,
 				'schema'          => 'wp-codebox/browser-contained-site-open-or-create/v1',
+				'mode'            => $mode,
 				'action'          => 'unavailable',
 				'decision'        => $decision,
 				'identity_key'    => (string) ( $decision['identity_key'] ?? '' ),
@@ -2253,6 +2265,25 @@ public static function open_or_create_browser_contained_site( array $input ): ar
 		);
 	}
 
+	return self::create_browser_contained_site_start_result( $input, $decision, $mode );
+}
+
+/** @param array<string,mixed> $input Ability input. @return string|WP_Error */
+private static function browser_contained_site_start_mode( array $input ): string|WP_Error {
+	$mode = trim( (string) ( $input['mode'] ?? '' ) );
+	if ( '' === $mode ) {
+		return new WP_Error( 'wp_codebox_browser_contained_site_mode_required', 'mode is required and must be one of open-only, open-or-create, or prepare-new.', array( 'status' => 400 ) );
+	}
+
+	if ( ! in_array( $mode, array( 'open-only', 'open-or-create', 'prepare-new' ), true ) ) {
+		return new WP_Error( 'wp_codebox_browser_contained_site_mode_invalid', 'mode must be one of open-only, open-or-create, or prepare-new.', array( 'status' => 400, 'mode' => $mode ) );
+	}
+
+	return $mode;
+}
+
+/** @param array<string,mixed> $input Ability input. @param array<string,mixed> $decision Reuse decision. @return array<string,mixed>|WP_Error */
+private static function create_browser_contained_site_start_result( array $input, array $decision, string $mode ): array|WP_Error {
 	$created = self::create_browser_playground_session( $input );
 	if ( is_wp_error( $created ) ) {
 		return $created;
@@ -2262,6 +2293,7 @@ public static function open_or_create_browser_contained_site( array $input ): ar
 		array(
 			'success'         => true === ( $created['success'] ?? false ),
 			'schema'          => 'wp-codebox/browser-contained-site-open-or-create/v1',
+			'mode'            => $mode,
 			'action'          => true === ( $created['success'] ?? false ) ? 'created' : 'blocked',
 			'decision'        => $decision,
 			'identity_key'    => (string) ( $decision['identity_key'] ?? '' ),

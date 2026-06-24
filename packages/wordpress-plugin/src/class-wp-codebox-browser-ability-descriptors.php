@@ -254,20 +254,25 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 			),
 			'wp-codebox/open-or-create-browser-contained-site' => array(
 				'label'               => 'Open or Create Browser Contained Site',
-				'description'         => 'Open a reusable browser-contained preview site when possible, otherwise create a fresh browser sandbox session from the same task input.',
+				'description'         => 'Start a browser-contained preview with an explicit mode: open-only, open-or-create, or prepare-new.',
 				'category'            => 'wp-codebox',
 				'input_schema'        => array(
 					'type'       => 'object',
+					'required'   => array( 'mode' ),
 					'properties' => array_merge(
 						$browser_session_properties,
 						array(
+							'mode'            => array(
+								'type'        => 'string',
+								'enum'        => array( 'open-only', 'open-or-create', 'prepare-new' ),
+								'description' => 'Deterministic preview start mode. open-only never creates, open-or-create reuses when possible then creates, prepare-new always creates a fresh session.',
+							),
 							'contained_site'  => $context['browser_contained_site_schema'],
 							'site_id'         => array( 'type' => 'string' ),
 							'cache_key'       => array( 'type' => 'string' ),
 							'source_digest'   => array( 'type' => array( 'string', 'object' ), 'description' => '64-character source digest string, or an object with a value field.' ),
 							'input_hash'      => array( 'type' => 'string' ),
 							'preview_lease'   => array( 'type' => 'object' ),
-							'fallback_create' => array( 'type' => 'boolean' ),
 						)
 					),
 				),

@@ -11,6 +11,7 @@
 		'browser-runtime:normalize-error',
 		'browser-runtime:normalize-result',
 		'browser-runtime:normalize-browser-run-result',
+		'browser-preview:start',
 		'browser-runtime:boot-executable-session',
 		'browser-runtime:parent-tool-bridge',
 		'browser-runtime:aggregate-fanout-outputs',
@@ -333,6 +334,125 @@
 		},
 	} );
 
+	const browserPreviewBootConfig = ( input ) => {
+		const boot = input?.schema === 'wp-codebox/browser-preview-boot-config/v1'
+			? input
+			: ( input?.preview_boot && typeof input.preview_boot === 'object' ? input.preview_boot : ( input?.boot && typeof input.boot === 'object' ? input.boot : null ) );
+		if ( ! boot || typeof boot !== 'object' ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_boot_missing', 'A WP Codebox browser preview boot config is required.' );
+		}
+		if ( boot.schema && boot.schema !== 'wp-codebox/browser-preview-boot-config/v1' && boot.schema !== 'wp-codebox/browser-contained-site-boot/v1' ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_boot_schema_unsupported', `Unsupported WP Codebox browser preview boot schema: ${ boot.schema }` );
+		}
+
+		return boot;
+	};
+
+	const hydrateBrowserPreviewBlueprint = async ( boot, options = {} ) => {
+		if ( options.blueprint && typeof options.blueprint === 'object' ) {
+			return options.blueprint;
+		}
+		if ( boot.blueprint && typeof boot.blueprint === 'object' ) {
+			return boot.blueprint;
+		}
+
+		const blueprintRef = boot.blueprint_ref_dto && typeof boot.blueprint_ref_dto === 'object'
+			? boot.blueprint_ref_dto
+			: ( boot.blueprint_ref && typeof boot.blueprint_ref === 'object' ? boot.blueprint_ref : { ref: boot.blueprint_ref || '' } );
+		const ref = String( blueprintRef.ref || blueprintRef.id || boot.blueprint_ref || '' );
+		if ( ! ref || ref === 'inline-session-blueprint' ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_ref_missing', 'Browser preview boot config is missing a hydratable Codebox blueprint ref.' );
+		}
+
+		const request = {
+			schema: 'wp-codebox/browser-blueprint-ref-hydration-request/v1',
+			ability: blueprintRef.hydrator_ability || boot.hydrator_ability || 'wp-codebox/hydrate-browser-blueprint-ref',
+			ref,
+			blueprint_ref: blueprintRef,
+			session_id: boot.session_id || '',
+		};
+		let hydrated;
+		if ( typeof options.hydrateBlueprintRef === 'function' ) {
+			hydrated = await options.hydrateBlueprintRef( request, boot );
+		} else if ( typeof fetch === 'function' && ( blueprintRef.hydration_endpoint || boot.hydration_endpoint ) ) {
+			const endpoint = new URL( blueprintRef.hydration_endpoint || boot.hydration_endpoint, window.location.href );
+			endpoint.searchParams.set( 'ref', ref );
+			hydrated = await fetch( endpoint.toString(), {
+				method: 'GET',
+				headers: options.nonce ? { 'X-WP-Nonce': String( options.nonce ) } : {},
+			} ).then( async ( response ) => {
+				const data = await response.json();
+				if ( ! response.ok ) {
+					throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_hydration_failed', data?.message || 'Browser preview blueprint hydration failed.', data );
+				}
+				return data;
+			} );
+		} else {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_hydrator_missing', 'Provide hydrateBlueprintRef, an inline blueprint, or a blueprint ref hydration endpoint.' );
+		}
+
+		const blueprint = hydrated?.blueprint && typeof hydrated.blueprint === 'object'
+			? hydrated.blueprint
+			: ( hydrated?.data?.blueprint && typeof hydrated.data.blueprint === 'object' ? hydrated.data.blueprint : hydrated );
+		if ( ! blueprint || typeof blueprint !== 'object' || ! Array.isArray( blueprint.steps ) ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_blueprint_invalid', 'Codebox blueprint hydration did not return an executable Playground blueprint.' );
+		}
+
+		return blueprint;
+	};
+
+	const resolveStartPlaygroundWeb = async ( boot, options = {} ) => {
+		if ( typeof options.startPlaygroundWeb === 'function' ) {
+			return options.startPlaygroundWeb;
+		}
+
+		const moduleUrl = String( options.clientModuleUrl || boot.client_module_url || '' );
+		if ( ! moduleUrl ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_client_module_missing', 'Browser preview boot config is missing client_module_url; pass startPlaygroundWeb for test or custom hosts.' );
+		}
+
+		const importModule = typeof options.importModule === 'function' ? options.importModule : ( async ( url ) => import( url ) );
+		const module = await importModule( moduleUrl );
+		if ( typeof module?.startPlaygroundWeb !== 'function' ) {
+			throw runtimeError( 'browser_preview_start', 'browser_preview_start_unavailable', 'Codebox browser preview client module does not export startPlaygroundWeb.' );
+		}
+
+		return module.startPlaygroundWeb;
+	};
+
+	const startBrowserPreview = async ( input, options = {} ) => {
+		const boot = browserPreviewBootConfig( input );
+		const startPlaygroundWeb = await resolveStartPlaygroundWeb( boot, options );
+		const blueprint = await hydrateBrowserPreviewBlueprint( boot, options );
+		const iframe = options.iframe || input?.iframe || ( typeof document !== 'undefined' && options.iframeSelector ? document.querySelector( options.iframeSelector ) : null );
+		const request = {
+			...( options.startOptions && typeof options.startOptions === 'object' ? options.startOptions : {} ),
+			...( iframe ? { iframe } : {} ),
+			...( boot.remote_url ? { remoteUrl: boot.remote_url } : {} ),
+			...( boot.cors_proxy_url ? { corsProxyUrl: boot.cors_proxy_url } : {} ),
+			...( boot.scope ? { scope: boot.scope } : {} ),
+			blueprint,
+		};
+		const client = await startPlaygroundWeb( request );
+
+		return {
+			schema: 'wp-codebox/browser-preview-start-result/v1',
+			success: true,
+			status: 'started',
+			session_id: boot.session_id || '',
+			preview: boot.preview || null,
+			boot,
+			request: {
+				remoteUrl: request.remoteUrl || null,
+				corsProxyUrl: request.corsProxyUrl || null,
+				scope: request.scope || null,
+				hasIframe: !! request.iframe,
+				hasBlueprint: !! request.blueprint,
+			},
+			client,
+		};
+	};
+
 	const browserSdkFacade = ( api ) => Object.freeze( {
 		schema: browserSdkSchema,
 		apiVersion: 'v1',
@@ -343,6 +463,7 @@
 		normalizeError: normalizeBrowserSdkError,
 		normalizeBrowserRunResult,
 		browserArtifactPersistenceRef,
+		startBrowserPreview: ( input, options = {} ) => api.startBrowserPreview( input, options ),
 		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),
 		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
 		normalizeResult: normalizeOperationResult,
@@ -356,6 +477,7 @@
 		methods: Object.freeze( {
 			activateTheme: api.activateTheme,
 			browserSessionRecipe: api.browserSessionRecipe,
+			startBrowserPreview: api.startBrowserPreview,
 			bootExecutableBrowserSession: api.bootExecutableBrowserSession,
 			createParentToolRequest: api.createParentToolRequest,
 			dispatchParentTool: api.dispatchParentTool,
@@ -2266,10 +2388,16 @@ echo wp_json_encode( array(
 		runWordPressOperation,
 		selectPreparedBrowserBlueprint,
 		setFrontendAdminBarVisible,
+		startBrowserPreview,
 		validateBrowserRuntimeMaterialization,
 		writeFile,
 		writeReviewFile,
 	};
 	wpCodeboxBrowserApi.v1 = browserSdkFacade( wpCodeboxBrowserApi );
 	window.wpCodeboxBrowser = wpCodeboxBrowserApi;
+	window.wpCodebox = Object.freeze( {
+		...( window.wpCodebox && typeof window.wpCodebox === 'object' ? window.wpCodebox : {} ),
+		startBrowserPreview,
+		browser: wpCodeboxBrowserApi.v1,
+	} );
 } )();

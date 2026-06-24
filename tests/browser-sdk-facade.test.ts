@@ -6,7 +6,7 @@ const root = new URL("../", import.meta.url)
 const runtimeSource = await readFile(new URL("packages/wordpress-plugin/assets/browser-runtime.js", root), "utf8")
 
 const sandbox = {
-  window: {} as { wpCodeboxBrowser?: Record<string, any> },
+  window: {} as { wpCodebox?: Record<string, any>, wpCodeboxBrowser?: Record<string, any> },
   btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
   TextDecoder,
   TextEncoder,
@@ -19,6 +19,7 @@ const api = sandbox.window.wpCodeboxBrowser
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 assert.ok(api, "browser runtime must publish window.wpCodeboxBrowser")
+assert.equal(typeof sandbox.window.wpCodebox?.startBrowserPreview, "function", "browser runtime must publish window.wpCodebox.startBrowserPreview")
 assert.equal(typeof api.runPhpRequest, "function", "legacy top-level methods remain available")
 assert.equal(typeof api.v1, "object", "browser runtime must expose the stable v1 facade")
 
@@ -31,6 +32,7 @@ assert.deepEqual(plain(api.v1.info()), {
     "browser-runtime:normalize-error",
     "browser-runtime:normalize-result",
     "browser-runtime:normalize-browser-run-result",
+    "browser-preview:start",
     "browser-runtime:boot-executable-session",
     "browser-runtime:parent-tool-bridge",
     "browser-runtime:aggregate-fanout-outputs",
@@ -54,6 +56,7 @@ assert.equal(api.v1.methods.runPhpRequest, api.runPhpRequest)
 assert.equal(api.v1.methods.writeFile, api.writeFile)
 assert.equal(api.v1.methods.validateBrowserRuntimeMaterialization, api.validateBrowserRuntimeMaterialization)
 assert.equal(typeof api.v1.runBrowserSessionRecipe, "function")
+assert.equal(typeof api.v1.startBrowserPreview, "function")
 assert.equal(typeof api.v1.bootExecutableBrowserSession, "function")
 assert.equal(typeof api.v1.createParentToolRequest, "function")
 assert.equal(typeof api.v1.validateBrowserRuntimeMaterialization, "function")
@@ -221,6 +224,34 @@ assert.equal(booted.schema, "wp-codebox/browser-run-result/v1")
 assert.equal(booted.status, "completed")
 assert.equal(booted.success, true)
 assert.deepEqual(plain(blueprintRuns), [{ blueprint: { steps: [{ step: "runPHP", code: "<?php echo 'ok';" }] } }])
+
+const previewStarts: any[] = []
+const previewStart = await sandbox.window.wpCodebox!.startBrowserPreview({
+  schema: "wp-codebox/browser-preview-boot-config/v1",
+  session_id: "preview-session-1",
+  remote_url: "https://playground.wordpress.net/remote.html",
+  cors_proxy_url: "https://playground.wordpress.net/proxy.php",
+  scope: "preview-session-1",
+  blueprint_ref_dto: { schema: "wp-codebox/browser-blueprint-ref/v1", ref: "prepared:preview:abc", hydrator_ability: "wp-codebox/hydrate-browser-blueprint-ref" },
+  preview: { public_url: "https://preview.example.test/" },
+}, {
+  iframe: { tagName: "IFRAME" },
+  hydrateBlueprintRef: async (request: any) => {
+    assert.equal(request.ability, "wp-codebox/hydrate-browser-blueprint-ref")
+    assert.equal(request.ref, "prepared:preview:abc")
+    return { schema: "wp-codebox/browser-blueprint-hydration/v1", blueprint: { steps: [{ step: "login" }] } }
+  },
+  startPlaygroundWeb: async (request: any) => {
+    previewStarts.push(request)
+    return { client: "playground" }
+  },
+})
+assert.equal(previewStart.schema, "wp-codebox/browser-preview-start-result/v1")
+assert.equal(previewStart.success, true)
+assert.equal(previewStart.status, "started")
+assert.equal(previewStart.session_id, "preview-session-1")
+assert.deepEqual(plain(previewStart.request), { remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", hasIframe: true, hasBlueprint: true })
+assert.deepEqual(plain(previewStarts), [{ iframe: { tagName: "IFRAME" }, remoteUrl: "https://playground.wordpress.net/remote.html", corsProxyUrl: "https://playground.wordpress.net/proxy.php", scope: "preview-session-1", blueprint: { steps: [{ step: "login" }] } }])
 
 const parentRequest = api.v1.createParentToolRequest(executableSession, "workspace.read", "read", { path: "README.md" })
 assert.equal(parentRequest.schema, "wp-codebox/parent-tool-request/v1")

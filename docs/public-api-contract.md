@@ -52,6 +52,10 @@ Browser sessions that load the WordPress plugin browser runtime also publish
 `window.wpCodeboxBrowser.v1`. The `v1` facade is the stable browser SDK
 for product consumers running inside the browser. Legacy top-level
 `window.wpCodeboxBrowser` methods remain available for existing callers.
+The Codebox-owned browser preview starter is `window.wpCodebox.startBrowserPreview(...)`
+or `window.wpCodeboxBrowser.v1.startBrowserPreview(...)`; callers pass the
+`wp-codebox/browser-preview-boot-config/v1` DTO plus a blueprint hydrator and do
+not import Playground's raw `startPlaygroundWeb` directly.
 
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
@@ -182,12 +186,19 @@ The stable public surface is grouped by lifecycle area rather than by product:
   boundary contracts. Public WordPress abilities return compact browser/session
   product DTOs by default; executable Playground recipes, runtime payloads,
   sandbox paths, and implementation diagnostics are internal/debug contracts.
+  `wp-codebox/open-or-create-browser-contained-site` requires an explicit `mode`:
+  `open-only` reuses an existing prepared/live preview and returns unavailable on
+  miss, `open-or-create` reuses when possible and otherwise creates, and
+  `prepare-new` always creates a fresh preview session. The old boolean
+  `fallback_create` input is not part of the public contract.
 - **Browser SDK:** `window.wpCodeboxBrowser.v1.info()` reports SDK version,
   capability strings, and global names; `normalizeError()` returns
   `wp-codebox/browser-sdk-error/v1`; `result()` wraps async browser operations in
   `wp-codebox/browser-sdk-result/v1`; `normalizeBrowserRunResult()` returns the
   product-safe `wp-codebox/browser-run-result/v1` DTO; `browserArtifactPersistenceRef()`
-  returns `wp-codebox/browser-artifact-persistence/ref/v1`; `runBrowserSessionRecipe()`
+  returns `wp-codebox/browser-artifact-persistence/ref/v1`; `startBrowserPreview()`
+  starts a Codebox browser preview from the boot DTO and returns
+  `wp-codebox/browser-preview-start-result/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
   `methods` exposes stable references to the existing browser runtime helpers for
   callers that need legacy raw results internally. TypeScript consumers outside

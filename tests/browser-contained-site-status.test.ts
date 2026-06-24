@@ -94,13 +94,26 @@ $open_miss = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_cont
 	'input_hash' => str_repeat( 'd', 64 ),
 ) );
 $open_or_create_miss_no_fallback = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_or_create_browser_contained_site( array(
+	'mode' => 'open-only',
 	'contained_site' => array(
 		'schema' => 'wp-codebox/browser-contained-site/v1',
 		'site_id' => $cache_key,
 		'cache_key' => $cache_key,
 		'source_digest' => array( 'algorithm' => 'sha256', 'value' => str_repeat( 'd', 64 ) ),
 	),
-	'fallback_create' => false,
+) );
+$open_or_create_missing_mode = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_or_create_browser_contained_site( array(
+	'contained_site' => array(
+		'schema' => 'wp-codebox/browser-contained-site/v1',
+		'site_id' => $cache_key,
+	),
+) );
+$open_or_create_invalid_mode = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_or_create_browser_contained_site( array(
+	'mode' => 'fallback-create',
+	'contained_site' => array(
+		'schema' => 'wp-codebox/browser-contained-site/v1',
+		'site_id' => $cache_key,
+	),
 ) );
 $GLOBALS['wp_codebox_test_strip_preview_boot_ref'] = true;
 $open_unbootable = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browser_contained_site( array(
@@ -112,7 +125,7 @@ $open_unbootable = WP_Codebox_Test_Browser_Contained_Site_Abilities::open_browse
 	),
 ) );
 
-echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_or_create_miss_no_fallback' => $open_or_create_miss_no_fallback, 'open_unbootable' => $open_unbootable ), JSON_UNESCAPED_SLASHES );
+echo json_encode( array( 'hit' => $hit, 'miss' => $miss, 'incompatible' => $incompatible, 'open_hit' => $open_hit, 'open_miss' => $open_miss, 'open_or_create_miss_no_fallback' => $open_or_create_miss_no_fallback, 'open_or_create_missing_mode' => $open_or_create_missing_mode, 'open_or_create_invalid_mode' => $open_or_create_invalid_mode, 'open_unbootable' => $open_unbootable ), JSON_UNESCAPED_SLASHES );
 `)
 
 assert.equal(result.hit.schema, "wp-codebox/browser-contained-site-status/v1")
@@ -209,11 +222,14 @@ assert.equal(result.open_miss.requires_materialization, true)
 assert.equal(result.open_miss.blueprint_ref, undefined)
 assert.equal(result.open_or_create_miss_no_fallback.schema, "wp-codebox/browser-contained-site-open-or-create/v1")
 assert.equal(result.open_or_create_miss_no_fallback.success, false)
+assert.equal(result.open_or_create_miss_no_fallback.mode, "open-only")
 assert.equal(result.open_or_create_miss_no_fallback.action, "unavailable")
 assert.equal(result.open_or_create_miss_no_fallback.reload_required, true)
 assert.equal(result.open_or_create_miss_no_fallback.decision.action, "create-new")
 assert.equal(result.open_or_create_miss_no_fallback.error.code, "wp_codebox_browser_contained_site_unavailable")
 assert.equal(result.open_or_create_miss_no_fallback.created, undefined)
+assert.equal(result.open_or_create_missing_mode.code, "wp_codebox_browser_contained_site_mode_required")
+assert.equal(result.open_or_create_invalid_mode.code, "wp_codebox_browser_contained_site_mode_invalid")
 assert.equal(result.open_unbootable.success, false)
 assert.equal(result.open_unbootable.status, "unusable")
 assert.equal(result.open_unbootable.resolution.outcome, "unusable")
