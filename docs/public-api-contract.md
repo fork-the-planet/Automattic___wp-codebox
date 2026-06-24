@@ -39,9 +39,9 @@ Use these package entrypoints from external integrations:
   distribution. External integrations should compose the Codebox core facades,
   WordPress abilities, CLI, or browser SDK instead of importing backend
   implementation packages directly.
-- The runtime backend compatibility facade is for advanced runtime-backend
-  implementors. Product consumers should use the Codebox-owned public surfaces
-  above and the WordPress/browser surfaces below.
+- `@automattic/wp-codebox-playground`: advanced runtime backend entrypoint for
+  runtime-backend implementors. New consumers should prefer
+  `@automattic/wp-codebox-playground/public`. Product consumers should use the Codebox-owned public surfaces above and the WordPress/browser surfaces below.
 - `@automattic/wp-codebox-cli`: the executable CLI surface for schema, command,
   recipe, runtime, and artifact operations.
 - `@automattic/wp-codebox-cli/recipe-secret-env`: recipe secret environment
@@ -56,6 +56,34 @@ for product consumers running inside the browser. Legacy top-level
 Consumer-facing WordPress abilities use the `wp-codebox/*` namespace. Public
 docs and schemas describe the canonical Codebox-owned names that integrations
 should call directly.
+
+## Public Handoff Abilities
+
+Native hosts and other external orchestrators should treat these abilities as
+the public handoff/fanout boundary:
+
+- `wp-codebox/create-browser-task-contract` prepares a product-facing browser
+  task contract. WP Codebox owns the contract envelope, session descriptors,
+  callback capability shape, phase structure, and artifact references; the host
+  owns durable job state, UI state, review decisions, and any callback endpoint
+  implementation that receives or forwards the result.
+- `wp-codebox/normalize-browser-artifact-bundle` validates caller-provided
+  browser files, safe paths, entrypoint, roles, provenance, and metadata into a
+  product-neutral bundle description without interpreting product-specific
+  meaning.
+- `wp-codebox/persist-browser-artifact` stores browser-produced files as a
+  canonical WP Codebox artifact bundle and returns artifact bundle references for
+  review, replay, import, or apply-back.
+- `wp-codebox/import-artifact-bundle` and
+  `wp-codebox/reimport-artifact-bundle` are the durable ingress path for an
+  existing bundle. They verify bundle identity/digest and return
+  `wp-codebox/artifact-result-envelope/v1`; callers own when to retry,
+  replace, review, or apply returned artifacts.
+- `wp-codebox/run-agent-task-fanout` runs a bounded, product-neutral fanout
+  request and returns the parent `wp-codebox/agent-fanout-result/v1` envelope.
+  WP Codebox owns isolated worker execution, lifecycle events, aggregation
+  envelope shape, and artifact layout; the host owns placement, ranking,
+  durable orchestration state, callback delivery, and final result decisions.
 
 The public runtime contract manifest currently publishes these Codebox-owned
 ability identifiers:

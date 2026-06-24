@@ -38,6 +38,7 @@ import {
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
   fuzzCoveragePlanContract,
+  TASK_INPUT_JSON_SCHEMA,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
 import * as runResultsApi from "../packages/runtime-core/src/run-results.js"
@@ -112,7 +113,6 @@ const runnerWorkspaceAdapter = await readFile(new URL("packages/wordpress-plugin
 assert.deepEqual(barrelExportModules(publicBarrel), [
   "./agent-runtime-workload.js",
   "./agent-workload.js",
-  "./agent-task-recipe.js",
   "./agent-task-run-result.js",
   "./agent-terminal-result.js",
   "./artifact-capture-policy.js",
@@ -259,6 +259,7 @@ for (const publicModule of [
 }
 
 for (const internalModule of [
+  "./agent-task-recipe.js",
   "./benchmark-substrate.js",
   "./fanout-aggregation.js",
   "./generic-ability-runtime-run.js",
@@ -271,6 +272,20 @@ for (const internalModule of [
   assert.ok(!publicBarrel.includes(`export * from "${internalModule}"`), `public barrel must not export ${internalModule}`)
   assert.ok(!contractsBarrel.includes(`export * from "${internalModule}"`), `contracts barrel must not export ${internalModule}`)
 }
+
+for (const internalRequestField of [
+  "provider_plugin_paths",
+  "runtime_stack_mounts",
+  "runtime_overlays",
+  "runtime_state_mounts",
+  "runtime_config_mounts",
+  "secret_env",
+  "wp_codebox_bin",
+]) {
+  assert.equal(JSON.stringify(TASK_INPUT_JSON_SCHEMA).includes(internalRequestField), false, `public task input schema must not expose ${internalRequestField}`)
+}
+
+assert.equal(TASK_INPUT_JSON_SCHEMA.required.includes("agent_bundles"), false, "agent_bundles must not be required by the public task input schema")
 
 assert.ok(!contractsBarrel.includes(`export * from "./index.js"`), "contracts barrel must not re-export the root package barrel")
 
@@ -303,7 +318,23 @@ assert.match(docs, /`wp-codebox\/\*` ability ids/)
 assert.match(docs, /runtime backend implementation package is used by the CLI and plugin\s+distribution/)
 assert.match(docs, /External integrations should compose the Codebox core facades,\s+WordPress abilities, CLI, or browser SDK/)
 assert.match(docs, /Product consumers should use the Codebox-owned public surfaces/)
-assert.doesNotMatch(docs, /`@automattic\/wp-codebox-playground(?:\/public)?`/)
+for (const handoffAbility of [
+  "wp-codebox/create-browser-task-contract",
+  "wp-codebox/normalize-browser-artifact-bundle",
+  "wp-codebox/persist-browser-artifact",
+  "wp-codebox/import-artifact-bundle",
+  "wp-codebox/reimport-artifact-bundle",
+  "wp-codebox/run-agent-task-fanout",
+]) {
+  assert.match(docs, new RegExp(escapeRegExp(handoffAbility)), `public docs must cover ${handoffAbility}`)
+  assert.match(pluginReadme, new RegExp(escapeRegExp(handoffAbility.replace("wp-codebox/", "")) + "|" + escapeRegExp(handoffAbility)), `plugin README must cover ${handoffAbility}`)
+}
+assert.match(docs + pluginReadme, /WP Codebox owns the contract envelope/)
+assert.match(docs + pluginReadme, /callers? own durable job state|host owns durable job state/)
+assert.match(docs + pluginReadme, /normalize-browser-artifact-bundle[\s\S]*persist-browser-artifact[\s\S]*reimport-artifact-bundle/)
+assert.doesNotMatch(docs + pluginReadme, /Studio Native/i)
+assert.match(docs, /`@automattic\/wp-codebox-playground`: advanced runtime backend entrypoint/)
+assert.match(docs, /New consumers should prefer\s+`@automattic\/wp-codebox-playground\/public`/)
 assert.match(docs, /## Integration Boundary/)
 assert.match(docs, /Codebox adapts host systems into generic\s+Codebox inputs/)
 assert.match(docs, /Codebox adapter\s+translates from host-owned inputs into the Codebox task\/recipe\/runtime contracts/)

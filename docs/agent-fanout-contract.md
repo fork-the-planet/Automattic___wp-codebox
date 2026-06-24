@@ -116,8 +116,10 @@ fanout/
 
 The parent result includes `session.children`, aggregate counts, the requested
 concurrency, worker run summaries, failure summaries, and artifact references.
-Parent products remain responsible for review, apply, PR creation, deployment,
-or any other mutation outside the sandbox.
+WP Codebox owns this parent result envelope and the referenced child artifact
+layout. Parent hosts own durable job/result records, callback delivery,
+placement/ranking policy, review, apply, PR creation, deployment, or any other
+mutation outside the sandbox.
 
 ## Host Delegation
 
