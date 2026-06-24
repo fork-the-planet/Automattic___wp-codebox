@@ -56,6 +56,7 @@ const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
   cases: [
     { id: "rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } },
     { id: "browser", target: { kind: "runtime-action" }, input: { type: "browser", operation: "navigate", url: "/" } },
+    { id: "db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
   ],
 }), { requireCoverage: true })
 
@@ -64,10 +65,13 @@ assert.equal(result.success, true)
 assert.equal(result.metadata?.runnerMode, "runtime-backed")
 assert.equal(result.metadata?.runtimeBackend, "wordpress-playground")
 assert.equal((result.metadata?.runnerCapabilities as { mode?: string } | undefined)?.mode, "runtime-backed")
-assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions"])
+assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation"])
 assert.equal(result.cases[0]?.reset?.status, "passed")
 assert.equal(result.cases[0]?.reset?.checkpointName, "fuzz-baseline")
 assert.deepEqual(result.cases[0]?.reset?.fixtureRefs, ["fixtures/store.json"])
 assert.equal(result.cases[1]?.reset?.status, "passed")
+assert.equal(result.cases[2]?.status, "passed")
+assert.equal(steps[7]?.args?.[0]?.startsWith("operation-json="), true)
+assert.equal(JSON.parse(steps[7]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
 
 console.log("playground fuzz suite public ok")

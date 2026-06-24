@@ -68,7 +68,7 @@ public static function run_fuzz_suite( array $input ): array|WP_Error {
 				'error',
 				'wp_codebox_fuzz_suite_runner_mode_unavailable',
 				'wp-codebox/run-fuzz-suite runs PHP in-process mode only; use the runtime-backed Codebox runner for browser, editor, page, CRUD, runtime, or runtime-action coverage.',
-				array( 'requested_runner_mode' => $requested_runner_mode, 'available_runner_mode' => $runner_capabilities['mode'], 'missing_capabilities' => $missing_capabilities )
+				array( 'requested_runner_mode' => $requested_runner_mode, 'available_runner_mode' => $runner_capabilities['mode'], 'missing_capabilities' => $missing_capabilities, 'runtime_backed_execution' => self::fuzz_suite_runtime_backed_execution_contract(), 'required_support' => array( 'typescript_public_facade' => '@automattic/wp-codebox-playground/public executeWordPressFuzzSuite', 'episode_methods' => array( 'step', 'reset' ) ) )
 			)
 		);
 	}
@@ -150,6 +150,24 @@ private static function fuzz_suite_php_runner_capabilities( array $suite = array
 	return self::fuzz_suite_runner_capabilities_contract( $suite );
 }
 
+/** @return array<string,array<string,mixed>> */
+private static function fuzz_suite_supported_runner_capabilities(): array {
+	return array(
+		'php-in-process' => self::fuzz_suite_runner_capabilities_contract(),
+		'runtime-backed' => self::fuzz_suite_runtime_backed_runner_capabilities_contract(),
+	);
+}
+
+/** @return array<string,mixed> */
+private static function fuzz_suite_runtime_backed_execution_contract(): array {
+	return array(
+		'supported_by_this_ability' => false,
+		'supported_public_facade'   => '@automattic/wp-codebox-playground/public executeWordPressFuzzSuite',
+		'required_episode_methods'  => array( 'step', 'reset' ),
+		'failure_code'              => 'wp_codebox_fuzz_suite_runner_mode_unavailable',
+	);
+}
+
 /** @param array<string,mixed> $suite Optional suite input. @return array<string,mixed> */
 private static function fuzz_suite_runner_capabilities_contract( array $suite = array() ): array {
 	$capabilities = array(
@@ -169,6 +187,23 @@ private static function fuzz_suite_runner_capabilities_contract( array $suite = 
 		'targetKinds'                     => $capabilities['targetKinds'],
 		'unsupportedRequiredCapabilities' => $capabilities['unsupportedRequiredCapabilities'],
 	);
+}
+
+/** @param array<string,mixed> $suite Optional suite input. @return array<string,mixed> */
+private static function fuzz_suite_runtime_backed_runner_capabilities_contract( array $suite = array() ): array {
+	$capabilities = array(
+		'schema'                          => 'wp-codebox/fuzz-runner-capabilities/v1',
+		'mode'                            => 'runtime-backed',
+		'capabilities'                    => array( 'target:ability', 'target:command', 'target:http', 'target:rest', 'target:runtime', 'target:runtime-action', 'runtime', 'runtime-action:admin_page', 'runtime-action:browser', 'runtime-action:browser_probe', 'runtime-action:crud_operation', 'runtime-action:db_operation', 'runtime-action:editor_open', 'runtime-action:page', 'runtime-action:php', 'runtime-action:rest_request', 'runtime-action:wp_cli', 'db_operation' ),
+		'targetKinds'                     => array( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' ),
+		'runtimeActionTypes'              => array( 'admin_page', 'browser', 'browser_probe', 'crud_operation', 'db_operation', 'editor_open', 'page', 'php', 'rest_request', 'wp_cli' ),
+		'commands'                        => array( 'wp-codebox.checkpoint-create', 'wp-codebox.checkpoint-list', 'wp-codebox.checkpoint-restore', 'wordpress.ability', 'wordpress.admin-page-load', 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.editor-open', 'wordpress.frontend-page-load', 'wordpress.http-request', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.server-page-load', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load', 'wordpress.wp-cli' ),
+		'unsupportedRequiredCapabilities' => array(),
+	);
+	if ( ! empty( $suite ) ) {
+		$capabilities['unsupportedRequiredCapabilities'] = self::fuzz_suite_missing_required_capabilities( $suite, $capabilities );
+	}
+	return $capabilities;
 }
 
 /** @param array<string,mixed> $suite Suite input. */

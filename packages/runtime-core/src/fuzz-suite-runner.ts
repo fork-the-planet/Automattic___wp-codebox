@@ -3,6 +3,7 @@ import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPAB
 import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
+import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
 
 export interface FuzzSuiteCommandExecutor {
   execute(spec: ExecutionSpec): Promise<ExecutionResult>
@@ -639,6 +640,23 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
               timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
             }) as ExecutionSpec,
             metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.crud-operation" },
+          }
+        } catch (error) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, error instanceof Error ? error.message : String(error), { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+      }
+
+      if (input.payload.type === "db_operation") {
+        try {
+          const operation = normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, ...input.payload, operation: input.payload.operation ?? "read" })
+          return {
+            status: "supported",
+            spec: stripUndefined({
+              command: "wordpress.db-operation",
+              args: [`operation-json=${JSON.stringify(operation)}`],
+              timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
+            }) as ExecutionSpec,
+            metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.db-operation" },
           }
         } catch (error) {
           return unsupportedInputAdapterResolution(fuzzCase, target, error instanceof Error ? error.message : String(error), { adapterKind: "runtime-action", actionType: input.payload.type })

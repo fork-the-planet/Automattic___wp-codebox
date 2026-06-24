@@ -6,12 +6,13 @@ import { runtimeEpisodeDigest } from "./runtime-episode.js"
 import type { RuntimePolicy } from "./runtime-policy.js"
 import type { MountSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisode, RuntimeEpisodeContentDigest, RuntimeEpisodeStepResult, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation, type WordPressCrudOperation } from "./wordpress-crud-contracts.js"
+import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation, type WordPressDbOperation } from "./wordpress-db-contracts.js"
 
 export const RUNTIME_ACTION_OBSERVATION_SCHEMA = "wp-codebox/runtime-action-observation/v1" as const
 
 export const SANDBOX_WORKSPACE_ROOT = "/workspace"
 
-export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
+export type RuntimeAction = RuntimeWpCliAction | RuntimePhpAction | RuntimeRestRequestAction | RuntimeWordPressCrudOperationAction | RuntimeWordPressDbOperationAction | RuntimeFilesystemAction | RuntimeBrowserAction | RuntimeBrowserProbeAction | RuntimeEditorOpenAction | RuntimeAdminPageAction | RuntimePageAction | RuntimeWordPressPluginSetupAction | RuntimeWordPressPluginStateAction | RuntimeWordPressThemeSetupAction
 
 export interface RuntimeWpCliAction {
   type: "wp_cli"
@@ -40,6 +41,11 @@ export interface RuntimeRestRequestAction {
 
 export interface RuntimeWordPressCrudOperationAction extends Omit<WordPressCrudOperation, "schema"> {
   type: "crud_operation"
+  timeout_ms?: number
+}
+
+export interface RuntimeWordPressDbOperationAction extends Omit<WordPressDbOperation, "schema"> {
+  type: "db_operation"
   timeout_ms?: number
 }
 
@@ -179,6 +185,10 @@ export async function runRuntimeAction(
 
   if (action.type === "crud_operation") {
     return runRuntimeWordPressCrudOperationAction(episode, action)
+  }
+
+  if (action.type === "db_operation") {
+    return runRuntimeWordPressDbOperationAction(episode, action)
   }
 
   if (action.type === "browser") {
@@ -369,6 +379,36 @@ async function runRuntimeWordPressCrudOperationAction(episode: RuntimeEpisode, a
     {
       kind: "command",
       command: "wordpress.crud-operation",
+      args: [`operation-json=${JSON.stringify(operation)}`],
+      ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+    },
+    { type: "command-result" },
+  )
+
+  return runtimeActionObservation({
+    type: action.type,
+    action,
+    step,
+    data: {
+      operation,
+      mappedCommand: step.execution.command,
+      args: step.execution.args,
+      exitCode: step.execution.exitCode,
+      stdout: step.execution.stdout,
+      stderr: step.execution.stderr,
+      executionId: step.execution.id,
+      stepId: step.id,
+    },
+    artifactRefs: step.observation?.artifactRefs,
+  })
+}
+
+async function runRuntimeWordPressDbOperationAction(episode: RuntimeEpisode, action: RuntimeWordPressDbOperationAction): Promise<RuntimeActionObservation> {
+  const operation = normalizeWordPressDbOperation({ schema: WORDPRESS_DB_OPERATION_SCHEMA, ...action, operation: action.operation ?? "read" })
+  const step = await episode.step(
+    {
+      kind: "command",
+      command: "wordpress.db-operation",
       args: [`operation-json=${JSON.stringify(operation)}`],
       ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
     },

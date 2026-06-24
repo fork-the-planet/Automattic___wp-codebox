@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
@@ -19,6 +19,7 @@ const result = await runFuzzSuite(fuzzSuiteContract({
     { id: "case-runtime-action-page", target: { kind: "runtime-action" }, input: { type: "page", path: "/sample-page/", query: { preview: true } } },
     { id: "case-runtime-action-editor", target: { kind: "runtime-action" }, input: { type: "editor_open", target: "post-new", post_type: "page", capture: ["editor-state"] } },
     { id: "case-runtime-action-crud", target: { kind: "runtime-action" }, input: { type: "crud_operation", operation: "read", resource: { kind: "post", type: "page", id: 42 } } },
+    { id: "case-runtime-action-db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
     { id: "case-runtime-action-unsupported", target: { kind: "runtime-action" }, input: { type: "filesystem", operation: "list" } },
   ],
 }), {
@@ -43,20 +44,20 @@ assert.equal(result.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(result.suite.id, "suite-001")
 assert.equal(result.status, "failed")
 assert.equal(result.success, false)
-assert.deepEqual(result.summary, { total: 12, passed: 10, failed: 1, error: 0, skipped: 1 })
+assert.deepEqual(result.summary, { total: 13, passed: 11, failed: 1, error: 0, skipped: 1 })
 assert.deepEqual(result.coverageSummary, {
-  discovered: 12,
-  generated: 12,
-  executed: 11,
+  discovered: 13,
+  generated: 13,
+  executed: 12,
   skipped: 1,
   untested: 0,
   skippedReasons: [{ reason: "fuzz_suite_target_adapter_unsupported", count: 1, caseIds: ["case-runtime-action-unsupported"] }],
 })
 assert.equal(result.coveragePlan?.schema, "wp-codebox/fuzz-coverage-plan/v1")
-assert.deepEqual({ discovered: result.coveragePlan?.summary.discovered, generated: result.coveragePlan?.summary.generated, executable: result.coveragePlan?.summary.executable, executed: result.coveragePlan?.summary.executed, skipped: result.coveragePlan?.summary.skipped, untested: result.coveragePlan?.summary.untested }, { discovered: 12, generated: 12, executable: 12, executed: 11, skipped: 1, untested: 0 })
+assert.deepEqual({ discovered: result.coveragePlan?.summary.discovered, generated: result.coveragePlan?.summary.generated, executable: result.coveragePlan?.summary.executable, executed: result.coveragePlan?.summary.executed, skipped: result.coveragePlan?.summary.skipped, untested: result.coveragePlan?.summary.untested }, { discovered: 13, generated: 13, executable: 13, executed: 12, skipped: 1, untested: 0 })
 assert.deepEqual(result.coveragePlan?.executed.map((item) => item.id), result.cases.filter((item) => item.status !== "skipped").map((item) => item.id))
 assert.equal(result.coveragePlan?.skipped[0]?.reason?.code, "fuzz_suite_target_adapter_unsupported")
-assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation"])
+assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation", "wordpress.db-operation"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
 assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })
 assert.deepEqual(executed[3], { command: "wordpress.rest-request", args: ["path=/wp/v2/types", "method=GET", "params-json={\"context\":\"view\"}"], method: "GET", path: "/wp/v2/types" })
@@ -67,15 +68,20 @@ assert.deepEqual(executed[7], { command: "wordpress.admin-page-load", args: ["pa
 assert.deepEqual(executed[8], { command: "wordpress.frontend-page-load", args: ["path=/sample-page/", "query-json={\"preview\":true}"] })
 assert.deepEqual(executed[9], { command: "wordpress.editor-open", args: ["target=post-new", "post-type=page", "capture=editor-state"] })
 assert.equal(JSON.parse(executed[10]?.args?.[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-crud-operation/v1")
+assert.equal(JSON.parse(executed[11]?.args?.[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
+assert.equal(JSON.parse(executed[11]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
 assert.equal(result.cases[0]?.status, "passed")
 assert.equal(result.cases[0]?.artifactRefs?.[0]?.path, "/artifacts/exec-1.json")
 assert.equal(result.cases[1]?.status, "failed")
 assert.equal(result.cases[1]?.diagnostics[0]?.code, "fuzz_suite_command_failed")
-assert.equal(result.cases[11]?.status, "skipped")
-assert.equal(result.cases[11]?.skipReason, "fuzz_suite_target_adapter_unsupported")
-assert.equal(result.cases[11]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
-assert.equal(result.artifactRefs.length, 11)
+assert.equal(result.cases[12]?.status, "skipped")
+assert.equal(result.cases[12]?.skipReason, "fuzz_suite_target_adapter_unsupported")
+assert.equal(result.cases[12]?.diagnostics[0]?.code, "fuzz_suite_target_adapter_unsupported")
+assert.equal(result.artifactRefs.length, 12)
 assert.equal((result.cases[0]?.metadata?.replay as Record<string, unknown> | undefined)?.caseId, "case-pass")
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities.includes("db_operation"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("db_operation"), true)
+assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.db-operation"), true)
 
 const plannedEditor = planFuzzSuiteCaseExecutionSpec({
   suite: fuzzSuiteContract({ id: "planner", cases: [] }),
