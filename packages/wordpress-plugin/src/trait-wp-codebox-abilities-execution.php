@@ -3179,9 +3179,28 @@ private static function blocked_browser_playground_session( string $session_id, 
 	);
 }
 
-/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $input Ability input. @return array<string,mixed> */
-private static function browser_session_response_for_input( array $session, array $input ): array {
+/** @param array<string,mixed> $session Browser session contract. @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+private static function browser_session_response_for_input( array $session, array $input ): array|WP_Error {
 	$product_dto = WP_Codebox_Browser_Task_Builder::product_browser_session_dto( $session );
+	if ( true === ( $product_dto['success'] ?? false ) && 'ready' === (string) ( $product_dto['status'] ?? '' ) ) {
+		$boot_contract = WP_Codebox_Browser_Task_Builder::validate_browser_preview_boot_contract(
+			is_array( $product_dto['preview_boot'] ?? null ) ? $product_dto['preview_boot'] : array(),
+			is_array( $product_dto['blueprint_ref'] ?? null ) ? $product_dto['blueprint_ref'] : array()
+		);
+		if ( false === ( $boot_contract['valid'] ?? false ) ) {
+			return new WP_Error(
+				'wp_codebox_browser_preview_boot_contract_invalid',
+				'Browser preview session is missing a hydratable blueprint ref.',
+				array(
+					'status'        => 500,
+					'schema'        => 'wp-codebox/browser-preview-boot-contract-error/v1',
+					'reason'        => (string) ( $boot_contract['reason'] ?? 'preview-boot-contract-invalid' ),
+					'session_id'    => (string) ( $product_dto['session_id'] ?? '' ),
+					'blueprint_ref' => is_array( $product_dto['blueprint_ref'] ?? null ) ? $product_dto['blueprint_ref'] : array(),
+				)
+			);
+		}
+	}
 	$evidence_ref = self::browser_session_evidence_store( $product_dto, $session );
 	if ( ! empty( $evidence_ref ) ) {
 		$product_dto['evidence_ref'] = $evidence_ref;
