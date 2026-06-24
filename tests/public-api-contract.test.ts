@@ -302,6 +302,21 @@ assert.match(rootBarrel, /Stable root package barrel kept for existing consumers
 assert.match(rootBarrel, /prefer the curated `@automattic\/wp-codebox-core\/public` facade or narrower/)
 assert.match(docs, /WordPress consumers should prefer `WP_Codebox_API`/)
 assert.match(docs, /`wp-codebox\/\*` ability ids/)
+for (const handoffAbility of [
+  "wp-codebox/create-browser-task-contract",
+  "wp-codebox/normalize-browser-artifact-bundle",
+  "wp-codebox/persist-browser-artifact",
+  "wp-codebox/import-artifact-bundle",
+  "wp-codebox/reimport-artifact-bundle",
+  "wp-codebox/run-agent-task-fanout",
+]) {
+  assert.match(docs, new RegExp(escapeRegExp(handoffAbility)), `public docs must cover ${handoffAbility}`)
+  assert.match(pluginReadme, new RegExp(escapeRegExp(handoffAbility.replace("wp-codebox/", "")) + "|" + escapeRegExp(handoffAbility)), `plugin README must cover ${handoffAbility}`)
+}
+assert.match(docs + pluginReadme, /WP Codebox owns the contract envelope/)
+assert.match(docs + pluginReadme, /callers? own durable job state|host owns durable job state/)
+assert.match(docs + pluginReadme, /normalize-browser-artifact-bundle[\s\S]*persist-browser-artifact[\s\S]*reimport-artifact-bundle/)
+assert.doesNotMatch(docs + pluginReadme, /Studio Native/i)
 assert.match(docs, /`@automattic\/wp-codebox-playground`: advanced runtime backend entrypoint/)
 assert.match(docs, /New consumers should prefer\s+`@automattic\/wp-codebox-playground\/public`/)
 assert.match(docs, /## Integration Boundary/)
