@@ -191,7 +191,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const session = sandboxSession(input, run, artifacts, success ? "completed" : "failed")
     const structuredArtifacts = structuredArtifactRefs(agentTaskResult)
     const outputs = stripUndefined({ ...workload.outputs })
-    const typedArtifacts = typedArtifactRefs(agentTaskResult, outputs)
+    const typedArtifacts = agentTaskRunTypedArtifacts(agentTaskResult, outputs, run)
     const evidence = evidenceRefs(run, artifacts, failureEvidence)
     const artifactResult = artifactResultEnvelope({
       operation: "agent-task-run",
@@ -626,6 +626,11 @@ export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, work
     objectValue(rawRuntimeResult.outputs)?.typed_artifacts,
     objectValue(rawRuntimeResult.engine_data)?.outputs && objectValue(objectValue(rawRuntimeResult.engine_data)?.outputs)?.typed_artifacts,
   ].flatMap(typedArtifactList))
+}
+
+export function agentTaskRunTypedArtifacts(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown>, run: Record<string, unknown>): Array<Record<string, unknown>> {
+  const runtimeOutputs = objectValue(run.outputs) || {}
+  return typedArtifactRefs(agentTaskResult, stripUndefined({ ...runtimeOutputs, ...workloadOutputs }))
 }
 
 function typedArtifactList(value: unknown): Array<Record<string, unknown>> {

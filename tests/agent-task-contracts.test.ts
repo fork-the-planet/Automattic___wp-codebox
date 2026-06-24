@@ -6,7 +6,7 @@ import { chdir, cwd } from "node:process"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
-import { agentTaskRunExitCode, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentTaskRunExitCode, agentTaskRunTypedArtifacts, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
@@ -187,6 +187,22 @@ const typedArtifactMapRefs = typedArtifactRefs({}, {
 assert.equal(typedArtifactMapRefs[0]?.name, "concept_packet")
 assert.equal(typedArtifactMapRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
 assert.deepEqual(typedArtifactMapRefs[0]?.payload, { title: "Repair Bench Supply" })
+
+const runtimeOutputsTypedArtifactRefs = agentTaskRunTypedArtifacts({}, {}, {
+  outputs: {
+    typed_artifacts: {
+      concept_packet: {
+        output_key: "concept_packet",
+        schema: "wp-site-generator/ConceptPacket/v1",
+        artifact: "ConceptPacket",
+        payload: { title: "Second Shift Supper Club" },
+      },
+    },
+  },
+})
+assert.equal(runtimeOutputsTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(runtimeOutputsTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(runtimeOutputsTypedArtifactRefs[0]?.payload, { title: "Second Shift Supper Club" })
 
 const rawRuntimeTypedArtifactRefs = typedArtifactRefs({
   raw: {
