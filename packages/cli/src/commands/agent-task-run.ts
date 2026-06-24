@@ -163,7 +163,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     })
     const hasAgentBundle = Object.keys(agentBundle).length > 0
     const recipeSuccess = Boolean(run.success) && (!hasAgentBundle || workload.success)
-    const agentTaskResult = objectValue(run.agentTaskResult) || objectValue(runRecord.agentTaskResult) || objectValue(artifactsRecord.agentTaskResult) || {}
+    const agentTaskResult = agentTaskResultFromRun(run, runRecord, artifactsRecord)
     const terminalResult = terminalResultFromRun(run, agentTaskResult)
     const completionOutcome = objectValue(run.completionOutcome) || objectValue(run.completion_outcome) || objectValue(artifactsRecord.completionOutcome) || objectValue(artifactsRecord.completion_outcome) || {}
     const agentResult = objectValue(run.agentResult) || objectValue(runRecord.agentResult) || objectValue(artifactsRecord.agentResult) || {}
@@ -608,6 +608,7 @@ function structuredArtifactRefs(agentTaskResult: Record<string, unknown>): Array
 
 export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown> = {}): Array<Record<string, unknown>> {
   const outputs = objectValue(agentTaskResult.outputs) || {}
+  const outputsResult = objectValue(outputs.result) || {}
   const result = objectValue(agentTaskResult.result) || {}
   const raw = objectValue(agentTaskResult.raw) || {}
   const rawResult = objectValue(raw.result) || {}
@@ -615,6 +616,8 @@ export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, work
   return dedupeRecords([
     agentTaskResult.typed_artifacts,
     outputs.typed_artifacts,
+    objectValue(outputsResult.outputs)?.typed_artifacts,
+    objectValue(outputsResult.engine_data)?.outputs && objectValue(objectValue(outputsResult.engine_data)?.outputs)?.typed_artifacts,
     workloadOutputs.typed_artifacts,
     result.typed_artifacts,
     objectValue(result.outputs)?.typed_artifacts,
@@ -631,6 +634,16 @@ export function typedArtifactRefs(agentTaskResult: Record<string, unknown>, work
 export function agentTaskRunTypedArtifacts(agentTaskResult: Record<string, unknown>, workloadOutputs: Record<string, unknown>, run: Record<string, unknown>): Array<Record<string, unknown>> {
   const runtimeOutputs = objectValue(run.outputs) || {}
   return typedArtifactRefs(agentTaskResult, stripUndefined({ ...runtimeOutputs, ...workloadOutputs }))
+}
+
+export function agentTaskResultFromRun(run: Record<string, unknown>, runRecord: Record<string, unknown> = {}, artifactsRecord: Record<string, unknown> = {}): Record<string, unknown> {
+  return objectValue(run.agentTaskResult)
+    || objectValue(run.agent_task_result)
+    || objectValue(runRecord.agentTaskResult)
+    || objectValue(runRecord.agent_task_result)
+    || objectValue(artifactsRecord.agentTaskResult)
+    || objectValue(artifactsRecord.agent_task_result)
+    || {}
 }
 
 function typedArtifactList(value: unknown): Array<Record<string, unknown>> {

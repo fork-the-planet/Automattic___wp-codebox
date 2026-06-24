@@ -6,7 +6,7 @@ import { chdir, cwd } from "node:process"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
-import { agentTaskRunExitCode, agentTaskRunTypedArtifacts, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunTypedArtifacts, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
@@ -245,6 +245,31 @@ const resultEngineDataTypedArtifactRefs = typedArtifactRefs({
 assert.equal(resultEngineDataTypedArtifactRefs[0]?.name, "concept_packet")
 assert.equal(resultEngineDataTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
 assert.deepEqual(resultEngineDataTypedArtifactRefs[0]?.payload, { title: "Hearth Ledger" })
+
+const snakeCaseAgentTaskResult = agentTaskResultFromRun({
+  agent_task_result: {
+    outputs: {
+      result: {
+        engine_data: {
+          outputs: {
+            typed_artifacts: {
+              concept_packet: {
+                output_key: "concept_packet",
+                schema: "wp-site-generator/ConceptPacket/v1",
+                artifact: "ConceptPacket",
+                payload: { title: "The Repair Drawer" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+})
+const snakeCaseAgentTaskTypedArtifactRefs = typedArtifactRefs(snakeCaseAgentTaskResult)
+assert.equal(snakeCaseAgentTaskTypedArtifactRefs[0]?.name, "concept_packet")
+assert.equal(snakeCaseAgentTaskTypedArtifactRefs[0]?.artifact_schema, "wp-site-generator/ConceptPacket/v1")
+assert.deepEqual(snakeCaseAgentTaskTypedArtifactRefs[0]?.payload, { title: "The Repair Drawer" })
 
 const normalizedWithArtifactEnvelope = normalizeAgentTaskRunResult({
   success: true,
