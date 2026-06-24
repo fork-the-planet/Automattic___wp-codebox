@@ -213,8 +213,6 @@ for (const publicEntry of [
   "@automattic/wp-codebox-core/recipe-builders",
   "@automattic/wp-codebox-core/agent-task-recipe",
   "@automattic/wp-codebox-core/runtime-presets",
-  "@automattic/wp-codebox-playground",
-  "@automattic/wp-codebox-playground/public",
   "@automattic/wp-codebox-cli",
   "./cli/recipe-secret-env",
   "@automattic/wp-codebox-cli/recipe-secret-env",
@@ -317,6 +315,9 @@ assert.match(rootBarrel, /Stable root package barrel kept for existing consumers
 assert.match(rootBarrel, /prefer the curated `@automattic\/wp-codebox-core\/public` facade or narrower/)
 assert.match(docs, /WordPress consumers should prefer `WP_Codebox_API`/)
 assert.match(docs, /`wp-codebox\/\*` ability ids/)
+assert.match(docs, /runtime backend implementation package is used by the CLI and plugin\s+distribution/)
+assert.match(docs, /External integrations should compose the Codebox core facades,\s+WordPress abilities, CLI, or browser SDK/)
+assert.match(docs, /Product consumers should use the Codebox-owned public surfaces/)
 for (const handoffAbility of [
   "wp-codebox/create-browser-task-contract",
   "wp-codebox/normalize-browser-artifact-bundle",
