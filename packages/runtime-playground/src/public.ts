@@ -5,6 +5,7 @@ import {
   openWordPressAdminPage,
   openWordPressEditor,
   probeWordPressBrowser,
+  readWordPressDatabase,
   requestWordPressRest,
   RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
   runWordPressCrudOperation,
@@ -157,6 +158,23 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "crud_operation") {
         const step = await runWordPressCrudOperation(episode, action, action.timeout_ms)
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { stepId: step.id, executionId: step.execution.id, mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: { algorithm: "sha256", value: step.execution.command },
+        }
+      }
+      if (action.type === "db_operation") {
+        if (action.operation === "write") {
+          throw new Error("Unsupported WordPress fuzz runtime-action type: db_operation write")
+        }
+        const step = await readWordPressDatabase(episode, { ...action, operation: action.operation as "schema" | "read" | "inspect" | "query-summary" }, action.timeout_ms)
         return {
           schema: "wp-codebox/runtime-action-observation/v1",
           type: action.type,

@@ -2,15 +2,19 @@ import assert from "node:assert/strict"
 
 import {
   WORDPRESS_ADMIN_PAGE_INVENTORY_SCHEMA,
+  WORDPRESS_DATABASE_INVENTORY_SCHEMA,
   WORDPRESS_FRONTEND_URL_INVENTORY_SCHEMA,
   WORDPRESS_REST_ROUTE_INVENTORY_SCHEMA,
   adminPageInventoryToFuzzSuite,
   adminPageInventoryToCoveragePlan,
+  databaseInventoryToFuzzSuite,
+  databaseInventoryToCoveragePlan,
   frontendUrlInventoryToFuzzSuite,
   frontendUrlInventoryToCoveragePlan,
   restRouteInventoryToFuzzSuite,
   restRouteInventoryToCoveragePlan,
   type WordPressAdminPageInventory,
+  type WordPressDatabaseInventory,
   type WordPressFrontendUrlInventory,
   type WordPressRestRouteInventory,
 } from "../packages/runtime-core/src/public.js"
@@ -70,8 +74,14 @@ const adminInventory: WordPressAdminPageInventory = {
 const adminSuite = adminPageInventoryToFuzzSuite(adminInventory, { user: "admin" })
 assert.equal(adminSuite.target?.entrypoint, "wordpress.admin-page-load")
 assert.deepEqual(adminSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.admin-page-load"] })
+assert.equal(adminSuite.metadata?.pageLoadMode, "simulated")
 assert.deepEqual(adminSuite.cases[0]?.input, { args: ["path=tools.php", "user=admin"] })
 assert.deepEqual(adminSuite.cases[1]?.input, { args: ["path=admin.php?page=demo-settings", "user=admin"] })
+
+const serverAdminSuite = adminPageInventoryToFuzzSuite(adminInventory, { pageLoadMode: "server" })
+assert.equal(serverAdminSuite.target?.entrypoint, "wordpress.server-page-load")
+assert.deepEqual(serverAdminSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.server-page-load"] })
+assert.deepEqual(serverAdminSuite.cases[0]?.input, { args: ["path=tools.php", "surface=admin"] })
 
 const adminCoveragePlan = adminPageInventoryToCoveragePlan(adminInventory, { user: "admin" })
 assert.deepEqual({ discovered: adminCoveragePlan.summary.discovered, generated: adminCoveragePlan.summary.generated, executable: adminCoveragePlan.summary.executable, executed: adminCoveragePlan.summary.executed, skipped: adminCoveragePlan.summary.skipped, untested: adminCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 2, executed: 0, skipped: 1, untested: 0 })
@@ -95,8 +105,38 @@ assert.deepEqual(frontendSuite.metadata?.requiredRunnerCapabilities, { capabilit
 assert.deepEqual(frontendSuite.cases[0]?.input, { args: ["path=/hello-world/?preview=true"] })
 assert.equal((frontendSuite.cases[0]?.metadata?.safety as Record<string, unknown>).executable, true)
 
+const browserFrontendSuite = frontendUrlInventoryToFuzzSuite(frontendInventory, { pageLoadMode: "browser" })
+assert.equal(browserFrontendSuite.target?.entrypoint, "wordpress.browser-page-load")
+assert.equal(browserFrontendSuite.metadata?.pageLoadMode, "browser")
+assert.deepEqual(browserFrontendSuite.cases[0]?.input, { args: ["path=/hello-world/?preview=true", "surface=frontend"] })
+
 const frontendCoveragePlan = frontendUrlInventoryToCoveragePlan(frontendInventory)
 assert.deepEqual({ discovered: frontendCoveragePlan.summary.discovered, generated: frontendCoveragePlan.summary.generated, executable: frontendCoveragePlan.summary.executable, executed: frontendCoveragePlan.summary.executed, skipped: frontendCoveragePlan.summary.skipped, untested: frontendCoveragePlan.summary.untested }, { discovered: 2, generated: 2, executable: 2, executed: 0, skipped: 0, untested: 0 })
 assert.equal(frontendCoveragePlan.executable[1]?.metadata?.pattern, "^sample-page/?$")
+
+const databaseInventory: WordPressDatabaseInventory = {
+  schema: WORDPRESS_DATABASE_INVENTORY_SCHEMA,
+  command: "wordpress.inventory-database",
+  status: "ok",
+  prefix: "wp_",
+  tables: [
+    { name: "wp_posts", baseName: "posts", classification: "core", columns: [{ name: "ID", type: "bigint", nullable: false, key: "PRI", default: null, extra: "auto_increment" }] },
+    { name: "wp_demo", baseName: "demo", classification: "prefixed", columns: [{ name: "id", type: "bigint", nullable: false, key: "PRI", default: null, extra: "" }] },
+    { name: "external_events", baseName: "external_events", classification: "external", columns: [{ name: "id", type: "bigint", nullable: false, key: "PRI", default: null, extra: "" }] },
+  ],
+  totals: { tableCount: 3, rowCount: 0, columnCount: 3, indexCount: 0, dataBytes: 0, indexBytes: 0, totalBytes: 0 },
+  diagnostics: [],
+}
+
+const databaseSuite = databaseInventoryToFuzzSuite(databaseInventory)
+assert.equal(databaseSuite.target?.entrypoint, "wordpress.db-operation")
+assert.deepEqual(databaseSuite.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime", "db_operation"], targetKinds: ["runtime"], commands: ["wordpress.db-operation"] })
+assert.equal(databaseSuite.cases.length, 2)
+assert.equal(JSON.parse((databaseSuite.cases[0]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").operation, "inspect")
+assert.equal(JSON.parse((databaseSuite.cases[0]?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
+
+const databaseCoveragePlan = databaseInventoryToCoveragePlan(databaseInventory)
+assert.deepEqual({ discovered: databaseCoveragePlan.summary.discovered, generated: databaseCoveragePlan.summary.generated, executable: databaseCoveragePlan.summary.executable, executed: databaseCoveragePlan.summary.executed, skipped: databaseCoveragePlan.summary.skipped, untested: databaseCoveragePlan.summary.untested }, { discovered: 3, generated: 3, executable: 2, executed: 0, skipped: 1, untested: 0 })
+assert.equal(databaseCoveragePlan.skipped[0]?.reason?.code, "external_table_not_fuzzed")
 
 console.log("wordpress fuzz suite builders ok")
