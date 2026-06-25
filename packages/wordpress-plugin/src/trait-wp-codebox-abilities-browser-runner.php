@@ -48,6 +48,16 @@ trait WP_Codebox_Abilities_Browser_Runner {
 	);
 	$runtime_blueprint['steps'] = $runtime_steps;
 
+	$staged_files = array(
+		array(
+			'source' => 'task-payload',
+			'target' => $task_path,
+		),
+	);
+	foreach ( self::browser_runner_staged_files( $task_input ) as $staged_file ) {
+		$staged_files[] = $staged_file;
+	}
+
 	return array(
 		'schema'   => 'wp-codebox/workspace-recipe/v1',
 		'runtime'  => array(
@@ -57,12 +67,7 @@ trait WP_Codebox_Abilities_Browser_Runner {
 			'blueprint' => $runtime_blueprint,
 		),
 		'inputs'   => array(
-			'stagedFiles' => array(
-				array(
-					'source' => 'task-payload',
-					'target' => $task_path,
-				),
-			),
+			'stagedFiles' => $staged_files,
 			'agent_bundles' => is_array( $task_payload['agent_bundles'] ?? null ) ? $task_payload['agent_bundles'] : array(),
 		),
 		'workflow' => array(
@@ -88,6 +93,32 @@ trait WP_Codebox_Abilities_Browser_Runner {
 			'runner_contract' => $runner_contract,
 		),
 	);
+}
+
+/** @param array<string,mixed> $task_input Normalized task input. @return array<int,array<string,mixed>> */
+private static function browser_runner_staged_files( array $task_input ): array {
+	$files      = is_array( $task_input['staged_files'] ?? null ) ? $task_input['staged_files'] : ( is_array( $task_input['stagedFiles'] ?? null ) ? $task_input['stagedFiles'] : array() );
+	$normalized = array();
+	foreach ( $files as $file ) {
+		if ( ! is_array( $file ) ) {
+			continue;
+		}
+		$source = trim( (string) ( $file['source'] ?? '' ) );
+		$target = trim( (string) ( $file['target'] ?? '' ) );
+		if ( '' === $source || '' === $target ) {
+			continue;
+		}
+		$entry = array(
+			'source' => $source,
+			'target' => $target,
+		);
+		if ( isset( $file['metadata'] ) && is_array( $file['metadata'] ) ) {
+			$entry['metadata'] = $file['metadata'];
+		}
+		$normalized[] = $entry;
+	}
+
+	return $normalized;
 }
 
 /** @param array<string,mixed> $recipe Browser recipe. @return array<string,mixed> */

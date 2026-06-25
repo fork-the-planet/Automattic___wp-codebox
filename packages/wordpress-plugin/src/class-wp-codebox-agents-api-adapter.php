@@ -381,6 +381,8 @@ final class WP_Codebox_Agents_API_Adapter {
 			'workspaces',
 			'runtime_stack_mounts',
 			'runtime_overlays',
+			'staged_files',
+			'stagedFiles',
 			'inherit',
 			'secret_env',
 			'sandbox_session_id',
@@ -432,10 +434,113 @@ final class WP_Codebox_Agents_API_Adapter {
 		if ( is_array( $input['package'] ?? null ) ) {
 			$input['package'] = self::package_descriptor_for_runtime( $input['package'], $input );
 		}
+		$input = self::stage_runtime_package_wordpress_workload_files( $input );
 
 		$input = self::runtime_package_options_for_agents_api( $input );
 
 		return $this->execute( self::RUN_RUNTIME_PACKAGE, $input );
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */
+	private static function stage_runtime_package_wordpress_workload_files( array $input ): array {
+		$workflow_input = is_array( $input['input'] ?? null ) ? $input['input'] : array();
+		if ( 'wp-codebox/wordpress-workload-run/v1' !== (string) ( $workflow_input['schema'] ?? '' ) ) {
+			return $input;
+		}
+
+		$package_root = self::runtime_package_root( is_array( $input['package'] ?? null ) ? $input['package'] : array() );
+		$staged_files = is_array( $workflow_input['staged_files'] ?? null ) ? $workflow_input['staged_files'] : ( is_array( $workflow_input['stagedFiles'] ?? null ) ? $workflow_input['stagedFiles'] : array() );
+		foreach ( array( 'before', 'steps', 'after' ) as $phase ) {
+			$steps = is_array( $workflow_input[ $phase ] ?? null ) ? $workflow_input[ $phase ] : array();
+			foreach ( $steps as $index => $step ) {
+				if ( ! is_array( $step ) || 'wordpress.run-workload' !== (string) ( $step['command'] ?? '' ) ) {
+					continue;
+				}
+				$args = self::parse_step_args( is_array( $step['args'] ?? null ) ? $step['args'] : array() );
+				if ( 'php' !== strtolower( (string) ( $args['type'] ?? '' ) ) ) {
+					continue;
+				}
+				$source = self::resolve_runtime_package_file_path( (string) ( $args['path'] ?? $args['file'] ?? '' ), $package_root );
+				if ( '' === $source ) {
+					continue;
+				}
+
+				$target = '/tmp/wp-codebox-workloads/' . substr( hash( 'sha256', $source ), 0, 16 ) . '-' . basename( $source );
+				$staged_files[] = array(
+					'source'   => $source,
+					'target'   => $target,
+					'metadata' => array( 'kind' => 'wordpress-php-workload' ),
+				);
+				$args['path'] = $target;
+				unset( $args['file'] );
+				$step['args'] = self::step_args_from_map( $args );
+				$steps[ $index ] = $step;
+			}
+			$workflow_input[ $phase ] = $steps;
+		}
+
+		if ( ! empty( $staged_files ) ) {
+			$workflow_input['staged_files'] = array_values( $staged_files );
+		}
+		$input['input'] = $workflow_input;
+
+		return $input;
+	}
+
+	/** @param array<string,mixed> $package Package descriptor. */
+	private static function runtime_package_root( array $package ): string {
+		$source = isset( $package['source'] ) ? (string) $package['source'] : '';
+		if ( '' === $source ) {
+			return '';
+		}
+		if ( is_file( $source ) ) {
+			return dirname( $source );
+		}
+
+		return is_dir( $source ) ? rtrim( $source, '/\\' ) : '';
+	}
+
+	private static function resolve_runtime_package_file_path( string $path, string $package_root ): string {
+		$path = trim( $path );
+		if ( '' === $path ) {
+			return '';
+		}
+		if ( '' !== $package_root ) {
+			$path = str_replace( array( '${package.root}', '{{package.root}}' ), $package_root, $path );
+		}
+		$candidates = array( $path );
+		if ( '' !== $package_root && ! self::is_absolute_package_source( $path ) ) {
+			$candidates[] = rtrim( $package_root, '/\\' ) . '/' . ltrim( $path, '/\\' );
+		}
+		foreach ( $candidates as $candidate ) {
+			if ( is_file( $candidate ) && is_readable( $candidate ) ) {
+				$real = realpath( $candidate );
+				return false !== $real ? $real : $candidate;
+			}
+		}
+
+		return '';
+	}
+
+	/** @param array<int,mixed> $args @return array<string,string> */
+	private static function parse_step_args( array $args ): array {
+		$parsed = array();
+		foreach ( $args as $arg ) {
+			$parts = explode( '=', (string) $arg, 2 );
+			$parsed[ $parts[0] ] = $parts[1] ?? '';
+		}
+
+		return $parsed;
+	}
+
+	/** @param array<string,string> $args @return array<int,string> */
+	private static function step_args_from_map( array $args ): array {
+		$out = array();
+		foreach ( $args as $key => $value ) {
+			$out[] = (string) $key . '=' . (string) $value;
+		}
+
+		return $out;
 	}
 
 	/** @param array<string,mixed> $input Runtime input. @return array<string,mixed> */

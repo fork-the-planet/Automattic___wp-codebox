@@ -102,6 +102,7 @@ final class WP_Codebox_Host_Recipe_Builder {
 		$recipe_inputs = array(
 			'mounts'             => $mounts,
 			'workspaces'         => $workspaces,
+			'stagedFiles'        => self::staged_files( $input ),
 			'inherit'            => $dependency_plan->inheritance_request(),
 			'inheritance'        => $dependency_plan->inheritance(),
 			'extra_plugins'      => array_merge( $dependency_plan->component_plugins(), $dependency_plan->provider_plugins() ),
@@ -144,6 +145,32 @@ final class WP_Codebox_Host_Recipe_Builder {
 			'readiness'       => is_array( $input['runtime_profile']['readiness'] ?? null ) ? $input['runtime_profile']['readiness'] : array(),
 			'diagnostics'     => is_array( $input['runtime_profile']['diagnostics'] ?? null ) ? $input['runtime_profile']['diagnostics'] : array(),
 		);
+	}
+
+	/** @param array<string,mixed> $input Ability input. @return array<int,array<string,mixed>> */
+	private static function staged_files( array $input ): array {
+		$files = is_array( $input['staged_files'] ?? null ) ? $input['staged_files'] : ( is_array( $input['stagedFiles'] ?? null ) ? $input['stagedFiles'] : array() );
+		$normalized = array();
+		foreach ( $files as $file ) {
+			if ( ! is_array( $file ) ) {
+				continue;
+			}
+			$source = trim( (string) ( $file['source'] ?? '' ) );
+			$target = trim( (string) ( $file['target'] ?? '' ) );
+			if ( '' === $source || '' === $target ) {
+				continue;
+			}
+			$entry = array(
+				'source' => $source,
+				'target' => $target,
+			);
+			if ( isset( $file['metadata'] ) && is_array( $file['metadata'] ) ) {
+				$entry['metadata'] = $file['metadata'];
+			}
+			$normalized[] = $entry;
+		}
+
+		return $normalized;
 	}
 
 	/**
