@@ -39,6 +39,7 @@ export {
   discoverWordPressRuntime,
   executeFuzzSuite,
   executeWordPressRestMatrix,
+  wordpressHotspotsArtifact,
   createWordPressRuntimeCheckpoint,
   inventoryWordPressAdminPages,
   inventoryWordPressDatabase,
@@ -86,6 +87,11 @@ export {
   type WordPressRuntimeCheckpointRestoreOptions,
   type WordPressThemeSetupOptions,
   type WordPressWpCliOptions,
+  type WordPressHotspotsArtifact,
+  type WordPressHotspotsInput,
+  type WordPressHotspotEntry,
+  type WordPressHotspotIdentifier,
+  type WordPressHotspotMetric,
 } from "@automattic/wp-codebox-core"
 import { browserArtifactMetrics, type BrowserArtifactMetricsResult } from "./browser-metrics.js"
 import { createPlaygroundRuntimeBackend, type PlaygroundRuntimeBackendOptions } from "./playground-runtime.js"
