@@ -187,6 +187,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./wordpress-fuzz-suite-builders.js",
   "./wordpress-block-fuzz-suite.js",
   "./wordpress-runtime-actions.js",
+  "./wordpress-hotspots-contracts.js",
 ])
 
 assert.deepEqual(barrelExportModules(contractsBarrel), [
@@ -200,6 +201,7 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./wordpress-crud-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
+  "./wordpress-hotspots-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-runtime-discovery-contracts.js",
 ])
@@ -230,6 +232,7 @@ for (const contractArea of [
   "Browser SDK",
   "Browser metrics",
   "Performance observation",
+  "WordPress hotspot artifacts",
   "Fuzz suite",
   "Artifacts",
   "Run results",
@@ -253,6 +256,7 @@ for (const publicModule of [
   "./runtime-contracts.js",
   "./runtime-episode.js",
   "./runtime-package-execution.js",
+  "./wordpress-hotspots-contracts.js",
   "./wordpress-page-load-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
 ]) {

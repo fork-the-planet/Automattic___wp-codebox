@@ -220,6 +220,15 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `all` hook, and `capture` metadata that reports whether query capture was
   requested, captured, unavailable, partial, or uncaptured. It is an upstream
   observation primitive, not a product-specific fuzz suite or benchmark runner.
+- **WordPress hotspot artifacts:** `wp-codebox/wordpress-hotspots/v1` is the
+  public aggregate artifact schema for fuzz consumers that need ranked relative
+  hotspots across REST routes, page/admin/browser loads, block identifiers, and
+  database observations. Build it with `wordpressHotspotsArtifact()` from
+  `@automattic/wp-codebox-core/public` or `@automattic/wp-codebox-core/contracts`
+  using public `wp-codebox/performance-observation/v1` and
+  `wp-codebox/fuzz-suite-result/v1` inputs. The schema carries stable
+  `identifier` fields plus artifact refs instead of exposing backend runtime or
+  Playground internals.
 - **WordPress page-load coverage:** `wordpress.admin-page-load` and
   `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
   with `mode: "simulated"`, status, target, resolved admin screen or frontend
