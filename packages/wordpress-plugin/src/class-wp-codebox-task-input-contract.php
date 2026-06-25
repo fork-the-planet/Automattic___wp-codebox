@@ -11,7 +11,7 @@ final class WP_Codebox_Task_Input_Contract {
 
 	public const SCHEMA  = 'wp-codebox/task-input/v1';
 	public const VERSION = 1;
-	public const ABILITY_ALIAS_FIELDS = array( 'goal', 'target', 'allowed_tools', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'expected_artifacts', 'structured_artifacts', 'policy', 'context' );
+	public const ABILITY_ALIAS_FIELDS = array( 'goal', 'target', 'allowed_tools', 'tool_bridge', 'parent_tool_bridge', 'sandbox_tool_policy', 'expected_artifacts', 'structured_artifacts', 'staged_files', 'policy', 'context' );
 
 	/** @return array<string,mixed> */
 	public static function schema(): array {
@@ -70,6 +70,11 @@ final class WP_Codebox_Task_Input_Contract {
 							'provenance'     => array( 'type' => 'object' ),
 						),
 					),
+				),
+				'staged_files'       => array(
+					'type'        => 'array',
+					'description' => 'Host-resolved files to stage into the disposable runtime before task invocation.',
+					'items'       => array( 'type' => 'object' ),
 				),
 				'agent_bundles'      => array(
 					'type'        => 'array',
@@ -139,6 +144,7 @@ final class WP_Codebox_Task_Input_Contract {
 			'allowed_tools'      => self::string_list( $input['allowed_tools'] ?? array() ),
 			'expected_artifacts' => self::string_list( $input['expected_artifacts'] ?? array() ),
 			'structured_artifacts' => self::structured_artifacts( $input['structured_artifacts'] ?? array() ),
+			'staged_files'       => self::staged_files( $input['staged_files'] ?? $input['stagedFiles'] ?? array() ),
 			'agent_bundles'      => self::agent_bundles( $input['agent_bundles'] ?? array() ),
 			'tool_bridge'        => is_array( $input['tool_bridge'] ?? null ) ? $input['tool_bridge'] : array(),
 			'parent_tool_bridge' => is_array( $input['parent_tool_bridge'] ?? null ) ? $input['parent_tool_bridge'] : array(),
@@ -200,6 +206,31 @@ final class WP_Codebox_Task_Input_Contract {
 		}
 
 		return is_array( $value ) ? $value : null;
+	}
+
+	/** @return array<int,array<string,mixed>> */
+	private static function staged_files( mixed $value ): array {
+		$files = array();
+		foreach ( is_array( $value ) ? $value : array() as $entry ) {
+			if ( ! is_array( $entry ) ) {
+				continue;
+			}
+			$source = trim( (string) ( $entry['source'] ?? '' ) );
+			$target = trim( (string) ( $entry['target'] ?? '' ) );
+			if ( '' === $source || '' === $target ) {
+				continue;
+			}
+			$file = array(
+				'source' => $source,
+				'target' => $target,
+			);
+			if ( isset( $entry['metadata'] ) && is_array( $entry['metadata'] ) ) {
+				$file['metadata'] = $entry['metadata'];
+			}
+			$files[] = $file;
+		}
+
+		return $files;
 	}
 
 	/** @return array<int,array<string,mixed>> */

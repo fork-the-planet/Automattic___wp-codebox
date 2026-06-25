@@ -128,7 +128,8 @@ final class WP_Codebox_WordPress_Workload_Runner {
 			$result = match ( $command ) {
 				'wordpress.rest-request'             => $this->execute_rest_request( $args, $index ),
 				'wordpress.collect-workload-result'  => $this->collect_artifact( $args, $input ),
-				'wordpress.run-workload', 'wordpress.run-declarative-fuzz' => $this->acknowledge_recipe_step( $command ),
+				'wordpress.run-workload'             => 'php' === strtolower( (string) ( $args['type'] ?? '' ) ) ? $this->execute_php_workload( $args, $input, $index ) : $this->acknowledge_recipe_step( $command ),
+				'wordpress.run-declarative-fuzz'     => $this->acknowledge_recipe_step( $command ),
 				default                              => $this->unsupported_step( $command, $index ),
 			};
 		} catch ( Throwable $throwable ) {
@@ -156,6 +157,50 @@ final class WP_Codebox_WordPress_Workload_Runner {
 			),
 			static fn( mixed $value ): bool => ! ( is_array( $value ) && empty( $value ) ) && '' !== $value
 		);
+	}
+
+	/** @param array<string,string> $args Step args. @param array<string,mixed> $input Workload request. @return array<string,mixed> */
+	private function execute_php_workload( array $args, array $input, int $index ): array {
+		$path = (string) ( $args['path'] ?? $args['file'] ?? '' );
+		if ( '' === $path || ! is_file( $path ) || ! is_readable( $path ) ) {
+			return array( 'status' => 'error', 'diagnostics' => array( $this->diagnostic( 'error', 'wp_codebox_wordpress_workload_php_file_unavailable', 'PHP workload file is not available inside this runtime.', array( 'step_index' => $index, 'path' => $path ) ) ) );
+		}
+
+		ob_start();
+		try {
+			$callable = require $path;
+		} finally {
+			$output = ob_get_clean();
+		}
+		if ( ! is_callable( $callable ) ) {
+			return array( 'status' => 'error', 'observation' => array( 'path' => $path, 'output_bytes' => strlen( (string) $output ), 'return_type' => gettype( $callable ) ), 'diagnostics' => array( $this->diagnostic( 'error', 'wp_codebox_wordpress_workload_php_not_callable', 'PHP workload files must return a callable.', array( 'step_index' => $index, 'path' => $path ) ) ) );
+		}
+
+		ob_start();
+		try {
+			$result = $callable( $input, $args );
+		} finally {
+			$output .= ob_get_clean();
+		}
+
+		if ( is_array( $result ) ) {
+			$status = (string) ( $result['status'] ?? ( false === ( $result['success'] ?? true ) ? 'failed' : 'passed' ) );
+			if ( 'completed' === $status ) {
+				$status = 'passed';
+			}
+
+			return array_filter(
+				array(
+					'status'       => '' === $status ? 'passed' : $status,
+					'observation'  => array_merge( array( 'path' => $path, 'output_bytes' => strlen( (string) $output ), 'return_type' => 'array' ), is_array( $result['observation'] ?? null ) ? $result['observation'] : array() ),
+					'diagnostics'  => is_array( $result['diagnostics'] ?? null ) ? $result['diagnostics'] : array(),
+					'artifactRefs' => is_array( $result['artifactRefs'] ?? null ) ? $result['artifactRefs'] : ( is_array( $result['artifacts'] ?? null ) ? $result['artifacts'] : array() ),
+				),
+				static fn( mixed $value ): bool => ! ( is_array( $value ) && empty( $value ) )
+			);
+		}
+
+		return array( 'status' => false === $result ? 'failed' : 'passed', 'observation' => array( 'path' => $path, 'output_bytes' => strlen( (string) $output ), 'return_type' => gettype( $result ) ) );
 	}
 
 	/** @param array<string,string> $args Step args. @return array<string,mixed> */
