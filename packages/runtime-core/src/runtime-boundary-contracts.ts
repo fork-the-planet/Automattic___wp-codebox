@@ -256,15 +256,15 @@ export function normalizeRuntimeProfile(input: unknown): RuntimeProfile {
 }
 
 export function previewLease(input: unknown): PreviewLease {
-  const value = requireObject(input, "Preview lease") as Partial<PreviewLease>
-  const publicUrl = optionalString(value.public_url, "public_url") ?? optionalString(value.preview_public_url, "preview_public_url")
+  const value = requireObject(input, "Preview lease") as Partial<PreviewLease> & Record<string, unknown>
+  const publicUrl = optionalString(value.public_url ?? value.publicUrl, "public_url") ?? optionalString(value.preview_public_url ?? value.previewPublicUrl, "preview_public_url")
   if (value.schema !== PREVIEW_LEASE_SCHEMA) throw new Error(`Preview lease schema must be ${PREVIEW_LEASE_SCHEMA}.`)
   const lease: PreviewLease = {
     schema: PREVIEW_LEASE_SCHEMA,
     public_url: publicUrl,
     preview_public_url: publicUrl,
-    site_url: optionalString(value.site_url, "site_url"),
-    local_url: optionalString(value.local_url, "local_url"),
+    site_url: optionalString(value.site_url ?? value.siteUrl, "site_url"),
+    local_url: optionalString(value.local_url ?? value.localUrl, "local_url"),
     lease: value.lease === undefined ? undefined : (normalizeOptionalObject(value.lease, "Preview lease metadata") as PreviewLeaseMetadata),
     reachability: value.reachability === undefined ? undefined : normalizeReachability(value.reachability),
     alignment: value.alignment === undefined ? undefined : normalizeAlignment(value.alignment),
@@ -286,8 +286,10 @@ export function runtimeAccess(input: unknown): RuntimeAccess {
   const reviewerAccess = normalizeOptionalObject(value.reviewer_access ?? value.reviewerAccess, "runtime_access.reviewer_access")
   const previewUrl = optionalString(value.preview_url ?? value.previewUrl, "runtime_access.preview_url")
     ?? optionalString(value.public_url ?? value.publicUrl, "runtime_access.public_url")
+    ?? optionalString(value.preview_public_url ?? value.previewPublicUrl, "runtime_access.preview_public_url")
     ?? optionalString(value.site_url ?? value.siteUrl, "runtime_access.site_url")
     ?? optionalString(reviewerAccess?.openUrl, "runtime_access.reviewer_access.openUrl")
+    ?? optionalString(reviewerAccess?.targetUrl, "runtime_access.reviewer_access.targetUrl")
     ?? lease?.public_url
     ?? lease?.preview_public_url
     ?? lease?.site_url

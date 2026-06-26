@@ -88,6 +88,13 @@ the public handoff/fanout boundary:
   WP Codebox owns isolated worker execution, lifecycle events, aggregation
   envelope shape, and artifact layout; the host owns placement, ranking,
   durable orchestration state, callback delivery, and final result decisions.
+- `wp-codebox/headless-agent-task-request/v1` is the public agent-task handoff
+  envelope for deterministic headless production loops. Callers provide
+  `task_input`, `runtime_profile`, and `workspace_artifact_policy`; Codebox
+  normalizes CLI JSON output to `wp-codebox/headless-agent-task-result/v1` with
+  `preview`, `refs`, `artifacts`, `evidence_refs`, `diagnostics`, and the compact
+  `agent_task_run_result` summary. Callers should read this envelope instead of
+  depending on raw recipe, runtime, or sandbox result internals.
 
 The public runtime contract manifest currently publishes these Codebox-owned
 ability identifiers:
@@ -166,8 +173,9 @@ local consumers in this repo. It intentionally does not mirror the monorepo-only
 The stable public surface is grouped by lifecycle area rather than by product:
 
 - **Runtime task/package:** task input, agent task recipe, agent task run result,
-  recipe source package, runtime workload, runtime package execution, runtime
-  policy, and command result contracts. Contained WordPress runtime consumers use
+  headless agent-task request/result, recipe source package, runtime workload,
+  runtime package execution, runtime policy, and command result contracts.
+  Contained WordPress runtime consumers use
   `wp-codebox/run-runtime-task`, `wp-codebox/run-wordpress-workload`,
   `wp-codebox/run-runtime-package`, the matching CLI wrappers, or
   `WP_Codebox_API` instead of composing runtime backend internals directly.

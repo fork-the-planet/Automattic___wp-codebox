@@ -151,8 +151,8 @@ export function normalizeAgentTaskRunResult(raw: unknown, options: AgentTaskRunR
 function agentTaskRuntimeAccess(result: Record<string, unknown>): RuntimeAccess | undefined {
   const explicit = objectValue(result.runtime_access)
   const outputs = objectValue(result.outputs)
-  const preview = objectValue(result.preview)
-  const source = Object.keys(explicit).length > 0 ? explicit : outputs
+  const preview = firstObject(result.preview, outputs.preview)
+  const source = firstObject(explicit, outputs.runtime_access, outputs.runtimeAccess, outputs)
   const reviewerAccess = objectValue(source.reviewer_access ?? source.reviewerAccess ?? preview.reviewerAccess ?? preview.reviewer_access)
   const reviewerUrl = stringValue(reviewerAccess.openUrl) || stringValue(reviewerAccess.targetUrl)
   const publicUrl = stringValue(source.public_url ?? source.publicUrl ?? source.preview_public_url ?? source.previewPublicUrl) || stringValue(preview.publicUrl ?? preview.public_url ?? preview.previewPublicUrl ?? preview.preview_public_url)
@@ -201,19 +201,21 @@ function normalizeStatus(result: Record<string, unknown>, agentResult: Record<st
 
 function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record<string, unknown>, completionOutcome: Record<string, unknown>, compatMode: boolean, diagnostics: Array<Record<string, unknown>>): AgentTaskRunArtifactRef[] {
   const artifacts: AgentTaskRunArtifactRef[] = []
+  const artifactPolicy = objectValue(result.workspace_artifact_policy ?? result.workspaceArtifactPolicy)
+  const publicUrlRoot = stringValue(artifactPolicy.public_url_root ?? artifactPolicy.publicUrlRoot)
   for (const artifact of arrayObjects(result.artifacts)) {
-    appendUniqueArtifact(artifacts, artifactFromResultArtifact(artifact))
+    appendUniqueArtifact(artifacts, withPublicArtifactUrl(artifactFromResultArtifact(artifact), publicUrlRoot, ""))
   }
 
   for (const ref of arrayObjects(runRecord(result, compatMode, diagnostics).artifactRefs)) {
     const digest = objectValue(ref.digest)
-    appendUniqueArtifact(artifacts, stripUndefined({
+    appendUniqueArtifact(artifacts, withPublicArtifactUrl(stripUndefined({
       id: stringValue(ref.id) || stringValue(digest.value),
       kind: stringValue(ref.kind) || "codebox-artifact-bundle",
       path: stringValue(ref.directory),
       sha256: stringValue(digest.value),
       metadata: Object.keys(digest).length ? { digest } : undefined,
-    }))
+    }), publicUrlRoot, ""))
   }
 
   const bundleDirectory = stringValue(objectValue(agentResult.artifacts).directory)
@@ -222,7 +224,7 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
   const artifactBundleId = stringValue(objectValue(completionOutcome.provenance).artifactBundleId)
     || stringValue(objectValue(objectValue(result.session).artifacts).bundle_id)
     || stringValue(objectValue(result.artifacts).id)
-  appendUniqueArtifact(artifacts, stripUndefined({
+  appendUniqueArtifact(artifacts, withPublicArtifactUrl(stripUndefined({
     id: artifactBundleId,
     kind: "codebox-artifact-bundle",
     path: bundleDirectory,
@@ -230,19 +232,19 @@ function normalizeArtifacts(result: Record<string, unknown>, agentResult: Record
       runtime_id: stringValue(runtimeRecord(result, compatMode, diagnostics).id),
       runtime_status: stringValue(runtimeRecord(result, compatMode, diagnostics).status),
     }),
-  }))
+  }), publicUrlRoot, bundleDirectory))
 
-  appendUniqueArtifact(artifacts, artifactFromAgentResult("codebox-changed-files", "codebox-changed-files", bundleDirectory, objectValue(agentResult.changedFiles)))
-  appendUniqueArtifact(artifacts, artifactFromAgentResult("codebox-patch", "codebox-patch", bundleDirectory, objectValue(agentResult.patch)))
-  appendUniqueArtifact(artifacts, artifactFromAgentResult("codebox-transcript", "codebox-transcript", bundleDirectory, objectValue(agentResult.transcript)))
+  appendUniqueArtifact(artifacts, withPublicArtifactUrl(artifactFromAgentResult("codebox-changed-files", "codebox-changed-files", bundleDirectory, objectValue(agentResult.changedFiles)), publicUrlRoot, bundleDirectory))
+  appendUniqueArtifact(artifacts, withPublicArtifactUrl(artifactFromAgentResult("codebox-patch", "codebox-patch", bundleDirectory, objectValue(agentResult.patch)), publicUrlRoot, bundleDirectory))
+  appendUniqueArtifact(artifacts, withPublicArtifactUrl(artifactFromAgentResult("codebox-transcript", "codebox-transcript", bundleDirectory, objectValue(agentResult.transcript)), publicUrlRoot, bundleDirectory))
 
   const runtimeLogPath = stringValue(objectValue(result.artifacts).runtimeLogPath)
-  appendUniqueArtifact(artifacts, stripUndefined({ id: runtimeLogPath ? "codebox-runtime-log" : "", kind: "codebox-runtime-log", path: runtimeLogPath }))
+  appendUniqueArtifact(artifacts, withPublicArtifactUrl(stripUndefined({ id: runtimeLogPath ? "codebox-runtime-log" : "", kind: "codebox-runtime-log", path: runtimeLogPath }), publicUrlRoot, bundleDirectory))
   const commandsLogPath = stringValue(objectValue(result.artifacts).commandsLogPath)
-  appendUniqueArtifact(artifacts, stripUndefined({ id: commandsLogPath ? "codebox-command-log" : "", kind: "codebox-command-log", path: commandsLogPath }))
+  appendUniqueArtifact(artifacts, withPublicArtifactUrl(stripUndefined({ id: commandsLogPath ? "codebox-command-log" : "", kind: "codebox-command-log", path: commandsLogPath }), publicUrlRoot, bundleDirectory))
 
   for (const evidenceRef of arrayObjects(result.evidence_refs)) {
-    appendUniqueArtifact(artifacts, artifactFromResultArtifact({ kind: "codebox-evidence-bundle", ...evidenceRef }))
+    appendUniqueArtifact(artifacts, withPublicArtifactUrl(artifactFromResultArtifact({ kind: "codebox-evidence-bundle", ...evidenceRef }), publicUrlRoot, bundleDirectory))
   }
 
   const runtime = runtimeRecord(result, compatMode, diagnostics)
@@ -260,7 +262,7 @@ function artifactFromResultArtifact(artifact: Record<string, unknown>): AgentTas
     id: stringValue(artifact.id),
     kind: stringValue(artifact.kind),
     path: stringValue(artifact.path),
-    url: stringValue(artifact.url) || stringValue(artifact.uri),
+    url: stringValue(artifact.url) || stringValue(artifact.uri) || stringValue(artifact.public_url) || stringValue(artifact.publicUrl),
     sha256: stringValue(artifact.sha256),
     size_bytes: numberValue(artifact.size_bytes) ?? numberValue(artifact.sizeBytes),
     metadata: objectValue(artifact.metadata),
@@ -382,6 +384,18 @@ function appendUniqueArtifact(artifacts: AgentTaskRunArtifactRef[], artifact: Ag
 function artifactPath(root: string, relativePath: string): string {
   if (!root || !relativePath) return ""
   return `${root.replace(/\/$/, "")}/${relativePath.replace(/^\//, "")}`
+}
+
+function withPublicArtifactUrl(artifact: AgentTaskRunArtifactRef, publicUrlRoot: string, bundleDirectory: string): AgentTaskRunArtifactRef {
+  if (!artifact.path || artifact.url || !publicUrlRoot) return artifact
+  const normalizedBundleDirectory = bundleDirectory.replace(/\/$/, "")
+  const relativePath = normalizedBundleDirectory && artifact.path.startsWith(`${normalizedBundleDirectory}/`)
+    ? artifact.path.slice(normalizedBundleDirectory.length + 1)
+    : ""
+  return stripUndefined({
+    ...artifact,
+    url: relativePath ? `${publicUrlRoot.replace(/\/$/, "")}/${relativePath.replace(/^\//, "")}` : undefined,
+  }) as AgentTaskRunArtifactRef
 }
 
 function firstObject(...values: unknown[]): Record<string, unknown> {
