@@ -90,6 +90,21 @@ assert.equal(failed.success, false)
 assert.equal(failed.error.code, "demo_failed")
 assert.equal(failed.error.message, "Broken")
 
+let directRunCode = ""
+const directRunClient = {
+  run: async (input: { code?: string } | string) => {
+    directRunCode = typeof input === "string" ? input : input.code || ""
+    return JSON.stringify({ success: true, data: { mode: "direct-run" }, error: null })
+  },
+}
+const directRunResult = await api.v1.methods.runPhpRequest(directRunClient, {
+  code: "<?php echo wp_json_encode( array( 'success' => true ) );",
+  expectJson: true,
+  forceRequest: true,
+})
+assert.equal(directRunCode.includes("wp_json_encode"), true)
+assert.deepEqual(plain(directRunResult), { success: true, data: { mode: "direct-run" }, error: null })
+
 const browserRun = api.v1.normalizeBrowserRunResult({
   success: true,
   data: {

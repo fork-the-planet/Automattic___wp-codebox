@@ -1298,6 +1298,9 @@ try {
 		if ( ! options.forceRequest && typeof client.run === 'function' ) {
 			return await runPhpDirect( client, code, options );
 		}
+		if ( options.forceRequest && typeof client?.writeFile !== 'function' && typeof client.run === 'function' ) {
+			return await runPhpDirect( client, code, options );
+		}
 
 		const runnerDir = String( options.runnerDir || defaultRunnerDir );
 		const runnerUrlBase = String( options.runnerUrlBase || defaultRunnerUrlBase );
