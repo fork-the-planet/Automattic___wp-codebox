@@ -161,6 +161,15 @@ function normalizeExtraPlugins(plugins: readonly WorkspaceRecipeExtraPlugin[] = 
     if (plugin.slug !== undefined) {
       normalized.slug = plugin.slug
     }
+    if (plugin.sourceRoot !== undefined) {
+      normalized.sourceRoot = plugin.sourceRoot
+    }
+    if (plugin.sourceSubpath !== undefined) {
+      normalized.sourceSubpath = plugin.sourceSubpath
+    }
+    if (plugin.originalSource !== undefined) {
+      normalized.originalSource = plugin.originalSource
+    }
     if (plugin.pluginFile !== undefined) {
       normalized.pluginFile = plugin.pluginFile
     }
