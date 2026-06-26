@@ -19,6 +19,10 @@ function wp_get_ability( string $name ): ?WP_Ability {
 	return $GLOBALS['wp_codebox_test_abilities'][ $name ] ?? null;
 }
 
+function sanitize_key( string $key ): string {
+	return strtolower( preg_replace( '/[^a-zA-Z0-9_\-]/', '', $key ) ?? '' );
+}
+
 final class WP_Error {
 	public function __construct( private string $code, private string $message, private array $data = array() ) {}
 	public function get_error_code(): string { return $this->code; }
@@ -59,6 +63,23 @@ assert( 'agents/run-task' === $names['run_task'] );
 assert( 'agents/run-runtime-package' === $names['run_runtime_package'] );
 assert( 'agents/get-task-run' === $names['get_task_run'] );
 assert( 'agents/get-chat-run' === $names['get_chat_run'] );
+
+$default_invocation = WP_Codebox_Agents_API_Adapter::browser_runtime_default_invocation();
+assert( array( 'type' => 'ability', 'name' => 'agents/chat' ) === $default_invocation );
+
+$runtime_task_invocation = WP_Codebox_Agents_API_Adapter::browser_runtime_default_invocation(
+	array(
+		'runtime_task' => array(
+			'kind'    => 'bundle',
+			'ability' => 'runtime-package/run',
+			'input'   => array(
+				'package'  => array( 'slug' => 'store-idea-agent' ),
+				'workflow' => array( 'id' => 'store-idea-artifact-flow' ),
+			),
+		),
+	)
+);
+assert( array( 'type' => 'ability', 'name' => 'agents/run-runtime-package' ) === $runtime_task_invocation );
 
 $adapter = new WP_Codebox_Agents_API_Adapter();
 assert( false === $adapter->is_available( WP_Codebox_Agents_API_Adapter::default_chat_ability() ) );
@@ -127,6 +148,35 @@ $package_with_workspace_source = $adapter->run_runtime_package(
 assert( array( 'slug' => 'example-agent', 'source' => $workspace_root . '/bundles/example-agent' ) === $package_with_workspace_source['received']['package'] );
 assert( array( 'topic' => 'coffee' ) === $package_with_workspace_source['received']['input'] );
 assert( array( 'provider' => 'codex', 'model' => 'gpt-5.5', 'wait_for_completion' => true ) === $package_with_workspace_source['received']['options'] );
+
+$runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_invocation_input(
+	array(
+		'agent'          => 'store-idea-agent',
+		'provider'       => 'codex',
+		'model'          => 'gpt-5.5',
+		'client_context' => array(),
+	),
+	array(
+		'agent'      => 'store-idea-agent',
+		'task_input' => array(
+			'runtime_task' => array(
+				'kind'    => 'bundle',
+				'ability' => 'runtime-package/run',
+				'input'   => array(
+					'package'  => array( 'slug' => 'store-idea-agent', 'source' => 'bundles/store-idea-agent' ),
+					'workflow' => array( 'id' => 'store-idea-artifact-flow' ),
+					'input'    => array( 'wait_for_completion' => true ),
+				),
+			),
+		),
+	),
+	array( 'type' => 'ability', 'name' => 'agents/run-runtime-package' ),
+	'codebox-session'
+);
+assert( array( 'slug' => 'store-idea-agent', 'source' => 'bundles/store-idea-agent' ) === $runtime_package_browser_input['package'] );
+assert( array( 'id' => 'store-idea-artifact-flow' ) === $runtime_package_browser_input['workflow'] );
+assert( array( 'wait_for_completion' => true ) === $runtime_package_browser_input['input'] );
+assert( 'runtime' === $runtime_package_browser_input['principal']['auth_source'] );
 assert( 'running' === $adapter->get_task_run( array( 'run_id' => 'task-run', 'session_id' => 'session' ) )['status'] );
 assert( 'running' === $adapter->get_chat_run( array( 'run_id' => 'chat-run', 'session_id' => 'session' ) )['status'] );
 assert_no_agents_api_schema_leaks( $chat, 'chat' );
