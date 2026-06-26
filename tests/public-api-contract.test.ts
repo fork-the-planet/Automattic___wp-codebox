@@ -150,6 +150,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./host-tool-registry.js",
   "./managed-host-command.js",
   "./materialization-contracts.js",
+  "./live-progress.js",
   "./mcp-client-configs.js",
   "./mount-primitives.js",
   "./parent-tool-bridge.js",

@@ -6,7 +6,7 @@ import { chdir, cwd } from "node:process"
 import { AGENT_TASK_RUN_REQUEST_SCHEMA, AGENT_TASK_RUN_RESULT_JSON_SCHEMA, AGENT_TASK_RUN_RESULT_SCHEMA, ARTIFACT_RESULT_ENVELOPE_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_JSON_SCHEMA, HEADLESS_AGENT_TASK_REQUEST_SCHEMA, HEADLESS_AGENT_TASK_RESULT_JSON_SCHEMA, HEADLESS_AGENT_TASK_RESULT_SCHEMA, PREVIEW_LEASE_SCHEMA, buildAgentTaskRecipe, headlessAgentTaskRequestToRunInput, normalizeAgentRuntimeWorkload, normalizeAgentTaskRunResult, normalizeAgentTerminalResult, normalizeHeadlessAgentTaskRequest, normalizeHeadlessAgentTaskResult, normalizeRecipeRunSummary, normalizeTaskInput } from "../packages/runtime-core/src/index.js"
 import { effectivePolicyCommands } from "../packages/runtime-core/src/contracts.js"
 import { commandCatalogOutput } from "../packages/cli/src/commands/discovery.js"
-import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunTypedArtifacts, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
+import { agentTaskResultFromRun, agentTaskRunExitCode, agentTaskRunJsonOutput, agentTaskRunTypedArtifacts, normalizeAgentTaskRunCliInput, typedArtifactRefs } from "../packages/cli/src/commands/agent-task-run.js"
 import { agentSandboxRunCode, resolveSandboxTaskCode } from "../packages/cli/src/agent-code.js"
 import { dryRunRecipe } from "../packages/cli/src/recipe-dry-run.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
@@ -41,6 +41,26 @@ const agentPreviewAccess = normalizeAgentTaskRunResult({
 assert.equal(agentPreviewAccess.runtime_access?.preview_url, "https://preview.example.test/")
 assert.equal(agentPreviewAccess.runtime_access?.local_url, "http://127.0.0.1:9400/")
 assert.equal(agentPreviewAccess.runtime_access?.lease?.local_url, "http://127.0.0.1:9400/")
+
+const nestedRuntimeAccess = normalizeAgentTaskRunResult({
+  success: true,
+  status: "completed",
+  outputs: {
+    runtime_access: {
+      previewPublicUrl: "https://public-preview.example.test/",
+      reviewerAccess: { targetUrl: "https://reviewer.example.test/" },
+      lease: {
+        schema: PREVIEW_LEASE_SCHEMA,
+        previewPublicUrl: "https://lease-preview.example.test/",
+        localUrl: "http://127.0.0.1:9401/",
+      },
+    },
+  },
+}, { exitStatus: 0 })
+assert.equal(nestedRuntimeAccess.runtime_access?.preview_url, "https://public-preview.example.test/")
+assert.equal(nestedRuntimeAccess.runtime_access?.public_url, "https://public-preview.example.test/")
+assert.equal(nestedRuntimeAccess.runtime_access?.lease?.preview_public_url, "https://lease-preview.example.test/")
+assert.equal(nestedRuntimeAccess.runtime_access?.lease?.local_url, "http://127.0.0.1:9401/")
 
 const agentLocalLeaseAccess = normalizeAgentTaskRunResult({
   success: true,
@@ -129,6 +149,49 @@ assert.equal(headlessResult.schema, HEADLESS_AGENT_TASK_RESULT_SCHEMA)
 assert.equal(headlessResult.preview?.public_url, "https://preview.example.test/")
 assert.equal(headlessResult.evidence_refs[0].kind, "codebox-evidence-bundle")
 assert.equal(headlessResult.agent_task_run_result.schema, AGENT_TASK_RUN_RESULT_SCHEMA)
+
+const headlessJsonOutput = agentTaskRunJsonOutput({
+  success: true,
+  schema: "wp-codebox/agent-task-run/v1",
+  status: headlessResult.status,
+  session: {},
+  task: headlessRequest.task_input.goal,
+  task_input: headlessRequest.task_input,
+  wp: "latest",
+  artifacts: "/tmp/artifacts",
+  agent_result: {},
+  agent_task_result: {},
+  agent_task_run_result: headlessResult.agent_task_run_result,
+  completion_outcome: {},
+  component_contracts: [],
+  structured_artifacts: [],
+  typed_artifacts: [],
+  outputs: {},
+  artifact_result: { schema: ARTIFACT_RESULT_ENVELOPE_SCHEMA, operation: "agent-task-run", status: "created", artifacts: [], refs: [], result: {}, diagnostics: [], metadata: {} },
+  run: {},
+  diagnostics: [],
+  agent_runtime_diagnostics: {},
+  evidence_refs: [],
+  run_metadata: {},
+  metadata: {},
+  headless_agent_task_result: headlessResult,
+})
+assert.equal(headlessJsonOutput.schema, HEADLESS_AGENT_TASK_RESULT_SCHEMA)
+assert.equal("run" in headlessJsonOutput, false)
+
+const headlessArtifactUrls = normalizeHeadlessAgentTaskResult(normalizeAgentTaskRunResult({
+  success: true,
+  status: "completed",
+  workspace_artifact_policy: { public_url_root: "https://artifacts.example.test/run-1/" },
+  agentResult: {
+    artifacts: { directory: "/tmp/codebox-artifacts/run-1" },
+    patch: { artifact: "patch.diff", sha256: "abc123" },
+    transcript: { artifact: "transcript.jsonl" },
+  },
+  evidence_refs: [{ id: "evidence-1", path: "/tmp/codebox-artifacts/run-1/evidence.json" }],
+}), { request_schema: headlessRequest.schema })
+assert.equal(headlessArtifactUrls.refs.patches[0]?.url, "https://artifacts.example.test/run-1/patch.diff")
+assert.equal(headlessArtifactUrls.evidence_refs[0]?.url, "https://artifacts.example.test/run-1/evidence.json")
 
 const noOp = normalizeAgentTaskRunResult({ success: true, no_op: true }, { exitStatus: 0 })
 assert.equal(noOp.status, "no_op")

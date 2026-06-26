@@ -293,6 +293,23 @@ final class WP_Codebox_Abilities {
 					'failure_classification' => array( 'type' => 'string' ),
 				),
 			);
+			$headless_agent_task_result_schema = array(
+				'type'        => 'object',
+				'description' => 'Stable wp-codebox/headless-agent-task-result/v1 public envelope for callers that submit wp-codebox/headless-agent-task-request/v1 inputs.',
+				'properties'  => array(
+					'schema'                => array( 'type' => 'string', 'const' => 'wp-codebox/headless-agent-task-result/v1' ),
+					'success'               => array( 'type' => 'boolean' ),
+					'status'                => array( 'type' => 'string' ),
+					'summary'               => array( 'type' => 'string' ),
+					'preview'               => array( 'type' => 'object' ),
+					'refs'                  => array( 'type' => 'object' ),
+					'artifacts'             => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'evidence_refs'         => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'diagnostics'           => array( 'type' => 'array', 'items' => array( 'type' => 'object' ) ),
+					'metadata'              => array( 'type' => 'object' ),
+					'agent_task_run_result' => $agent_task_run_result_schema,
+				),
+			);
 
 			$run_agent_task_ability = array(
 					'label'               => 'Run Agent Sandbox Task',
@@ -318,6 +335,7 @@ final class WP_Codebox_Abilities {
 							'artifact_result' => array( 'type' => 'object' ),
 							'outputs' => array( 'type' => 'object' ),
 							'agent_task_run_result' => $agent_task_run_result_schema,
+							'headless_agent_task_result' => $headless_agent_task_result_schema,
 							'exit_code' => array( 'type' => 'integer' ),
 							'outcome'   => $outcome_schema,
 							'diagnostics' => array( 'type' => 'object' ),
