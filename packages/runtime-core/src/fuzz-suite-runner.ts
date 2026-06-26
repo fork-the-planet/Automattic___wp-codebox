@@ -359,7 +359,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
             exitCode: execution.exitCode,
             startedAt: execution.startedAt,
             finishedAt: execution.finishedAt,
-            result: execution.result,
+            result: fuzzSuiteExecutionMetadataResult(execution.result),
           },
         }),
       })
@@ -395,6 +395,12 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
       runnerCapabilities: fuzzRunnerCapabilitiesContract(runnerCapabilities, suite),
     }),
   })
+}
+
+function fuzzSuiteExecutionMetadataResult(result: ExecutionResult["result"]): ExecutionResult["result"] | undefined {
+  if (!result) return undefined
+  const { stdout: _stdout, stderr: _stderr, ...metadataResult } = result
+  return stripUndefined(metadataResult) as ExecutionResult["result"]
 }
 
 function normalizeFuzzSuiteResetExecutor(executor: FuzzSuiteRunOptions["resetExecutor"]): ((input: FuzzSuiteResetExecutionInput) => Promise<FuzzSuiteCaseResetResult>) | undefined {
