@@ -1,4 +1,4 @@
-import { FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, type FanoutRequestContract } from "./fanout-contracts.js"
+import { FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, validateFanoutResultContract, type FanoutRequestContract } from "./fanout-contracts.js"
 import { aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, type FanoutAggregationOutput, type FanoutAggregationPolicy, type FanoutArtifactRef, type FanoutWorkerResultRef } from "./fanout-aggregation.js"
 import { normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, executeRunPlan, type RunPlanClock, type RunPlanExecutorResult, type RunPlanNormalizationOptions, type RunPlanResultCounts, type RunPlanWorkerAdapter, type RunPlanWorkerContract, type RunPlanWorkerDescriptor, type RunPlanWorkerResultLike } from "./run-plan.js"
 import { objectValue, optionalObjectValue, stringValue } from "./object-utils.js"
@@ -136,6 +136,10 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
     aggregate,
     counts: execution.counts,
     execution,
+  }
+  const validation = validateFanoutResultContract(result)
+  if (!validation.valid) {
+    throw new Error(`Fanout execution produced invalid ${FANOUT_RESULT_SCHEMA}: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`)
   }
   await options.onFanoutCompleted?.(result)
   return result
