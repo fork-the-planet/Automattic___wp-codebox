@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 
-import { executeFanoutRequest, FANOUT_REQUEST_SCHEMA, type RunPlanWorkerAdapter } from "../packages/runtime-core/src/index.js"
+import { executeFanoutRequest, FANOUT_REQUEST_SCHEMA, validateFanoutResultContract, type RunPlanWorkerAdapter } from "../packages/runtime-core/src/index.js"
 
 const successfulAdapter: RunPlanWorkerAdapter = {
   async run({ descriptor }) {
@@ -41,9 +42,18 @@ assert.equal(success.aggregate.plan.id, "generic-success")
 assert.equal(success.concurrency, 2)
 assert.deepEqual(success.counts, { total: 2, completed: 2, failed: 0, skipped: 0, cancelled: 0, timed_out: 0 })
 assert.deepEqual(success.workerResultRefs.map((worker) => worker.workerId), ["alpha", "beta"])
+assert.deepEqual(success.workerResultRefs.map((worker) => worker.resultRef), ["workers/alpha/result.json", "workers/beta/result.json"])
+assert.deepEqual(success.workerResultRefs.map((worker) => worker.artifactRefs[0]?.path), ["workers/alpha/evidence.json", "workers/beta/evidence.json"])
 assert.deepEqual(success.aggregate.rawWorkerArtifactRefs.map((ref) => ref.path), ["workers/alpha/evidence.json", "workers/beta/evidence.json"])
 assert.deepEqual(success.aggregate.finalArtifactRefs, [{ path: "aggregate/result.json", kind: "generic-fanout-result" }])
 assert.equal(success.aggregate.status, "succeeded")
+assert.deepEqual(validateFanoutResultContract(success), { valid: true, issues: [] })
+assert.equal(validateFanoutResultContract({ ...success, workerResultRefs: undefined, workers: success.workerResultRefs }).valid, false)
+
+const fixture = JSON.parse(await readFile(new URL("./fixtures/fanout-result-worker-refs.json", import.meta.url), "utf8"))
+assert.deepEqual(validateFanoutResultContract(fixture), { valid: true, issues: [] })
+assert.equal(fixture.workerResultRefs[0].resultRef, "fanout/workers/planner/result.json")
+assert.equal(fixture.workerResultRefs[0].artifactRefs[0].path, "fanout/workers/planner/result.json")
 
 const events: string[] = []
 const failingAdapter: RunPlanWorkerAdapter = {
@@ -86,7 +96,9 @@ assert.deepEqual(events, ["run:failed", "skip:dependent"])
 assert.deepEqual(failure.workerResultRefs.map((worker) => worker.status), ["failed", "skipped"])
 assert.deepEqual(failure.workers.map((worker) => worker.workerId), ["failed", "dependent"])
 assert.deepEqual(failure.workers[1].error, { code: "dependency-skipped", message: "dependent skipped after failed" })
-assert.deepEqual(failure.aggregate.rawWorkerArtifactRefs.map((ref) => ref.path), ["workers/failed/failure.json"])
+assert.deepEqual(failure.aggregate.rawWorkerArtifactRefs.map((ref) => ref.path), ["workers/failed/failure.json", "workers/failed/failure.json"])
+assert.deepEqual(failure.workerResultRefs[1].artifactRefs.map((ref) => ref.path), ["workers/failed/failure.json"])
+assert.equal(failure.workerResultRefs[1].artifactRefs[0].metadata?.preserved_for_skipped_worker, "dependent")
 assert.deepEqual(failure.aggregate.finalArtifactRefs, [])
 assert.deepEqual(failure.aggregate.conflicts.map((conflict) => conflict.type), ["failed-worker", "failed-worker", "failed-worker-dependency"])
 
