@@ -1,0 +1,41 @@
+{
+  "schema": "wp-codebox/agent-fanout-result/v1",
+  "success": true,
+  "status": "completed",
+  "fanout_id": "fixture-fanout",
+  "sessionId": "fixture-fanout",
+  "concurrency": 2,
+  "workerResultRefs": [
+    {
+      "workerId": "planner",
+      "status": "succeeded",
+      "required": true,
+      "resultRef": "fanout/workers/planner/result.json",
+      "artifactRefs": [
+        {
+          "path": "fanout/workers/planner/result.json",
+          "kind": "worker-result",
+          "contentType": "application/json"
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "schema": "wp-codebox/agent-fanout-aggregation-output/v1",
+    "status": "succeeded",
+    "finalArtifactRefs": [
+      {
+        "path": "aggregate/final/result.json",
+        "kind": "fanout-aggregate-output"
+      }
+    ]
+  },
+  "counts": {
+    "total": 1,
+    "completed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "timed_out": 0
+  }
+}

@@ -1,4 +1,4 @@
-import { FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, type FanoutRequestContract } from "./fanout-contracts.js"
+import { FANOUT_PLAN_SCHEMA, FANOUT_REQUEST_SCHEMA, FANOUT_RESULT_SCHEMA, validateFanoutResultContract, type FanoutRequestContract } from "./fanout-contracts.js"
 import { aggregateFanoutOutputs, fanoutAggregationInputFromWorkerArtifacts, type FanoutAggregationOutput, type FanoutAggregationPolicy, type FanoutArtifactRef, type FanoutWorkerResultRef } from "./fanout-aggregation.js"
 import { normalizeRunPlanConcurrency, normalizeRunPlanWorkerDescriptors, executeRunPlan, type RunPlanClock, type RunPlanExecutorResult, type RunPlanNormalizationOptions, type RunPlanResultCounts, type RunPlanWorkerAdapter, type RunPlanWorkerContract, type RunPlanWorkerDescriptor, type RunPlanWorkerResultLike } from "./run-plan.js"
 import { objectValue, optionalObjectValue, stringValue } from "./object-utils.js"
@@ -106,7 +106,7 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
     createSkippedResult: options.createSkippedResult,
   })
 
-  const workerResultRefs = execution.workers.map((result, index) => fanoutWorkerResultRef(result, workers[index]))
+  const workerResultRefs = execution.workers.map((result, index) => fanoutWorkerResultRefWithDependencyRefs(result, workers[index], execution.workers, workers))
   await options.onAggregationStarted?.({ fanoutId, sessionId, concurrency, workers, plan, execution, workerResultRefs })
 
   const aggregation = optionalObjectValue(request.aggregation) ?? options.aggregation
@@ -136,6 +136,10 @@ export async function executeFanoutRequest<TWorker extends RunPlanWorkerContract
     aggregate,
     counts: execution.counts,
     execution,
+  }
+  const validation = validateFanoutResultContract(result)
+  if (!validation.valid) {
+    throw new Error(`Fanout execution produced invalid ${FANOUT_RESULT_SCHEMA}: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`)
   }
   await options.onFanoutCompleted?.(result)
   return result
@@ -170,6 +174,33 @@ export function fanoutWorkerResultRef<TResult extends FanoutExecutionWorkerResul
     artifactRefs: Array.isArray(artifactRefs) ? artifactRefs as FanoutArtifactRef[] : [],
     error: fanoutWorkerError(result.error),
     metadata: result.metadata,
+  }
+}
+
+function fanoutWorkerResultRefWithDependencyRefs<TResult extends FanoutExecutionWorkerResultLike, TWorker extends RunPlanWorkerContract>(result: TResult, descriptor: RunPlanWorkerDescriptor<TWorker> | undefined, results: TResult[], descriptors: Array<RunPlanWorkerDescriptor<TWorker>>): FanoutWorkerResultRef {
+  const ref = fanoutWorkerResultRef(result, descriptor)
+  if (ref.artifactRefs.length > 0 || ref.status !== "skipped" || !descriptor || descriptor.dependsOn.length === 0) {
+    return ref
+  }
+
+  const dependencyRefs = descriptors
+    .map((candidate, index) => ({ descriptor: candidate, result: results[index] }))
+    .filter((candidate) => descriptor.dependsOn.includes(candidate.descriptor.id))
+    .flatMap((candidate) => fanoutWorkerResultRef(candidate.result, candidate.descriptor).artifactRefs)
+
+  return {
+    ...ref,
+    artifactRefs: dependencyRefs.map((artifactRef) => {
+      const { finalPath, ...preservedRef } = artifactRef
+      return {
+        ...preservedRef,
+        metadata: {
+          ...(artifactRef.metadata ?? {}),
+          preserved_for_skipped_worker: descriptor.id,
+          preserved_from_final_path: finalPath,
+        },
+      }
+    }),
   }
 }
 
