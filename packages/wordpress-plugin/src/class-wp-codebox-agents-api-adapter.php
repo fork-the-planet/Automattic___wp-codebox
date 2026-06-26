@@ -185,8 +185,15 @@ final class WP_Codebox_Agents_API_Adapter {
 		return function_exists( 'apply_filters' ) && (bool) apply_filters( 'wp_codebox_agents_api_adapter_enabled', false );
 	}
 
-	/** @return array<string,string> */
-	public static function browser_runtime_default_invocation(): array {
+	/** @param array<string,mixed> $input Runtime input. @param array<string,mixed> $defaults Caller defaults. @return array<string,string> */
+	public static function browser_runtime_default_invocation( array $input = array(), array $defaults = array() ): array {
+		if ( ! empty( self::runtime_task_from_browser_input( $input, $defaults ) ) ) {
+			return array(
+				'type' => 'ability',
+				'name' => self::RUN_RUNTIME_PACKAGE,
+			);
+		}
+
 		return array(
 			'type' => 'ability',
 			'name' => self::default_chat_ability(),
@@ -202,6 +209,12 @@ final class WP_Codebox_Agents_API_Adapter {
 		$ability_name = (string) ( $invocation['name'] ?? '' );
 		if ( '' === $ability_name || ! in_array( $ability_name, self::ability_names(), true ) ) {
 			return $input;
+		}
+		if ( self::RUN_RUNTIME_PACKAGE === $ability_name ) {
+			$runtime_task_input = self::runtime_package_input_from_runtime_task( self::runtime_task_from_browser_payload( $payload ) );
+			if ( ! empty( $runtime_task_input ) ) {
+				$input = array_replace_recursive( $input, $runtime_task_input );
+			}
 		}
 
 		$agent = sanitize_key( (string) ( $payload['agent'] ?? $input['agent'] ?? 'wp-codebox-sandbox' ) );
@@ -230,6 +243,59 @@ final class WP_Codebox_Agents_API_Adapter {
 		$input['client_context']['peer_agent_call'] = true;
 
 		return $input;
+	}
+
+	/** @param array<string,mixed> $input Runtime input. @param array<string,mixed> $defaults Caller defaults. @return array<string,mixed> */
+	private static function runtime_task_from_browser_input( array $input, array $defaults = array() ): array {
+		foreach ( array( $input, $defaults ) as $candidate ) {
+			$runtime_task = self::runtime_task_from_candidate( $candidate );
+			if ( ! empty( $runtime_task ) ) {
+				return $runtime_task;
+			}
+		}
+
+		return array();
+	}
+
+	/** @param array<string,mixed> $payload Browser runtime payload. @return array<string,mixed> */
+	private static function runtime_task_from_browser_payload( array $payload ): array {
+		$task_input = is_array( $payload['task_input'] ?? null ) ? $payload['task_input'] : array();
+
+		return self::runtime_task_from_candidate( $task_input );
+	}
+
+	/** @param array<string,mixed> $candidate Runtime input candidate. @return array<string,mixed> */
+	private static function runtime_task_from_candidate( array $candidate ): array {
+		if ( is_array( $candidate['runtime_task'] ?? null ) ) {
+			return $candidate['runtime_task'];
+		}
+		if ( is_array( $candidate['runtimeTask'] ?? null ) ) {
+			return $candidate['runtimeTask'];
+		}
+
+		$agent_runtime = $candidate['agent_runtime'] ?? $candidate['agentRuntime'] ?? null;
+		if ( is_array( $agent_runtime ) ) {
+			if ( is_array( $agent_runtime['runtime_task'] ?? null ) ) {
+				return $agent_runtime['runtime_task'];
+			}
+			if ( is_array( $agent_runtime['runtimeTask'] ?? null ) ) {
+				return $agent_runtime['runtimeTask'];
+			}
+		}
+
+		return array();
+	}
+
+	/** @param array<string,mixed> $runtime_task Runtime task descriptor. @return array<string,mixed> */
+	private static function runtime_package_input_from_runtime_task( array $runtime_task ): array {
+		if ( is_array( $runtime_task['input'] ?? null ) && in_array( (string) ( $runtime_task['ability'] ?? '' ), array( 'runtime-package/run', 'wp-codebox/run-runtime-package' ), true ) ) {
+			return $runtime_task['input'];
+		}
+		if ( is_array( $runtime_task['input'] ?? null ) && 'bundle' === (string) ( $runtime_task['kind'] ?? '' ) ) {
+			return $runtime_task['input'];
+		}
+
+		return $runtime_task;
 	}
 
 	/** @param array<string,mixed> $permission_input Permission input. */
@@ -565,9 +631,11 @@ final class WP_Codebox_Agents_API_Adapter {
 			if ( array_key_exists( $field, $input ) && ! array_key_exists( $field, $options ) ) {
 				$options[ $field ] = $input[ $field ];
 			}
+			if ( array_key_exists( $field, $options ) && ! array_key_exists( $field, $workflow_input ) ) {
+				$workflow_input[ $field ] = $options[ $field ];
+			}
 			if ( array_key_exists( $field, $workflow_input ) && ! array_key_exists( $field, $options ) ) {
 				$options[ $field ] = $workflow_input[ $field ];
-				unset( $workflow_input[ $field ] );
 			}
 		}
 
