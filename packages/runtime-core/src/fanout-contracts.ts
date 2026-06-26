@@ -30,8 +30,21 @@ export const HOST_DELEGATION_EVENT_TYPES = [
 export type FanoutEventType = (typeof FANOUT_EVENT_TYPES)[number]
 export type HostDelegationEventType = (typeof HOST_DELEGATION_EVENT_TYPES)[number]
 export type FanoutExecutionStrategy = "bounded-concurrent-isolated-sandboxes"
+export type FanoutResultValidationIssueCode = "schema-invalid" | "result-invalid"
 export type HostDelegationStatus = "unavailable" | "accepted" | "completed" | "failed"
 export type HostDelegationValidationIssueCode = "schema-invalid" | "request-invalid" | "result-invalid" | "request-id-mismatch" | "scope-mismatch" | "source-digest-mismatch"
+
+export interface FanoutResultValidationIssue {
+  code: FanoutResultValidationIssueCode
+  path: string
+  message: string
+  details?: Record<string, unknown>
+}
+
+export interface FanoutResultValidationResult {
+  valid: boolean
+  issues: FanoutResultValidationIssue[]
+}
 
 export interface HostDelegationValidationIssue {
   code: HostDelegationValidationIssueCode
@@ -106,6 +119,97 @@ export interface FanoutLifecycleEvent {
   skipped?: number
   cancelled?: number
   timed_out?: number
+}
+
+export interface FanoutWorkerResultRefContract {
+  workerId: string
+  status: string
+  required: boolean
+  resultRef?: string
+  artifactRefs: Array<Record<string, unknown> & { path: string }>
+  error?: { code?: string; message: string; details?: Record<string, unknown> }
+  metadata?: Record<string, unknown>
+}
+
+export interface FanoutResultContract {
+  schema: typeof FANOUT_RESULT_SCHEMA
+  success: boolean
+  status: "completed" | "failed" | (string & {})
+  fanout_id: string
+  sessionId?: string
+  concurrency: number
+  plan?: Record<string, unknown>
+  workerResultRefs: FanoutWorkerResultRefContract[]
+  aggregate?: Record<string, unknown>
+  counts?: Record<string, unknown>
+  execution?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export function validateFanoutResultContract(input: unknown): FanoutResultValidationResult {
+  const issues: FanoutResultValidationIssue[] = []
+  const result = isRecord(input) ? input : undefined
+  if (!result) {
+    return { valid: false, issues: [{ code: "result-invalid", path: "", message: "Fanout result must be an object." }] }
+  }
+
+  if (result.schema !== FANOUT_RESULT_SCHEMA) {
+    issues.push({ code: "schema-invalid", path: "schema", message: `Fanout result schema must be ${FANOUT_RESULT_SCHEMA}.` })
+  }
+  if (typeof result.success !== "boolean") {
+    issues.push({ code: "result-invalid", path: "success", message: "Fanout result success must be a boolean." })
+  }
+  if (!stringValue(result.status)) {
+    issues.push({ code: "result-invalid", path: "status", message: "Fanout result status must be a non-empty string." })
+  }
+  if (!stringValue(result.fanout_id)) {
+    issues.push({ code: "result-invalid", path: "fanout_id", message: "Fanout result fanout_id must be a non-empty string." })
+  }
+  if (typeof result.concurrency !== "number" || !Number.isFinite(result.concurrency) || result.concurrency < 1) {
+    issues.push({ code: "result-invalid", path: "concurrency", message: "Fanout result concurrency must be a positive number." })
+  }
+  if (!Array.isArray(result.workerResultRefs)) {
+    issues.push({ code: "result-invalid", path: "workerResultRefs", message: "Fanout result workerResultRefs must be an array." })
+  } else {
+    result.workerResultRefs.forEach((worker, index) => validateFanoutWorkerResultRef(worker, `workerResultRefs.${index}`, issues))
+  }
+  if (result.aggregate !== undefined && !isRecord(result.aggregate)) {
+    issues.push({ code: "result-invalid", path: "aggregate", message: "Fanout result aggregate must be an object when present." })
+  }
+  if (result.counts !== undefined && !isRecord(result.counts)) {
+    issues.push({ code: "result-invalid", path: "counts", message: "Fanout result counts must be an object when present." })
+  }
+
+  return { valid: issues.length === 0, issues }
+}
+
+function validateFanoutWorkerResultRef(input: unknown, path: string, issues: FanoutResultValidationIssue[]): void {
+  const worker = isRecord(input) ? input : undefined
+  if (!worker) {
+    issues.push({ code: "result-invalid", path, message: "Fanout worker result ref must be an object." })
+    return
+  }
+  if (!stringValue(worker.workerId)) {
+    issues.push({ code: "result-invalid", path: `${path}.workerId`, message: "Fanout worker result ref workerId must be a non-empty string." })
+  }
+  if (!stringValue(worker.status)) {
+    issues.push({ code: "result-invalid", path: `${path}.status`, message: "Fanout worker result ref status must be a non-empty string." })
+  }
+  if (typeof worker.required !== "boolean") {
+    issues.push({ code: "result-invalid", path: `${path}.required`, message: "Fanout worker result ref required must be a boolean." })
+  }
+  if (worker.resultRef !== undefined && !stringValue(worker.resultRef)) {
+    issues.push({ code: "result-invalid", path: `${path}.resultRef`, message: "Fanout worker result ref resultRef must be a non-empty string when present." })
+  }
+  if (!Array.isArray(worker.artifactRefs)) {
+    issues.push({ code: "result-invalid", path: `${path}.artifactRefs`, message: "Fanout worker result ref artifactRefs must be an array." })
+  } else {
+    worker.artifactRefs.forEach((artifact, index) => {
+      if (!isRecord(artifact) || !stringValue(artifact.path)) {
+        issues.push({ code: "result-invalid", path: `${path}.artifactRefs.${index}.path`, message: "Fanout worker artifact ref path must be a non-empty string." })
+      }
+    })
+  }
 }
 
 export interface HostDelegationRequestContract {
