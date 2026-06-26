@@ -338,6 +338,17 @@ assert.equal(agentRecipePolicy.commands.includes("wordpress.run-php"), true)
 assert.equal(agentRecipePolicy.commands.includes("wordpress.wp-cli"), true)
 assert.equal(agentRecipePolicy.commands.includes("wp-codebox.agent-sandbox-run"), false)
 
+const benchRecipePolicy = recipePolicy({
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [
+      { command: "wordpress.bench", args: ["plugin-slug=sample-plugin"] },
+    ],
+  },
+} as never)
+assert.equal(benchRecipePolicy.commands.includes("wordpress.bench"), true)
+assert.equal(benchRecipePolicy.commands.includes("wordpress.run-php"), true)
+
 const generatedAgentSandboxPhp = agentSandboxRunCode("Verify registry adapter", "echo 'ok';", [], [])
 assert.doesNotMatch(generatedAgentSandboxPhp, /DataMachine\\Core\\Database\\Agents\\Agents|data_machine_agent_create_failed|agents-api\/agents-api\.php/)
 const generatedDefaultAgentPhp = await resolveSandboxTaskCode({
