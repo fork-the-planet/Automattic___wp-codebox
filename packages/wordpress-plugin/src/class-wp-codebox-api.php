@@ -58,6 +58,80 @@ final class WP_Codebox_API {
 		'wp-codebox/publish'                                => 'publish_runner_workspace',
 	);
 
+	/** @return array<string,string> Public Codebox ability id to facade method map. */
+	public static function public_abilities(): array {
+		return self::ABILITY_METHODS;
+	}
+
+	/** @return array<string,array<string,string>> Public schema ids grouped by Codebox primitive. */
+	public static function public_contract_schemas(): array {
+		return array(
+			'runtimeSession' => array(
+				'access'                     => 'wp-codebox/runtime-access/v1',
+				'previewLease'               => 'wp-codebox/preview-lease/v1',
+				'previewReviewerAccess'      => 'wp-codebox/preview-reviewer-access/v1',
+				'browserSessionProductDto'   => 'wp-codebox/browser-session-product-dto/v1',
+				'browserPreviewBootConfig'   => 'wp-codebox/browser-preview-boot-config/v1',
+				'browserContainedSiteStatus' => 'wp-codebox/browser-contained-site-status/v1',
+				'browserContainedSiteOpen'   => 'wp-codebox/browser-contained-site-open/v1',
+			),
+			'runtimeProfile' => array(
+				'profile' => 'wp-codebox/runtime-profile/v1',
+			),
+			'task'           => array(
+				'input'           => 'wp-codebox/task-input/v1',
+				'runRequest'      => 'wp-codebox/agent-task-run-request/v1',
+				'runResult'       => 'wp-codebox/agent-task-run-result/v1',
+				'headlessRequest' => 'wp-codebox/headless-agent-task-request/v1',
+				'headlessResult'  => 'wp-codebox/headless-agent-task-result/v1',
+			),
+			'agent'          => array(
+				'workload'  => 'wp-codebox/agent-runtime-workload/v1',
+				'runResult' => 'wp-codebox/agent-task-run-result/v1',
+			),
+			'artifact'       => array(
+				'resultEnvelope'                => 'wp-codebox/artifact-result-envelope/v1',
+				'typedArtifact'                 => 'wp-codebox/structured-artifact/v1',
+				'typedArtifactIndex'            => 'wp-codebox/typed-artifacts-index/v1',
+				'bundleFileManifest'            => 'wp-codebox/artifact-bundle-file-manifest/v1',
+				'browserArtifactPersistenceRef' => 'wp-codebox/browser-artifact-persistence/ref/v1',
+			),
+			'credential'     => array(
+				'requirements' => 'wp-codebox/provider-credential-requirements/v1',
+				'preflight'    => 'wp-codebox/provider-credential-preflight/v1',
+				'resolution'   => 'wp-codebox/provider-credential-resolution/v1',
+			),
+		);
+	}
+
+	/** @return array<string,mixed> Public primitive map for PHP SDK consumers. */
+	public static function public_contract_primitives(): array {
+		$schemas = self::public_contract_schemas();
+
+		return array(
+			'runtimeSession' => array( 'schemas' => $schemas['runtimeSession'] ),
+			'runtimeProfile' => array( 'schemas' => $schemas['runtimeProfile'] ),
+			'task'           => array(
+				'abilities' => array(
+					'run'    => 'wp-codebox/run-agent-task',
+					'batch'  => 'wp-codebox/run-agent-task-batch',
+					'fanout' => 'wp-codebox/run-agent-task-fanout',
+				),
+				'schemas'   => $schemas['task'],
+			),
+			'agent'          => array(
+				'abilities' => array(
+					'runTask'       => 'wp-codebox/run-agent-task',
+					'runTaskBatch'  => 'wp-codebox/run-agent-task-batch',
+					'runTaskFanout' => 'wp-codebox/run-agent-task-fanout',
+				),
+				'schemas'   => $schemas['agent'],
+			),
+			'artifact'       => array( 'schemas' => $schemas['artifact'] ),
+			'credential'     => array( 'schemas' => $schemas['credential'], 'redacted' => true ),
+		);
+	}
+
 	/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 	public static function execute_ability( string $ability_name, array $input = array() ): array|WP_Error {
 		$ability_name = trim( $ability_name );
