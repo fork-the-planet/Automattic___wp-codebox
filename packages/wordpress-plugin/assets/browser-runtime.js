@@ -674,6 +674,10 @@
 		};
 		const client = await startPlaygroundWeb( request );
 
+		if ( typeof options.onClientConnected === 'function' ) {
+			options.onClientConnected( client );
+		}
+
 		return {
 			schema: 'wp-codebox/browser-preview-start-result/v1',
 			success: true,
@@ -708,6 +712,9 @@
 		startBrowserPreview: ( input, options = {} ) => api.startBrowserPreview( input, options ),
 		aggregateFanoutOutputs: ( input ) => api.aggregateFanoutOutputs( input ),
 		validateBrowserRuntimeMaterialization: ( client, session, options = {} ) => api.validateBrowserRuntimeMaterialization( client, session, options ),
+		ensureDirectory: ( client, args = {}, options = {} ) => api.ensureDirectory( client, args, options ),
+		writeFile: ( client, args = {}, options = {} ) => api.writeFile( client, args, options ),
+		runRecipe: ( client, recipe, taskPayload, options = {} ) => api.runRecipe( client, recipe, taskPayload, options ),
 		normalizeResult: normalizeOperationResult,
 		result: browserSdkResult,
 		executableBrowserSession: api.executableBrowserSession,
