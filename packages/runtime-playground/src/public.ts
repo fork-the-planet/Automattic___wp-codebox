@@ -4,6 +4,7 @@ import {
   WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
+  DELETE_BOUNDARY_ARTIFACT_KIND,
   createWordPressRuntimeCheckpoint,
   executeFuzzSuite,
   openWordPressAdminPage,
@@ -25,6 +26,7 @@ import {
   deleteBoundaryArtifact,
   isRestMutationMethod,
   mutationArtifactDigest,
+  MUTATION_ISOLATION_ARTIFACT_KIND,
   mutationIsolationArtifact,
   type ArtifactBundle,
   type ArtifactSpec,
@@ -291,15 +293,14 @@ async function executeRollbackSafeRestMutation(
     bytes: Buffer.byteLength(content),
   }
   const artifactRef: RuntimeEpisodeTraceRef = {
-    kind: artifactWithDigest.artifactKind,
+    kind: method === "DELETE" ? DELETE_BOUNDARY_ARTIFACT_KIND : MUTATION_ISOLATION_ARTIFACT_KIND,
     id: `${input.case.id}:${artifactWithDigest.artifactKind}`,
     path: artifactWithDigest.artifactPath,
     digest: { algorithm: "sha256", value: artifactWithDigest.sha256 },
   }
   const data = {
     ...observation.data,
-    mutationIsolationArtifact: artifactWithDigest,
-    ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : {}),
+    ...(method === "DELETE" ? { deleteBoundaryArtifact: artifactWithDigest } : { mutationIsolationArtifact: artifactWithDigest }),
   }
 
   return {

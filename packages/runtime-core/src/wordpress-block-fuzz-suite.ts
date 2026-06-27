@@ -146,6 +146,7 @@ function serverRenderCoveragePlanItem(block: WordPressBlockTypeDescriptor): Fuzz
 }
 
 function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postType: WordPressEditorPostTypeDescriptor | undefined): FuzzCoveragePlanItem {
+  const unsupportedReason = { code: "block_editor_insert_save_runtime_unsupported", message: "Editor insert/save coverage requires a browser/editor runtime backend; the current runtime command returns unsupported for this mode.", data: { unsupportedCapabilities: ["runtime-action:editor_open", "browser-editor-runtime"] } }
   if (!postType) {
     return stripUndefined({
       id: `block-${caseIdPart(block.name)}-editor-insert-untested`,
@@ -166,7 +167,14 @@ function editorInsertCoveragePlanItem(block: WordPressBlockTypeDescriptor, postT
       metadata: blockCaseMetadata(block, "editor-insert", { emptyAttributes: {}, editorPostType: postType.name }),
     })
   }
-  return stripUndefined({ ...editorInsertCase(block, postType), parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } } })
+  const fuzzCase = editorInsertCase(block, postType)
+  return stripUndefined({
+    ...fuzzCase,
+    input: undefined,
+    reason: unsupportedReason,
+    parameterGeneration: { hook: BLOCK_ATTRIBUTE_PARAMETER_GENERATION_HOOK.id, metadata: { sample: "emptyAttributes" } },
+    metadata: { ...fuzzCase.metadata, observationCapture: missingCaptureMetadata() },
+  })
 }
 
 function blockCaseMetadata(block: WordPressBlockTypeDescriptor, operation: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -181,7 +189,12 @@ function blockCaseMetadata(block: WordPressBlockTypeDescriptor, operation: strin
       attributes: block.attributes,
     },
     samples: extra,
+    observationCapture: missingCaptureMetadata(),
   })
+}
+
+function missingCaptureMetadata(): Record<string, unknown> {
+  return { status: "not-requested", supported: false, reason: "coverage-plan-generation-does-not-capture-runtime-observations" }
 }
 
 function selectEditorPostType(postTypes: readonly WordPressEditorPostTypeDescriptor[], requested: string | undefined): WordPressEditorPostTypeDescriptor | undefined {

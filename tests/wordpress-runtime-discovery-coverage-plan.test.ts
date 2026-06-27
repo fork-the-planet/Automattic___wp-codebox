@@ -46,6 +46,7 @@ const discovery: WordPressRuntimeDiscoveryResult = {
 }
 
 const plan = wordpressRuntimeDiscoveryToCoveragePlan(discovery, { id: "runtime-plan" })
+const capturePlan = wordpressRuntimeDiscoveryToCoveragePlan(discovery, { id: "runtime-plan-capture", capture: ["network"] })
 
 assert.equal(plan.schema, "wp-codebox/fuzz-coverage-plan/v1")
 assert.equal(plan.id, "runtime-plan")
@@ -59,18 +60,35 @@ assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpre
 assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.block-exercise"), true)
 assert.equal(plan.discovered.some((item) => item.id === "crud-list-post"), true)
 assert.equal(plan.discovered.some((item) => item.id === "crud-read-post"), true)
+assert.equal(plan.discovered.some((item) => item.id === "crud-list-term-category"), true)
+assert.equal(plan.discovered.some((item) => item.id === "crud-list-comment"), true)
+assert.equal(plan.discovered.some((item) => item.id === "crud-list-attachment"), true)
+assert.equal(plan.discovered.some((item) => item.id === "crud-list-user"), true)
+assert.equal(plan.discovered.some((item) => item.id === "crud-list-option"), true)
+assert.equal(plan.discovered.some((item) => item.id === "crud-read-metadata-post"), true)
 assert.equal(plan.discovered.some((item) => item.id === "page-load-mode-wordpress-simulated-frontend-page-load"), true)
 assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.frontend-page-load"), false)
 assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.admin-page-load"), false)
+
+const crudListPostArgs = (plan.generated.find((item) => item.id === "crud-list-post")?.input as { args: string[] }).args
+const crudListPostOperation = JSON.parse(crudListPostArgs[0]?.replace(/^operation-json=/, "") ?? "{}")
+assert.equal(crudListPostOperation.schema, "wp-codebox/wordpress-crud-operation/v1")
+assert.equal(crudListPostOperation.resource.kind, "post")
+assert.equal(crudListPostOperation.resource.type, "post")
+assert.equal(crudListPostOperation.resource.kind === "postType", false)
+assert.equal(plan.generated.some((item) => item.input !== undefined && JSON.stringify(item.input).includes('"kind":"postType"')), false)
 
 assert.equal(plan.skipped.some((item) => item.reason?.code === "admin_page_capability_denied"), true)
 assert.equal(plan.skipped.some((item) => item.reason?.code === "external_table_not_fuzzed"), true)
 assert.equal(plan.untested.some((item) => item.reason?.code === "mutating_rest_method_requires_explicit_opt_in"), true)
 assert.equal(plan.untested.some((item) => item.reason?.code === "block_inserter_unsupported"), true)
+assert.equal(plan.untested.some((item) => item.reason?.code === "block_editor_insert_save_runtime_unsupported"), true)
 assert.equal(plan.untested.some((item) => item.reason?.code === "crud_resource_identifier_required"), true)
 assert.equal(plan.executable.every((item) => item.input !== undefined && !item.reason), true)
 assert.equal(plan.discovered.every((item) => Boolean(item.metadata?.requiredRunnerCapabilities)), true)
 assert.deepEqual(plan.discovered.find((item) => item.id === "crud-list-post")?.metadata?.requiredRunnerCapabilities, { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.crud-operation"] })
+assert.deepEqual(plan.discovered.find((item) => item.id === "crud-list-post")?.metadata?.observationCapture, { status: "not-requested", supported: false, reason: "coverage-plan-generation-does-not-capture-runtime-observations" })
+assert.deepEqual(capturePlan.discovered.find((item) => item.id === "crud-list-post")?.metadata?.observationCapture, { status: "requested-not-captured", requested: ["network"], supported: false, reason: "coverage-plan-generation-does-not-capture-runtime-observations" })
 assert.equal(plan.parameterGenerationHooks?.some((hook) => hook.id === "wordpress.rest-route-parameters"), true)
 assert.equal(plan.parameterGenerationHooks?.some((hook) => hook.id === "wordpress.crud-resource-identifiers"), true)
 assert.deepEqual(plan.summary.targetIds.includes("wordpress.simulated-frontend-page-load"), true)

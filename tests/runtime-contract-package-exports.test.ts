@@ -41,6 +41,8 @@ assert.equal(contracts.WORDPRESS_DB_OPERATION_SCHEMA, "wp-codebox/wordpress-db-o
 assert.equal(contracts.WORDPRESS_HOTSPOTS_SCHEMA, "wp-codebox/wordpress-hotspots/v1")
 assert.equal(contracts.MUTATION_ISOLATION_ARTIFACT_SCHEMA, "wp-codebox/mutation-isolation-artifact/v1")
 assert.equal(contracts.DELETE_BOUNDARY_ARTIFACT_SCHEMA, "wp-codebox/delete-boundary-artifact/v1")
+assert.equal(contracts.MUTATION_ISOLATION_ARTIFACT_KIND, "mutation-isolation")
+assert.equal(contracts.DELETE_BOUNDARY_ARTIFACT_KIND, "delete-boundary")
 assert.equal(typeof contracts.wordpressRestMatrixContract, "function")
 assert.equal(typeof contracts.restRouteInventoryToFuzzSuite, "function")
 assert.equal(typeof contracts.performanceObservation, "function")

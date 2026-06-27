@@ -4,6 +4,8 @@ import { stripUndefined } from "./object-utils.js"
 
 export const MUTATION_ISOLATION_ARTIFACT_SCHEMA = "wp-codebox/mutation-isolation-artifact/v1" as const
 export const DELETE_BOUNDARY_ARTIFACT_SCHEMA = "wp-codebox/delete-boundary-artifact/v1" as const
+export const MUTATION_ISOLATION_ARTIFACT_KIND = "mutation-isolation" as const
+export const DELETE_BOUNDARY_ARTIFACT_KIND = "delete-boundary" as const
 
 export type MutationIsolationOperation = "rest_request" | (string & {})
 export type MutationRestoreStatus = "passed" | "failed" | "unsupported" | "not-required" | (string & {})
@@ -19,7 +21,7 @@ export interface MutationIsolationArtifact {
   afterObservation?: MutationIsolationStepEvidence
   restore?: MutationRestoreEvidence
   affectedIdentifiers?: MutationAffectedIdentifier[]
-  artifactKind: "mutation-isolation"
+  artifactKind: typeof MUTATION_ISOLATION_ARTIFACT_KIND
   artifactPath?: string
   sha256?: string
   bytes?: number
@@ -29,7 +31,7 @@ export interface MutationIsolationArtifact {
 
 export interface DeleteBoundaryArtifact extends Omit<MutationIsolationArtifact, "schema" | "artifactKind"> {
   schema: typeof DELETE_BOUNDARY_ARTIFACT_SCHEMA
-  artifactKind: "delete-boundary"
+  artifactKind: typeof DELETE_BOUNDARY_ARTIFACT_KIND
 }
 
 export interface MutationIsolationStepEvidence {
@@ -67,7 +69,7 @@ export function isRestMutationMethod(method: unknown): boolean {
 export function mutationIsolationArtifact(input: Omit<MutationIsolationArtifact, "schema" | "artifactKind" | "generatedAt"> & { generatedAt?: string }): MutationIsolationArtifact {
   return stripUndefined({
     schema: MUTATION_ISOLATION_ARTIFACT_SCHEMA as typeof MUTATION_ISOLATION_ARTIFACT_SCHEMA,
-    artifactKind: "mutation-isolation" as const,
+    artifactKind: MUTATION_ISOLATION_ARTIFACT_KIND,
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     ...input,
     method: input.method.toUpperCase(),
@@ -77,7 +79,7 @@ export function mutationIsolationArtifact(input: Omit<MutationIsolationArtifact,
 export function deleteBoundaryArtifact(input: Omit<DeleteBoundaryArtifact, "schema" | "artifactKind" | "generatedAt"> & { generatedAt?: string }): DeleteBoundaryArtifact {
   return stripUndefined({
     schema: DELETE_BOUNDARY_ARTIFACT_SCHEMA as typeof DELETE_BOUNDARY_ARTIFACT_SCHEMA,
-    artifactKind: "delete-boundary" as const,
+    artifactKind: DELETE_BOUNDARY_ARTIFACT_KIND,
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     ...input,
     method: input.method.toUpperCase(),

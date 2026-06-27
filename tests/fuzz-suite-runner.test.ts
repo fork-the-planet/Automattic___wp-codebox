@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzFixturePlanContract, fuzzSuiteContract, fuzzSuiteResetPolicyDiagnostics, mutationFixtureSeedOperation, normalizeFuzzSuiteResetPolicy, planFuzzSuiteCaseExecutionSpec, restMutationFixtureOptInContract, runFuzzSuite, runWordPressRestMatrix, wordpressRestMatrixContract, wordpressRestMatrixToFuzzSuite, type ExecutionResult, type ExecutionSpec } from "../packages/runtime-core/src/index.js"
 
 const executed: ExecutionSpec[] = []
 const result = await runFuzzSuite(fuzzSuiteContract({
@@ -83,27 +83,65 @@ assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities.includes
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.runtimeActionTypes?.includes("db_operation"), true)
 assert.equal(RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES.commands?.includes("wordpress.db-operation"), true)
 
-const blockedRestMutation = await runFuzzSuite(fuzzSuiteContract({
-  id: "suite-rest-mutation-blocked",
-  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10" } }],
-}), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
-assert.equal(blockedRestMutation.status, "skipped")
-assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_input_unsupported")
-assert.equal(blockedRestMutation.cases[0]?.diagnostics[0]?.metadata?.mutationSkipped, true)
+for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
+  const blockedRestMutation = await runFuzzSuite(fuzzSuiteContract({
+    id: `suite-rest-${method.toLowerCase()}-mutation-blocked`,
+    cases: [{ id: `${method.toLowerCase()}-blocked`, target: { kind: "runtime-action" }, input: { type: "rest_request", method, path: "/wp/v2/posts/10" } }],
+  }), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
+  assert.equal(blockedRestMutation.status, "skipped")
+  assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_input_unsupported")
+  assert.equal(blockedRestMutation.cases[0]?.diagnostics[0]?.metadata?.mutationSkipped, true)
+}
 
 const allowedRestMutations: string[] = []
+const restMutationOptIn = restMutationFixtureOptInContract({
+  id: "delete-post-fixture",
+  route: "/wp/v2/posts/10",
+  methods: ["DELETE"],
+  auth: { user: "fixture-user" },
+  rollbackPolicy: { mode: "checkpoint-per-case", checkpointName: "rest-mutation-fixture" },
+  fixturePlan: fuzzFixturePlanContract({
+    id: "delete-post-fixture-plan",
+    operations: [mutationFixtureSeedOperation({ id: "delete-post", method: "DELETE", target: "/wp/v2/posts/10", input: { body: { force: false } } })],
+  }),
+})
 const allowedRestMutation = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-rest-mutation-allowed",
-  metadata: { allowRestMutations: true },
-  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10" } }],
+  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/10", restMutationFixtureOptIn: restMutationOptIn } }],
 }), {
   runtimeActionExecutor: async ({ action }) => {
     allowedRestMutations.push(action.type)
-    return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method: "DELETE", path: "/wp/v2/posts/10", status: 200 }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: "delete" } }
+    return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method: "DELETE", path: "/wp/v2/posts/10", status: 200, deleteBoundaryArtifact: { schema: DELETE_BOUNDARY_ARTIFACT_SCHEMA, artifactKind: DELETE_BOUNDARY_ARTIFACT_KIND, operation: "rest_request", target: "/wp/v2/posts/10", method: "DELETE", status: 200, artifactPath: "files/delete-boundaries/delete-post.json", sha256: "delete", bytes: 123, generatedAt: "2026-01-01T00:00:00.000Z" } }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: "delete" } }
   },
 })
 assert.equal(allowedRestMutation.status, "passed")
 assert.deepEqual(allowedRestMutations, ["rest_request"])
+assert.equal(allowedRestMutation.cases[0]?.artifactRefs?.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
+assert.equal(allowedRestMutation.artifactRefs.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
+
+for (const method of ["POST", "PUT", "PATCH"] as const) {
+  const fixtureOptIn = restMutationFixtureOptInContract({
+    id: `${method.toLowerCase()}-fixture`,
+    route: "/example/v1/entities/1",
+    methods: [method],
+    auth: { session: "fixture-session" },
+    rollbackPolicy: { mode: "checkpoint-per-case", checkpointName: `${method.toLowerCase()}-fixture` },
+    fixturePlan: fuzzFixturePlanContract({
+      id: `${method.toLowerCase()}-fixture-plan`,
+      operations: [mutationFixtureSeedOperation({ id: `${method.toLowerCase()}-entity`, method, target: "/example/v1/entities/1", input: { body: { name: "fixture" } } })],
+    }),
+  })
+  const mutationResult = await runFuzzSuite(fuzzSuiteContract({
+    id: `suite-rest-${method.toLowerCase()}-mutation`,
+    cases: [{ id: `${method.toLowerCase()}-entity`, target: { kind: "runtime-action" }, input: { type: "rest_request", method, path: "/example/v1/entities/1", bodyJson: { name: "fixture" }, restMutationFixtureOptIn: fixtureOptIn } }],
+  }), {
+    runtimeActionExecutor: async ({ action, case: fuzzCase }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: { method, path: "/example/v1/entities/1", status: method === "POST" ? 201 : 200, mutationIsolationArtifact: { schema: MUTATION_ISOLATION_ARTIFACT_SCHEMA, artifactKind: MUTATION_ISOLATION_ARTIFACT_KIND, operation: "rest_request", target: "/example/v1/entities/1", method, status: method === "POST" ? 201 : 200, artifactPath: `files/mutation-isolation/${fuzzCase.id}.json`, sha256: method.toLowerCase(), bytes: 123, generatedAt: "2026-01-01T00:00:00.000Z" } }, observedAt: "2026-01-01T00:00:00.000Z", digest: { algorithm: "sha256", value: method } }),
+  })
+  assert.equal(mutationResult.status, "passed")
+  assert.equal((mutationResult.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.executorKind, "episode")
+  assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === MUTATION_ISOLATION_ARTIFACT_KIND && ref.path === `files/mutation-isolation/${method.toLowerCase()}-entity.json`), true)
+  assert.equal(mutationResult.artifactRefs.some((ref) => ref.kind === MUTATION_ISOLATION_ARTIFACT_KIND && ref.path === `files/mutation-isolation/${method.toLowerCase()}-entity.json`), true)
+}
 
 const plannedEditor = planFuzzSuiteCaseExecutionSpec({
   suite: fuzzSuiteContract({ id: "planner", cases: [] }),

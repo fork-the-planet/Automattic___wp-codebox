@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 
-import { fuzzSuiteContract, type RuntimeEpisodeStepResult } from "../packages/runtime-core/src/public.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, fuzzFixturePlanContract, fuzzSuiteContract, mutationFixtureSeedOperation, restMutationFixtureOptInContract, type RuntimeEpisodeStepResult } from "../packages/runtime-core/src/public.js"
 import {
   createWordPressFuzzSuiteResetExecutor,
   createWordPressRuntimeCheckpoint,
@@ -115,15 +115,27 @@ assert.equal(suiteResult.status, "error")
 assert.equal(suiteResult.cases[0]?.reset?.status, "unsupported")
 
 const beforeMutationStepCount = steps.length
+const deleteOptIn = restMutationFixtureOptInContract({
+  id: "delete-post-boundary",
+  route: "/wp/v2/posts/123",
+  methods: ["DELETE"],
+  auth: { user: "fixture-user" },
+  rollbackPolicy: { mode: "checkpoint-per-case", checkpointName: "delete-post-boundary" },
+  fixturePlan: fuzzFixturePlanContract({
+    id: "delete-post-boundary-plan",
+    operations: [mutationFixtureSeedOperation({ id: "delete-post", method: "DELETE", target: "/wp/v2/posts/123", input: { body: { force: false } } })],
+  }),
+})
 const mutationResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
   id: "mutation-suite-run",
-  metadata: { allowRestMutations: true },
-  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" } }],
+  cases: [{ id: "delete-post", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", restMutationFixtureOptIn: deleteOptIn } }],
 }))
 assert.equal(mutationResult.status, "passed")
 assert.deepEqual(steps.slice(beforeMutationStepCount).map((step) => step.command), ["wp-codebox.checkpoint-create", "wordpress.rest-request", "wp-codebox.checkpoint-restore"])
-assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === "delete-boundary" && ref.path === "files/delete-boundaries/delete-post.json"), true)
+assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
+assert.equal(mutationResult.artifactRefs.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
 const deleteBoundary = mutationResult.cases[0]?.metadata?.deleteBoundary as Record<string, unknown> | undefined
+assert.equal(mutationResult.cases[0]?.metadata?.mutationIsolation, undefined)
 assert.equal(deleteBoundary?.schema, "wp-codebox/delete-boundary-artifact/v1")
 assert.equal(deleteBoundary?.method, "DELETE")
 assert.equal(deleteBoundary?.target, "/wp/v2/posts/123")
