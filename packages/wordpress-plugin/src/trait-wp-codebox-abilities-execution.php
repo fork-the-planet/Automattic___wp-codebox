@@ -4451,6 +4451,11 @@ public static function get_artifact( array $input ): array|WP_Error {
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
+public static function inspect_artifact( array $input ): array|WP_Error {
+	return ( new WP_Codebox_Artifacts() )->inspect( $input );
+}
+
+/** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function discard_artifact( array $input ): array|WP_Error {
 	return ( new WP_Codebox_Artifacts() )->discard( $input );
 }

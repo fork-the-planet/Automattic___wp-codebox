@@ -543,6 +543,20 @@ final class WP_Codebox_Browser_Ability_Descriptors {
 				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_run_agent_task' ),
 				'meta'                => array( 'show_in_rest' => true ),
 			),
+			'wp-codebox/inspect-artifact'                    => array(
+				'label'               => 'Inspect WP Codebox Artifact',
+				'description'         => 'Read one WP Codebox artifact bundle by id and return Codebox-owned verification details without requiring consumers to inspect artifact directory internals.',
+				'category'            => 'wp-codebox',
+				'input_schema'        => array(
+					'type'       => 'object',
+					'required'   => array( 'artifact_id' ),
+					'properties' => $artifact_id_schema,
+				),
+				'output_schema'       => array( 'type' => 'object' ),
+				'execute_callback'    => array( WP_Codebox_Abilities::class, 'inspect_artifact' ),
+				'permission_callback' => array( WP_Codebox_Abilities::class, 'can_run_agent_task' ),
+				'meta'                => array( 'show_in_rest' => true ),
+			),
 			'wp-codebox/discard-artifact'                    => array(
 				'label'               => 'Discard WP Codebox Artifact',
 				'description'         => 'Delete one WP Codebox artifact bundle from the configured artifact root.',

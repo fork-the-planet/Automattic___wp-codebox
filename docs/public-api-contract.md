@@ -78,6 +78,10 @@ the public handoff/fanout boundary:
 - `wp-codebox/persist-browser-artifact` stores browser-produced files as a
   canonical WP Codebox artifact bundle and returns artifact bundle references for
   review, replay, import, or apply-back.
+- `wp-codebox/inspect-artifact` reads a stored artifact bundle and returns the
+  Codebox-owned bundle DTO plus verification payload. Consumers should use this
+  ability, `WP_Codebox_API::inspect_artifact()`, or `wp codebox artifacts inspect`
+  instead of reading the artifact directory layout directly.
 - `wp-codebox/import-artifact-bundle` and
   `wp-codebox/reimport-artifact-bundle` are the durable ingress path for an
   existing bundle. They verify bundle identity/digest and return
@@ -162,7 +166,8 @@ ability names, schemas, and facades to callers.
 WordPress-hosted orchestration that shells through WP-CLI can use the matching
 `wp codebox ...` wrappers for these public operations, including
 `run-runtime-task`, `run-wordpress-workload`, `run-runtime-package`,
-`resolve-runtime-requirements`, and `run-fuzz-suite`. The WP-CLI wrappers parse
+`resolve-runtime-requirements`, `run-fuzz-suite`, and artifact inspection/apply
+commands. The WP-CLI wrappers parse
 JSON payloads from `--input-json` or `--input-file` and delegate through
 `WP_Codebox_API` rather than backend internals.
 
