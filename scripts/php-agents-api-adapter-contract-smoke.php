@@ -112,6 +112,25 @@ assert( 'wp-codebox/runtime-package-result/v1' === $package['schema'] );
 assert( array( 'slug' => 'example-agent' ) === $package['received']['package'] );
 assert( array( 'id' => 'example-agent' ) === $package['received']['workflow'] );
 
+$package_with_contract_task = $adapter->run_runtime_package(
+	array(
+		'schema'                => 'wp-codebox/runtime-package-task/v1',
+		'package'               => array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ),
+		'input'                 => array( 'prompt' => 'typed output' ),
+		'artifact_declarations' => array(
+			array( 'name' => 'report', 'type' => 'markdown', 'required' => true ),
+		),
+		'task_input'            => array(
+			'client_context' => array(
+				'default_workspace' => array( 'target' => sys_get_temp_dir() ),
+			),
+		),
+	)
+);
+assert( ! isset( $package_with_contract_task['received']['schema'] ) );
+assert( array( 'report' ) === $package_with_contract_task['received']['required_artifacts'] );
+assert( array( 'id' => 'example-agent' ) === $package_with_contract_task['received']['workflow'] );
+
 $package_with_absolute_runtime_package = $adapter->run_runtime_package( array( 'runtime_package' => '/workspace/example-project/bundles/example-generator' ) );
 assert( array( 'slug' => 'example-generator', 'source' => '/workspace/example-project/bundles/example-generator' ) === $package_with_absolute_runtime_package['received']['package'] );
 assert( array( 'id' => 'example-generator' ) === $package_with_absolute_runtime_package['received']['workflow'] );
