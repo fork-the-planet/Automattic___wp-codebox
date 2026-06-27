@@ -108,8 +108,10 @@ async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundC
     return materializeHostMountFilesWithPhp(server, files)
   }
 
+  const directories = [...new Set(files.map((file) => dirname(file.target.trim())).filter((directory) => directory && directory !== "."))]
+  const directoryResult = await createHostMountDirectories(server, directories)
   let materialized = 0
-  let skipped = 0
+  let skipped = directoryResult.skipped
   for (const file of files) {
     const target = file.target.trim()
     if (!target || target.includes("\0")) {
@@ -124,6 +126,18 @@ async function materializeHostMountFilesWithPersistentWriter(server: PlaygroundC
     }
   }
   return { materialized, skipped }
+}
+
+async function createHostMountDirectories(server: PlaygroundCliServer, directories: string[]): Promise<{ created: number; skipped: number }> {
+  if (directories.length === 0) {
+    return { created: 0, skipped: 0 }
+  }
+  const response = await server.playground.run({ code: hostMountMkdirPhp(directories) })
+  const parsed = JSON.parse(response.text || "{}") as { created?: number; skipped?: number }
+  return {
+    created: parsed.created ?? 0,
+    skipped: parsed.skipped ?? 0,
+  }
 }
 
 async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[]): Promise<{ materialized: number; skipped: number }> {
@@ -303,6 +317,28 @@ foreach (($payload['files'] ?? array()) as $file) {
     $materialized++;
 }
 echo json_encode(array('schema' => 'wp-codebox/host-mount-materialization/v1', 'materialized' => $materialized, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
+`
+}
+
+function hostMountMkdirPhp(directories: string[]): string {
+  const payload = JSON.stringify(JSON.stringify({ directories }))
+  return `<?php
+$payload = json_decode(${payload}, true);
+$created = 0;
+$skipped = 0;
+foreach (($payload['directories'] ?? array()) as $directory) {
+    $directory = (string) $directory;
+    if ('' === $directory || str_contains($directory, "\0")) {
+        $skipped++;
+        continue;
+    }
+    if (is_dir($directory) || mkdir($directory, 0777, true) || is_dir($directory)) {
+        $created++;
+        continue;
+    }
+    $skipped++;
+}
+echo json_encode(array('schema' => 'wp-codebox/host-mount-directory-materialization/v1', 'created' => $created, 'skipped' => $skipped), JSON_UNESCAPED_SLASHES);
 `
 }
 
