@@ -1,4 +1,5 @@
 import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCoveragePlanItem, type FuzzCoveragePlanParameterGenerationHook, type FuzzCoveragePlanReason } from "./fuzz-coverage-plan-contracts.js"
+import type { FuzzFixtureSeedOperation, RestMutationFixtureOptInContract } from "./fuzz-fixture-plan-contracts.js"
 import { fuzzSuiteContract, type FuzzSuiteCase, type FuzzSuiteContract, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { stripUndefined } from "./object-utils.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
@@ -11,6 +12,8 @@ export interface WordPressInventoryFuzzSuiteOptions {
   user?: string
   session?: string
   pageLoadMode?: WordPressPageLoadFuzzMode
+  capture?: readonly string[]
+  restMutationOptIns?: readonly RestMutationFixtureOptInContract[]
 }
 
 export type WordPressPageLoadFuzzMode = "simulated" | "server" | "browser"
@@ -55,6 +58,13 @@ const DB_OPERATION_TARGET: FuzzSuiteTargetRef = {
 const REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
   capabilities: ["target:rest"],
   targetKinds: ["rest"],
+}
+
+const REST_MUTATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
+  capabilities: ["target:runtime-action", "runtime-action:rest_request", "rest-mutation:fixture-opt-in"],
+  targetKinds: ["runtime-action"],
+  runtimeActionTypes: ["rest_request"],
+  commands: ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore"],
 }
 
 const ADMIN_PAGE_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES = {
@@ -207,7 +217,8 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
   const normalizedMethod = method.toUpperCase()
   const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
   const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
-  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : undefined
+  const mutationOptIn = safeMethod ? undefined : matchingRestMutationOptIn(route.route, normalizedMethod, options)
+  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : concreteRestMutationInput(route, normalizedMethod, mutationOptIn)
   const executable = concreteInput !== undefined
   const safety = stripUndefined({
     executable,
@@ -220,9 +231,10 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
 
   return stripUndefined({
     id: `rest-${slugify(normalizedMethod)}-${slugify(route.route)}${endpointIndex === undefined ? "" : `-${endpointIndex}`}`,
-    target: executable ? REST_REQUEST_TARGET : PLANNED_REST_REQUEST_TARGET,
+    target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Rollback-isolated WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
-    input: concreteInput ? restInputForCase(concreteInput) : undefined,
+    input: concreteInput ? restInputForCase(concreteInput, !safeMethod) : undefined,
+    resetPolicy: !safeMethod && mutationOptIn ? mutationOptIn.rollbackPolicy ?? mutationOptIn.rollback_policy : undefined,
     metadata: stripUndefined({
       source: "wordpress.rest-route-inventory",
       route: route.route,
@@ -231,6 +243,8 @@ function restRouteFuzzSuiteCase(route: WordPressRestRouteDescriptor, method: str
       permission: endpoint?.permission,
       argNames: route.argNames,
       safety,
+      restMutationFixtureOptIn: mutationOptIn,
+      requiredRunnerCapabilities: safeMethod ? REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES : restMutationRequiredRunnerCapabilities(normalizedMethod),
     }),
   })
 }
@@ -247,7 +261,8 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
   const normalizedMethod = method.toUpperCase()
   const requiredArgs = endpoint?.args.filter((arg) => arg.required).map((arg) => arg.name) ?? []
   const safeMethod = SAFE_REST_METHODS.has(normalizedMethod)
-  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : undefined
+  const mutationOptIn = safeMethod ? undefined : matchingRestMutationOptIn(route.route, normalizedMethod, options)
+  const concreteInput = safeMethod ? concreteRestInput(route, normalizedMethod, options, endpoint) : concreteRestMutationInput(route, normalizedMethod, mutationOptIn)
   const executable = concreteInput !== undefined
   const reason = executable ? undefined : restRouteUntestedReason(safeMethod, requiredArgs)
   const parameterGeneration = executable ? undefined : stripUndefined({
@@ -257,9 +272,9 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
 
   return stripUndefined({
     id: restRouteCaseId(route.route, normalizedMethod, endpointIndex),
-    target: executable ? REST_REQUEST_TARGET : PLANNED_REST_REQUEST_TARGET,
+    target: executable ? (safeMethod ? REST_REQUEST_TARGET : { kind: "runtime-action", id: "wordpress.rest-request", entrypoint: "wordpress.rest-request", label: "Rollback-isolated WordPress REST mutation" }) : PLANNED_REST_REQUEST_TARGET,
     description: `${normalizedMethod} ${route.route}`,
-    input: concreteInput ? restInputForCase(concreteInput) : undefined,
+    input: concreteInput ? restInputForCase(concreteInput, !safeMethod) : undefined,
     reason,
     parameterGeneration,
     metadata: stripUndefined({
@@ -270,6 +285,9 @@ function restRouteCoveragePlanItem(route: WordPressRestRouteDescriptor, method: 
       permission: endpoint?.permission,
       argNames: route.argNames,
       generatedParameters: concreteInput?.generatedParameters,
+      observationCapture: captureMetadata(options),
+      restMutationFixtureOptIn: mutationOptIn,
+      requiredRunnerCapabilities: safeMethod ? REST_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES : restMutationRequiredRunnerCapabilities(normalizedMethod),
     }),
   })
 }
@@ -278,9 +296,13 @@ interface ConcreteRestInput {
   method: string
   path: string
   params?: Record<string, unknown>
+  headers?: Record<string, unknown>
+  bodyJson?: unknown
   user?: string
   session?: string
   generatedParameters?: Record<string, unknown>
+  fixturePlanRef?: string
+  mutationFixtureOperation?: FuzzFixtureSeedOperation
 }
 
 function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, options: WordPressInventoryFuzzSuiteOptions, endpoint?: WordPressRestRouteEndpointDescriptor): ConcreteRestInput | undefined {
@@ -326,8 +348,42 @@ function concreteRestInput(route: WordPressRestRouteDescriptor, method: string, 
   })
 }
 
-function restInputForCase(input: ConcreteRestInput): Record<string, unknown> {
-  return stripUndefined({ method: input.method, path: input.path, params: input.params, user: input.user, session: input.session })
+function concreteRestMutationInput(route: WordPressRestRouteDescriptor, method: string, optIn: RestMutationFixtureOptInContract | undefined): ConcreteRestInput | undefined {
+  if (!optIn) return undefined
+  const operation = optIn.fixturePlan?.operations.find((candidate) => candidate.kind === "mutation" && (candidate.method ?? "").toUpperCase() === method && (candidate.target === route.route || candidate.target !== undefined))
+  if (!operation && !optIn.fixturePlanRef) return undefined
+  const operationInput = operation?.input && typeof operation.input === "object" && !Array.isArray(operation.input) ? operation.input as Record<string, unknown> : undefined
+  const path = typeof operation?.target === "string" ? operation.target : route.route
+  return stripUndefined({
+    method,
+    path,
+    headers: optIn.auth?.headers,
+    params: recordValue(operationInput?.params),
+    bodyJson: operationInput?.bodyJson ?? operationInput?.body_json ?? operationInput?.body ?? operation?.input,
+    user: optIn.auth?.user,
+    session: optIn.auth?.session,
+    fixturePlanRef: optIn.fixturePlanRef ?? optIn.fixturePlan?.id,
+    mutationFixtureOperation: operation,
+  })
+}
+
+function restInputForCase(input: ConcreteRestInput, runtimeAction = false): Record<string, unknown> {
+  return stripUndefined({ type: runtimeAction ? "rest_request" : undefined, method: input.method, path: input.path, params: input.params, headers: input.headers, bodyJson: input.bodyJson, user: input.user, session: input.session, restMutationFixture: input.fixturePlanRef, mutationFixtureOperation: input.mutationFixtureOperation })
+}
+
+function matchingRestMutationOptIn(route: string, method: string, options: WordPressInventoryFuzzSuiteOptions): RestMutationFixtureOptInContract | undefined {
+  return options.restMutationOptIns?.find((optIn) => optIn.route === route && optIn.methods.map((candidate) => candidate.toUpperCase()).includes(method))
+}
+
+function restMutationRequiredRunnerCapabilities(method: string): typeof REST_MUTATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES {
+  const normalizedMethod = method.toUpperCase()
+  const artifactCapability = normalizedMethod === "DELETE" ? "delete-boundary-artifact" : "mutation-isolation-artifact"
+  const methodCapability = normalizedMethod === "DELETE" ? "rest-mutation:delete:delete-boundary-artifact" : `rest-mutation:${normalizedMethod.toLowerCase()}:mutation-isolation-artifact`
+  return { ...REST_MUTATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES, capabilities: [...REST_MUTATION_FUZZ_SUITE_REQUIRED_RUNNER_CAPABILITIES.capabilities, artifactCapability, methodCapability] }
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 function restRoutePathArgNames(route: string): string[] {
@@ -422,7 +478,7 @@ function adminPageCoveragePlanItem(page: WordPressAdminPageDescriptor, options: 
     description: page.pageTitle || page.menuTitle,
     input: page.canAccess === false ? undefined : { args: pageLoadArgs(path, pageLoad.surface, options) },
     reason: page.canAccess === false ? { code: "admin_page_capability_denied", message: "The discovered admin page is not accessible to the current runtime user.", data: { capability: page.capability } } : undefined,
-    metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, parentSlug: page.parentSlug, capability: page.capability, pageLoadMode: pageLoad.mode }),
+    metadata: stripUndefined({ source: "wordpress.admin-page-inventory", menuSlug: page.menuSlug, parentSlug: page.parentSlug, capability: page.capability, pageLoadMode: pageLoad.mode, observationCapture: captureMetadata(options) }),
   })
 }
 
@@ -448,7 +504,7 @@ function frontendUrlCoveragePlanItem(url: WordPressFrontendUrlDescriptor, homeUr
     target: pageLoad.target,
     description: `Load ${path}`,
     input: { args: pageLoadArgs(path, pageLoad.surface, options) },
-    metadata: stripUndefined({ source: "wordpress.frontend-url-inventory", url: url.url, sourceKind: url.source, pattern: url.pattern, query: url.query, pageLoadMode: pageLoad.mode }),
+    metadata: stripUndefined({ source: "wordpress.frontend-url-inventory", url: url.url, sourceKind: url.source, pattern: url.pattern, query: url.query, pageLoadMode: pageLoad.mode, observationCapture: captureMetadata(options) }),
   })
 }
 
@@ -470,7 +526,7 @@ function databaseTableCoveragePlanItem(table: WordPressDatabaseTableDescriptor):
     description: `Inspect ${table.baseName || table.name}`,
     input: executable ? { args: [`operation-json=${JSON.stringify(databaseInspectOperation(table))}`] } : undefined,
     reason: executable ? undefined : { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." },
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification }),
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, baseName: table.baseName, classification: table.classification, observationCapture: missingCaptureMetadata() }),
   })
 }
 
@@ -516,6 +572,16 @@ function frontendPath(url: string, homeUrl: string): string {
 
 function optionalArg(name: string, value: string | undefined): string | undefined {
   return value === undefined ? undefined : `${name}=${value}`
+}
+
+function captureMetadata(options: WordPressInventoryFuzzSuiteOptions): Record<string, unknown> {
+  return options.capture?.length
+    ? { status: "requested-not-captured", requested: [...options.capture], supported: false, reason: "coverage-plan-generation-does-not-capture-runtime-observations" }
+    : missingCaptureMetadata()
+}
+
+function missingCaptureMetadata(): Record<string, unknown> {
+  return { status: "not-requested", supported: false, reason: "coverage-plan-generation-does-not-capture-runtime-observations" }
 }
 
 function restRouteCaseId(route: string, method: string, endpointIndex?: number): string {

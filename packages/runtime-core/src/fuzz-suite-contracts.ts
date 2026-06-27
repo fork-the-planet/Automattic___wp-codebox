@@ -4,6 +4,7 @@ import { fuzzCoveragePlanContract, type FuzzCoveragePlanContract, type FuzzCover
 export const FUZZ_SUITE_SCHEMA = "wp-codebox/fuzz-suite/v1" as const
 export const FUZZ_SUITE_RESULT_SCHEMA = "wp-codebox/fuzz-suite-result/v1" as const
 export const FUZZ_RUNNER_CAPABILITIES_SCHEMA = "wp-codebox/fuzz-runner-capabilities/v1" as const
+export const FUZZ_RUNNER_READINESS_SCHEMA = "wp-codebox/fuzz-runner-readiness/v1" as const
 
 export type FuzzSuiteTargetKind = "ability" | "command" | "http" | "rest" | "runtime" | "runtime-action" | (string & {})
 export type FuzzSuiteCaseStatus = "passed" | "failed" | "error" | "skipped"
@@ -67,8 +68,10 @@ export interface FuzzSuiteContract {
 export interface FuzzSuiteRunnerCapabilities {
   schema?: typeof FUZZ_RUNNER_CAPABILITIES_SCHEMA
   mode: FuzzSuiteRunnerMode
+  entrypoint?: string
   capabilities: string[]
   targetKinds: string[]
+  operationKinds?: string[]
   runtimeActionTypes?: string[]
   commands?: string[]
   unsupportedRequiredCapabilities?: string[]
@@ -78,6 +81,17 @@ export interface FuzzSuiteRunnerCapabilities {
 export interface FuzzRunnerCapabilitiesContract extends FuzzSuiteRunnerCapabilities {
   schema: typeof FUZZ_RUNNER_CAPABILITIES_SCHEMA
   unsupportedRequiredCapabilities: string[]
+}
+
+export interface FuzzRunnerReadinessContract {
+  schema: typeof FUZZ_RUNNER_READINESS_SCHEMA
+  status: "ready" | "unsupported"
+  entrypoint: string
+  mode: FuzzSuiteRunnerMode
+  capabilities: FuzzRunnerCapabilitiesContract
+  operationKinds: string[]
+  unsupportedRequiredCapabilities: string[]
+  metadata?: Record<string, unknown>
 }
 
 export interface FuzzRunnerRequiredCapabilities {
@@ -92,14 +106,17 @@ export interface FuzzRunnerRequiredCapabilities {
 export const PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapabilities = {
   schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
   mode: "php-in-process",
+  entrypoint: "run-fuzz-suite",
   capabilities: ["target:ability", "target:http", "target:rest"],
   targetKinds: ["ability", "http", "rest"],
+  operationKinds: ["read"],
   unsupportedRequiredCapabilities: [],
 }
 
 export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapabilities = {
   schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
   mode: "runtime-backed",
+  entrypoint: "run-fuzz-suite --runner-mode=runtime-backed",
   capabilities: [
     "target:ability",
     "target:command",
@@ -119,8 +136,16 @@ export const RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES: FuzzSuiteRunnerCapab
     "runtime-action:rest_request",
     "runtime-action:wp_cli",
     "db_operation",
+    "rest-mutation:fixture-opt-in",
+    "mutation-isolation-artifact",
+    "delete-boundary-artifact",
+    "rest-mutation:post:mutation-isolation-artifact",
+    "rest-mutation:put:mutation-isolation-artifact",
+    "rest-mutation:patch:mutation-isolation-artifact",
+    "rest-mutation:delete:delete-boundary-artifact",
   ],
   targetKinds: ["ability", "command", "http", "rest", "runtime", "runtime-action"],
+  operationKinds: ["read", "crud", "mutation-isolation", "delete-boundary"],
   runtimeActionTypes: ["admin_page", "browser", "browser_probe", "crud_operation", "db_operation", "editor_open", "page", "php", "rest_request", "wp_cli"],
   commands: ["wp-codebox.checkpoint-create", "wp-codebox.checkpoint-list", "wp-codebox.checkpoint-restore", "wordpress.ability", "wordpress.browser-actions", "wordpress.browser-page-load", "wordpress.browser-probe", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.editor-open", "wordpress.http-request", "wordpress.rest-performance-observation", "wordpress.rest-request", "wordpress.run-php", "wordpress.run-workload", "wordpress.server-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.wp-cli"],
   unsupportedRequiredCapabilities: [],
@@ -271,11 +296,29 @@ export function fuzzRunnerCapabilitiesContract(input: FuzzSuiteRunnerCapabilitie
   return stripUndefined({
     schema: FUZZ_RUNNER_CAPABILITIES_SCHEMA,
     mode: input.mode,
+    entrypoint: input.entrypoint,
     capabilities: dedupeStrings(input.capabilities),
     targetKinds: dedupeStrings(input.targetKinds),
+    operationKinds: input.operationKinds ? dedupeStrings(input.operationKinds) : undefined,
     runtimeActionTypes: input.runtimeActionTypes ? dedupeStrings(input.runtimeActionTypes) : undefined,
     commands: input.commands ? dedupeStrings(input.commands) : undefined,
     unsupportedRequiredCapabilities: unsupportedRequiredFuzzRunnerCapabilities(requiredCapabilities, input),
+    metadata: input.metadata,
+  })
+}
+
+export function fuzzRunnerReadinessContract(input: FuzzSuiteRunnerCapabilities, required?: FuzzSuiteContract | FuzzRunnerRequiredCapabilities | readonly string[]): FuzzRunnerReadinessContract {
+  const capabilities = fuzzRunnerCapabilitiesContract(input, required)
+  const unsupportedRequiredCapabilities = capabilities.unsupportedRequiredCapabilities
+  const status: FuzzRunnerReadinessContract["status"] = unsupportedRequiredCapabilities.length > 0 ? "unsupported" : "ready"
+  return stripUndefined({
+    schema: FUZZ_RUNNER_READINESS_SCHEMA,
+    status,
+    entrypoint: input.entrypoint ?? "run-fuzz-suite",
+    mode: input.mode,
+    capabilities,
+    operationKinds: capabilities.operationKinds ?? [],
+    unsupportedRequiredCapabilities,
     metadata: input.metadata,
   })
 }

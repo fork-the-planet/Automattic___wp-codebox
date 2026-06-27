@@ -82,9 +82,12 @@ assert.deepEqual(noEditorTargets.cases.map((fuzzCase) => fuzzCase.id), [
 
 const coveragePlan = wordpressBlockDiscoveryToCoveragePlan(discovery, { id: "blocks", editorPostType: "page" })
 assert.equal(coveragePlan.schema, "wp-codebox/fuzz-coverage-plan/v1")
-assert.deepEqual({ discovered: coveragePlan.summary.discovered, generated: coveragePlan.summary.generated, executable: coveragePlan.summary.executable, executed: coveragePlan.summary.executed, skipped: coveragePlan.summary.skipped, untested: coveragePlan.summary.untested }, { discovered: 6, generated: 6, executable: 5, executed: 0, skipped: 0, untested: 1 })
-assert.equal(coveragePlan.untested[0]?.reason?.code, "block_inserter_unsupported")
-assert.deepEqual(coveragePlan.untested[0]?.reason?.data?.unsupportedCapabilities, ["block:inserter"])
+assert.deepEqual({ discovered: coveragePlan.summary.discovered, generated: coveragePlan.summary.generated, executable: coveragePlan.summary.executable, executed: coveragePlan.summary.executed, skipped: coveragePlan.summary.skipped, untested: coveragePlan.summary.untested }, { discovered: 6, generated: 6, executable: 3, executed: 0, skipped: 0, untested: 3 })
+assert.equal(coveragePlan.untested.some((item) => item.reason?.code === "block_inserter_unsupported"), true)
+assert.equal(coveragePlan.untested.some((item) => item.reason?.code === "block_editor_insert_save_runtime_unsupported"), true)
+assert.deepEqual(coveragePlan.untested.find((item) => item.reason?.code === "block_inserter_unsupported")?.reason?.data?.unsupportedCapabilities, ["block:inserter"])
+assert.equal(coveragePlan.generated.find((item) => item.id === "block-core-paragraph-editor-insert-page-sample-attributes")?.input, undefined)
+assert.deepEqual(coveragePlan.generated.find((item) => item.id === "block-core-paragraph-server-render-sample-attributes")?.metadata?.observationCapture, { status: "not-requested", supported: false, reason: "coverage-plan-generation-does-not-capture-runtime-observations" })
 assert.equal(coveragePlan.parameterGenerationHooks?.[0]?.id, "wordpress.block-attribute-samples")
 
 console.log("wordpress block fuzz suite ok")

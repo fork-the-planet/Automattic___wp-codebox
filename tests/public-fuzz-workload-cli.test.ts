@@ -9,9 +9,11 @@ process.env.WP_CODEBOX_NO_JSPI_RESPAWN = "1"
 
 const help = await captureStdout(async () => {
   assert.equal(await runCli(["run-fuzz-suite", "--help"]), 0)
+  assert.equal(await runCli(["fuzz", "readiness", "--help"]), 0)
   assert.equal(await runCli(["run-wordpress-workload", "--help"]), 0)
 })
 assert.match(help, /run-fuzz-suite/)
+assert.match(help, /fuzz readiness/)
 assert.match(help, /run-wordpress-workload/)
 assert.match(help, /--input-file/)
 assert.match(help, /--runner-mode=simple\|runtime-backed/)
@@ -35,7 +37,25 @@ return static function ( array $input, array $args ): array {
         ),
     );
 };
-`, "utf8")
+  `, "utf8")
+
+  const readinessOutput = await captureStdout(async () => {
+    assert.equal(await runCli(["fuzz", "readiness", "--format=json"]), 0)
+  })
+  const readinessJson = JSON.parse(readinessOutput)
+  assert.equal(readinessJson.schema, "wp-codebox/fuzz-runner-readiness/v1")
+  assert.equal(readinessJson.status, "ready")
+  assert.equal(readinessJson.mode, "runtime-backed")
+  assert.equal(readinessJson.entrypoint, "run-fuzz-suite --runner-mode=runtime-backed")
+  assert.deepEqual(readinessJson.operationKinds, ["read", "crud", "mutation-isolation", "delete-boundary"])
+  assert.equal(readinessJson.capabilities.capabilities.includes("delete"), false)
+  assert.equal(readinessJson.capabilities.capabilities.includes("delete-boundary-artifact"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:post:mutation-isolation-artifact"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:put:mutation-isolation-artifact"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:patch:mutation-isolation-artifact"), true)
+  assert.equal(readinessJson.capabilities.capabilities.includes("rest-mutation:delete:delete-boundary-artifact"), true)
+  assert.equal(readinessJson.capabilities.commands.includes("wordpress.rest-request"), true)
+  assert.equal(readinessJson.capabilities.runtimeActionTypes.includes("editor_insert_save"), false)
 
   const fuzzInput = join(directory, "fuzz.json")
   await writeFile(fuzzInput, JSON.stringify({

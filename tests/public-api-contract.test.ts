@@ -33,8 +33,11 @@ import {
   CODEBOX_RUN_FUZZ_SUITE_ABILITY,
   CODEBOX_RUN_WORDPRESS_WORKLOAD_ABILITY,
   FUZZ_COVERAGE_PLAN_SCHEMA,
+  FUZZ_FIXTURE_PLAN_SCHEMA,
+  FUZZ_RUNNER_READINESS_SCHEMA,
   FUZZ_SUITE_RESULT_SCHEMA,
   FUZZ_SUITE_SCHEMA,
+  REST_MUTATION_FIXTURE_OPT_IN_SCHEMA,
   DELETE_BOUNDARY_ARTIFACT_SCHEMA,
   MUTATION_ISOLATION_ARTIFACT_SCHEMA,
   PARENT_TOOL_BRIDGE_SCHEMA,
@@ -45,6 +48,8 @@ import {
   RUNNER_WORKSPACE_BACKEND_ABILITY_KEYS,
   RUNNER_WORKSPACE_BACKEND_FILTER,
   fuzzCoveragePlanContract,
+  fuzzFixturePlanContract,
+  fuzzRunnerReadinessContract,
   TASK_INPUT_JSON_SCHEMA,
 } from "../packages/runtime-core/src/public.js"
 import * as publicApi from "../packages/runtime-core/src/public.js"
@@ -152,6 +157,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
   "./evidence-artifact-envelope.js",
   "./fanout-contracts.js",
   "./fixture-import-primitives.js",
+  "./fuzz-fixture-plan-contracts.js",
   "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
   "./fuzz-suite-runner.js",
@@ -209,6 +215,7 @@ assert.deepEqual(barrelExportModules(publicBarrel), [
 assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./browser-probe-contract.js",
   "./command-registry.js",
+  "./fuzz-fixture-plan-contracts.js",
   "./fuzz-coverage-plan-contracts.js",
   "./fuzz-suite-contracts.js",
   "./mutation-isolation-contracts.js",
@@ -466,6 +473,9 @@ assert.equal(performanceObservation({ command: "wordpress.run-php", timing: { du
 assert.equal(publicApi.mutationIsolationArtifact({ operation: "rest_request", target: "/wp/v2/posts", method: "POST" }).schema, MUTATION_ISOLATION_ARTIFACT_SCHEMA)
 assert.equal(publicApi.deleteBoundaryArtifact({ operation: "rest_request", target: "/wp/v2/posts/1", method: "DELETE" }).schema, DELETE_BOUNDARY_ARTIFACT_SCHEMA)
 assert.equal(fuzzCoveragePlanContract({ id: "coverage-boundary" }).schema, FUZZ_COVERAGE_PLAN_SCHEMA)
+assert.equal(fuzzFixturePlanContract({ id: "fixture-plan-boundary" }).schema, FUZZ_FIXTURE_PLAN_SCHEMA)
+assert.equal(fuzzRunnerReadinessContract(publicApi.RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES).schema, FUZZ_RUNNER_READINESS_SCHEMA)
+assert.equal(publicApi.restMutationFixtureOptInContract({ id: "rest-mutation-opt-in", route: "/example/v1/items", methods: ["post", "DELETE"] }).schema, REST_MUTATION_FIXTURE_OPT_IN_SCHEMA)
 assert.equal(fuzzSuiteContract({ id: "ability-boundary", cases: [{ id: "empty-input" }] }).schema, FUZZ_SUITE_SCHEMA)
 assert.deepEqual(fuzzSuiteResultEnvelope({
   suite: { id: "ability-boundary" },

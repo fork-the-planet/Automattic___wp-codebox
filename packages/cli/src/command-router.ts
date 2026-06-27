@@ -12,6 +12,10 @@ const cliCommandRoutes = {
   "run-agent-task": "agentTaskRun",
   "run-fuzz-suite": "runFuzzSuite",
   "run-wordpress-workload": "runWordPressWorkload",
+  fuzz: {
+    readiness: "fuzzReadiness",
+    capabilities: "fuzzReadiness",
+  },
   recipe: {
     validate: "recipeValidate",
     build: "recipeBuild",

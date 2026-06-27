@@ -1,6 +1,6 @@
 import { stripUndefined } from "./object-utils.js"
 import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
-import { DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_SCHEMA, isRestMutationMethod } from "./mutation-isolation-contracts.js"
+import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, isRestMutationMethod } from "./mutation-isolation-contracts.js"
 import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
@@ -644,8 +644,8 @@ function restFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         return unsupportedInputAdapterResolution(fuzzCase, target, "Expected REST target id/entrypoint or input path/route.", { adapterKind: "rest" })
       }
       const method = stringField(input.payload, "method") ?? "GET"
-      if (isRestMutationMethod(method) && !fuzzSuiteAllowsRestMutations(suite, fuzzCase, input.payload)) {
-        return unsupportedInputAdapterResolution(fuzzCase, target, "REST mutation fuzzing requires explicit allowRestMutations opt-in on the suite, case, or input.", { adapterKind: "rest", mappedCommand: "wordpress.rest-request", method, path, mutationSkipped: true })
+      if (isRestMutationMethod(method) && !fuzzSuiteRestMutationOptIn(suite, fuzzCase, input.payload)) {
+        return unsupportedInputAdapterResolution(fuzzCase, target, "REST mutation fuzzing requires an explicit rest-mutation fixture opt-in with fixture input, auth policy, and rollback policy.", { adapterKind: "rest", mappedCommand: "wordpress.rest-request", method, path, mutationSkipped: true, requiredContract: "wp-codebox/rest-mutation-fixture-opt-in/v1" })
       }
       return {
         status: "supported",
@@ -719,8 +719,9 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
           return unsupportedInputAdapterResolution(fuzzCase, target, "Expected rest_request runtime-action input path or route.", { adapterKind: "runtime-action", actionType: input.payload.type })
         }
         const method = stringField(input.payload, "method") ?? "GET"
-        if (isRestMutationMethod(method) && !fuzzSuiteAllowsRestMutations(suite, fuzzCase, input.payload)) {
-          return unsupportedInputAdapterResolution(fuzzCase, target, "REST mutation fuzzing requires explicit allowRestMutations opt-in on the suite, case, or input.", { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.rest-request", method, path, mutationSkipped: true })
+        const mutationOptIn = isRestMutationMethod(method) ? fuzzSuiteRestMutationOptIn(suite, fuzzCase, input.payload) : undefined
+        if (isRestMutationMethod(method) && !mutationOptIn) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "REST mutation fuzzing requires an explicit rest-mutation fixture opt-in with fixture input, auth policy, and rollback policy.", { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.rest-request", method, path, mutationSkipped: true, requiredContract: "wp-codebox/rest-mutation-fixture-opt-in/v1" })
         }
         return {
           status: "supported",
@@ -740,7 +741,7 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
             path,
             timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs),
           }) as ExecutionSpec,
-          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.rest-request" },
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.rest-request", restMutationFixtureOptIn: mutationOptIn },
         }
       }
 
@@ -1093,11 +1094,11 @@ function fuzzSuiteRuntimeActionMutationArtifactRefs(observation: RuntimeActionOb
     }
     return [stripUndefined({
       path,
-      kind: schema === DELETE_BOUNDARY_ARTIFACT_SCHEMA ? "delete-boundary" : "mutation-isolation",
+      kind: schema === DELETE_BOUNDARY_ARTIFACT_SCHEMA ? DELETE_BOUNDARY_ARTIFACT_KIND : MUTATION_ISOLATION_ARTIFACT_KIND,
       contentType: "application/json",
       sha256: typeof artifact.sha256 === "string" ? artifact.sha256 : undefined,
       bytes: typeof artifact.bytes === "number" ? artifact.bytes : undefined,
-      name: schema === DELETE_BOUNDARY_ARTIFACT_SCHEMA ? "delete-boundary" : "mutation-isolation",
+      name: schema === DELETE_BOUNDARY_ARTIFACT_SCHEMA ? DELETE_BOUNDARY_ARTIFACT_KIND : MUTATION_ISOLATION_ARTIFACT_KIND,
       metadata: { schema, method: artifact.method, target: artifact.target, status: artifact.status, restore: recordValue(artifact.restore) },
     })]
   })
@@ -1140,9 +1141,43 @@ function fuzzSuiteReplayMetadata(suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCa
   })
 }
 
-function fuzzSuiteAllowsRestMutations(suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCase, input?: Record<string, unknown>): boolean {
-  const candidates = [input, fuzzCase.metadata, suite.metadata]
-  return candidates.some((metadata) => Boolean(metadata?.allowRestMutations ?? metadata?.allow_rest_mutations))
+function fuzzSuiteRestMutationOptIn(suite: FuzzSuiteContract, fuzzCase: FuzzSuiteCase, input?: Record<string, unknown>): Record<string, unknown> | undefined {
+  const method = stringField(input ?? {}, "method")?.toUpperCase() ?? "GET"
+  const path = stringField(input ?? {}, "path") ?? stringField(input ?? {}, "route")
+  const candidates = [
+    recordValue(input?.restMutationFixtureOptIn) ?? recordValue(input?.rest_mutation_fixture_opt_in),
+    recordValue(fuzzCase.metadata?.restMutationFixtureOptIn) ?? recordValue(fuzzCase.metadata?.rest_mutation_fixture_opt_in),
+    ...arrayRecords(suite.metadata?.restMutationFixtureOptIns ?? suite.metadata?.rest_mutation_fixture_opt_ins),
+  ].filter((candidate): candidate is Record<string, unknown> => Boolean(candidate))
+  return candidates.find((candidate) => restMutationOptInMatches(candidate, method, path) && restMutationOptInHasExecutionPolicy(candidate))
+}
+
+function restMutationOptInMatches(optIn: Record<string, unknown>, method: string, path: string | undefined): boolean {
+  if (optIn.schema !== "wp-codebox/rest-mutation-fixture-opt-in/v1") return false
+  const methods = arrayRecordsOrStrings(optIn.methods).map((candidate) => String(candidate).toUpperCase())
+  if (!methods.includes(method)) return false
+  const route = typeof optIn.route === "string" ? optIn.route : undefined
+  return !route || !path || route === path || restRoutePatternMatches(route, path)
+}
+
+function restMutationOptInHasExecutionPolicy(optIn: Record<string, unknown>): boolean {
+  const fixturePlan = recordValue(optIn.fixturePlan) ?? recordValue(optIn.fixture_plan)
+  const fixturePlanRef = typeof optIn.fixturePlanRef === "string" ? optIn.fixturePlanRef : typeof optIn.fixture_plan_ref === "string" ? optIn.fixture_plan_ref : undefined
+  const rollbackPolicy = recordValue(optIn.rollbackPolicy) ?? recordValue(optIn.rollback_policy)
+  return Boolean((fixturePlan || fixturePlanRef) && recordValue(optIn.auth) && rollbackPolicy)
+}
+
+function restRoutePatternMatches(route: string, path: string): boolean {
+  const expression = `^${route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\(\\\?P<[^>]+>[^)]+\\\)/g, "[^/]+")}$`
+  return new RegExp(expression).test(path)
+}
+
+function arrayRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.flatMap((item) => recordValue(item) ? [item as Record<string, unknown>] : []) : []
+}
+
+function arrayRecordsOrStrings(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
 }
 
 function fuzzSuiteRuntimeActionMetadataInput(input: unknown, action: RuntimeAction): unknown {
