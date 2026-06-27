@@ -213,6 +213,10 @@ The stable public surface is grouped by lifecycle area rather than by product:
   starts a Codebox browser preview from the boot DTO and returns
   `wp-codebox/browser-preview-start-result/v1`; `runBrowserSessionRecipe()`
   executes the existing runtime helper and returns the stable browser-run DTO;
+  `createBrowserConnectorRequest()` builds the canonical
+  `wp-codebox/browser-connector-request/v1` envelope for connector-scoped browser
+  calls, and `executeBrowserConnectorRequest()` adapts that envelope through the
+  Codebox-owned provider bridge without exposing the legacy proxy transport shape;
   `methods` exposes stable references to the existing browser runtime helpers for
   callers that need legacy raw results internally. TypeScript consumers outside
   the browser can use the matching DTO helpers exported from
