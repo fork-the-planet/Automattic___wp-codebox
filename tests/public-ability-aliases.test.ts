@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
+const taskDescriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-agent-task-ability-descriptors.php", "utf8")
 const descriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-browser-ability-descriptors.php", "utf8")
 const schemasPhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-schemas.php", "utf8")
 const apiPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-api.php", "utf8")
@@ -14,7 +15,7 @@ const taskAbilities = new Map([
 
 for (const [ability, expectation] of taskAbilities) {
   assert.match(abilitiesPhp, new RegExp(`wp_register_ability\\(\\s*'${ability}',\\s*\\$${expectation.variable}\\s*\\)`))
-  assert.match(abilitiesPhp, new RegExp(`\\$${expectation.variable}\\s*=\\s*array\\([\\s\\S]*'execute_callback'\\s*=>\\s*array\\(\\s*self::class,\\s*'${expectation.callback}'\\s*\\)`))
+  assert.match(taskDescriptorsPhp, new RegExp(`'execute_callback'\\s*=>\\s*array\\(\\s*WP_Codebox_Abilities::class,\\s*'${expectation.callback}'\\s*\\)`))
 }
 
 for (const removedAlias of ["wp-codebox/run-sandbox-task", "wp-codebox/run-sandbox-task-batch", "wp-codebox/run-sandbox-task-fanout"]) {
