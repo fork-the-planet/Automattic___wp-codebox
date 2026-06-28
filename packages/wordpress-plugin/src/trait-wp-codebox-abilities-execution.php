@@ -10,6 +10,9 @@ defined( 'ABSPATH' ) || exit;
 if ( ! class_exists( 'WP_Codebox_Browser_Contained_Site_Service' ) ) {
 	require_once __DIR__ . '/class-wp-codebox-browser-contained-site-service.php';
 }
+if ( ! class_exists( 'WP_Codebox_Browser_Task_Contract_Service' ) ) {
+	require_once __DIR__ . '/class-wp-codebox-browser-task-contract-service.php';
+}
 
 trait WP_Codebox_Abilities_Execution {
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
@@ -2603,81 +2606,23 @@ public static function hydrate_browser_blueprint_ref( array $input ): array|WP_E
 	return WP_Codebox_Browser_Task_Builder::hydrate_browser_blueprint_ref( $input );
 }
 
+/** @return WP_Codebox_Browser_Task_Contract_Service */
+private static function browser_task_contract_service(): WP_Codebox_Browser_Task_Contract_Service {
+	return new WP_Codebox_Browser_Task_Contract_Service(
+		static function ( string $name, array $args ): mixed {
+			return self::{$name}( ...$args );
+		}
+	);
+}
+
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_materializer_contract( array $input ): array|WP_Error {
-	$return_raw = self::include_raw_browser_contract( $input, 'materializer' );
-	$input['include_internal_browser_session'] = true;
-	$session = self::create_browser_playground_session( $input );
-	if ( is_wp_error( $session ) ) {
-		return $session;
-	}
-
-	if ( true !== ( $session['success'] ?? false ) ) {
-		$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
-		$contract         = array_filter(
-			array(
-				'success'          => false,
-				'schema'           => 'wp-codebox/browser-materializer-contract/v1',
-				'execution'        => 'browser-playground',
-				'execution_scope'  => 'disposable-playground',
-				'permission_model' => 'runtime-principal',
-				'status'           => (string) ( $session['status'] ?? 'blocked' ),
-				'error'            => is_array( $session['error'] ?? null ) ? $session['error'] : array(),
-				'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
-				'contained_site'   => is_array( $session['contained_site'] ?? null ) ? $session['contained_site'] : array(),
-				'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
-				'signals'          => is_array( $session['signals'] ?? null ) ? $session['signals'] : array(),
-			),
-			static fn( mixed $value ): bool => array() !== $value && '' !== $value
-		);
-		$contract['compact'] = self::compact_browser_materializer_contract_dto( $contract );
-
-		return $return_raw ? $contract : $contract['compact'];
-	}
-
-	$session_envelope = is_array( $session['session'] ?? null ) ? $session['session'] : array();
-
-	$contract = array(
-		'success'          => true,
-		'schema'           => 'wp-codebox/browser-materializer-contract/v1',
-		'execution'        => 'browser-playground',
-		'execution_scope'  => 'disposable-playground',
-		'permission_model' => 'runtime-principal',
-		'session_id'       => (string) ( $session_envelope['id'] ?? '' ),
-		'contained_site'   => is_array( $session['contained_site'] ?? null ) ? $session['contained_site'] : array(),
-		'authorization'    => is_array( $session_envelope['authorization'] ?? null ) ? $session_envelope['authorization'] : self::browser_session_authorization( $input ),
-		'task_input'       => is_array( $session['task_input'] ?? null ) ? $session['task_input'] : array(),
-		'task_payload'     => is_array( $session['task_payload'] ?? null ) ? $session['task_payload'] : array(),
-		'materialization'  => is_array( $session['materialization'] ?? null ) ? $session['materialization'] : array(),
-		'recipe'           => is_array( $session['recipe'] ?? null ) ? $session['recipe'] : array(),
-		'playground'       => is_array( $session['playground'] ?? null ) ? $session['playground'] : array(),
-		'runtime'          => is_array( $session['runtime'] ?? null ) ? $session['runtime'] : array(),
-		'artifacts'        => is_array( $session['artifacts'] ?? null ) ? $session['artifacts'] : array(),
-		'provenance'       => array(
-			'generated_by' => 'wp-codebox/browser-materializer-contract',
-			'source'       => 'wp-codebox/create-browser-playground-session',
-		),
-	);
-	$contract['compact'] = self::compact_browser_materializer_contract_dto( $contract );
-
-	return $return_raw ? $contract : $contract['compact'];
+	return self::browser_task_contract_service()->create_browser_materializer_contract( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. @return array<string,mixed>|WP_Error */
 public static function create_browser_task_contract( array $input ): array|WP_Error {
-	$return_raw = self::include_raw_browser_contract( $input, 'task' );
-	$contract = self::prepare_browser_task_contract( $input );
-	if ( is_wp_error( $contract ) ) {
-		return $contract;
-	}
-	if ( true === ( $input['execute_phases'] ?? false ) ) {
-		$contract = self::execute_browser_task_phases( $contract );
-		if ( is_wp_error( $contract ) ) {
-			return $contract;
-		}
-	}
-
-	return $return_raw ? $contract : ( is_array( $contract['compact'] ?? null ) ? $contract['compact'] : self::compact_browser_task_contract_dto( $contract ) );
+	return self::browser_task_contract_service()->create_browser_task_contract( $input );
 }
 
 /** @param array<string,mixed> $input Ability input. */

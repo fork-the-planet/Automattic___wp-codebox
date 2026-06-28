@@ -29,6 +29,7 @@ require_once __DIR__ . '/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/class-wp-codebox-agent-task-ability-descriptors.php';
 require_once __DIR__ . '/class-wp-codebox-browser-ability-descriptors.php';
 require_once __DIR__ . '/class-wp-codebox-browser-contained-site-service.php';
+require_once __DIR__ . '/class-wp-codebox-browser-task-contract-service.php';
 
 final class WP_Codebox_Abilities {
 
