@@ -127,7 +127,11 @@ register_test_ability( 'fake-runner-workspace-backend/run-runner-workspace-comma
 register_test_ability( 'fake-runner-workspace-backend/publish-runner-workspace', static fn( array $input ): array => array( 'success' => true, 'workspace_handle' => $input['workspace_handle'], 'head' => 'agent/change', 'commit_sha' => 'abc123', 'pr_number' => 7, 'pr_url' => 'https://example.test/pr/7' ) );
 
 $abilities_source = file_get_contents( __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-abilities.php' );
+$descriptor_source = file_get_contents( __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-ability-descriptors.php' );
 assert_same_contract( true, is_string( $abilities_source ), 'ability source is readable' );
+assert_same_contract( true, is_string( $descriptor_source ), 'runner workspace descriptor source is readable' );
+assert_same_contract( true, str_contains( $abilities_source, 'WP_Codebox_Runner_Workspace_Ability_Descriptors::descriptors' ), 'ability hub registers runner workspace descriptors' );
+
 $public_runner_workspace_abilities = array(
 	'wp-codebox/runner-workspace-prepare',
 	'wp-codebox/runner-workspace-publish',
@@ -135,7 +139,7 @@ $public_runner_workspace_abilities = array(
 	'wp-codebox/runner-workspace-command',
 );
 foreach ( $public_runner_workspace_abilities as $ability_name ) {
-	assert_same_contract( true, str_contains( $abilities_source, "wp_register_ability(\n\t\t\t\t'" . $ability_name . "'" ), $ability_name . ' registered as a public wrapper' );
+	assert_same_contract( true, str_contains( $descriptor_source, "'" . $ability_name . "'" ), $ability_name . ' has a public wrapper descriptor' );
 }
 
 $prepared = WP_Codebox_Abilities::prepare_runner_workspace( array( 'repo' => 'Automattic/wp-codebox', 'checkout_path' => '/tmp/checkout', 'branch' => 'agent/change' ) );
