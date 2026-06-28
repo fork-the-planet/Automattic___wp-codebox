@@ -8,7 +8,6 @@ import {
   WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
-  DELETE_BOUNDARY_ARTIFACT_KIND,
   createWordPressRuntimeCheckpoint,
   executeFuzzSuite,
   openWordPressAdminPage,
@@ -30,7 +29,6 @@ import {
   deleteBoundaryArtifact,
   isRestMutationMethod,
   mutationArtifactDigest,
-  MUTATION_ISOLATION_ARTIFACT_KIND,
   mutationIsolationArtifact,
   type ArtifactBundle,
   type ArtifactManifest,
@@ -279,6 +277,9 @@ async function executeRollbackSafeRestMutation(
     name: checkpointName,
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, method, operation: "rest_request" },
   })
+  if (createStep.execution.exitCode !== 0) {
+    throw new Error(`Checkpoint create failed for rollback-isolated REST mutation ${input.case.id}: ${createStep.execution.stderr}`)
+  }
   const observation = await requestWordPressRest(episode, input.action)
   const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
   const status = restObservationStatus(observation)
@@ -299,18 +300,13 @@ async function executeRollbackSafeRestMutation(
   const artifactWithRef = {
     ...artifact,
     artifactPath: method === "DELETE" ? `files/delete-boundaries/${input.case.id}.json` : `files/mutation-isolation/${input.case.id}.json`,
+    persisted: false,
   }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = {
     ...artifactWithRef,
     sha256: mutationArtifactDigest(artifactWithRef),
     bytes: Buffer.byteLength(content),
-  }
-  const artifactRef: RuntimeEpisodeTraceRef = {
-    kind: method === "DELETE" ? DELETE_BOUNDARY_ARTIFACT_KIND : MUTATION_ISOLATION_ARTIFACT_KIND,
-    id: `${input.case.id}:${artifactWithDigest.artifactKind}`,
-    path: artifactWithDigest.artifactPath,
-    digest: { algorithm: "sha256", value: artifactWithDigest.sha256 },
   }
   const data = {
     ...observation.data,
@@ -320,7 +316,7 @@ async function executeRollbackSafeRestMutation(
   return {
     ...observation,
     data,
-    artifactRefs: [...(observation.artifactRefs ?? []), artifactRef],
+    artifactRefs: observation.artifactRefs,
     digest: digestRuntimeActionObservationData(data),
   }
 }
@@ -537,40 +533,32 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
     artifactRefs: result.artifactRefs,
     metadata: { suiteId: result.suite.id, runnerMode: result.metadata?.runnerMode },
   })
-  const homeboyObservationSet = homeboyFuzzObservationSetArtifact(result, observations)
-  const homeboyHotspotSet = homeboyFuzzHotspotSetArtifact(result, homeboyObservationSet.observations)
+  const observationSet = fuzzObservationSetArtifact(result, observations)
+  const hotspotSet = fuzzHotspotSetArtifact(result, observationSet.observations)
   const content = `${JSON.stringify(artifact, null, 2)}\n`
-  const homeboyObservationContent = `${JSON.stringify(homeboyObservationSet, null, 2)}\n`
-  const homeboyHotspotContent = `${JSON.stringify(homeboyHotspotSet, null, 2)}\n`
-  const ref: FuzzSuiteArtifactRef = {
-    path: "files/wordpress-hotspots.json",
-    kind: "wordpress-hotspots",
-    contentType: "application/json",
-    sha256: createHash("sha256").update(content).digest("hex"),
-    bytes: Buffer.byteLength(content),
-    name: "wordpress-hotspots",
-    metadata: { schema: WORDPRESS_HOTSPOTS_SCHEMA, source: "executeWordPressFuzzSuite" },
+  const observationContent = `${JSON.stringify(observationSet, null, 2)}\n`
+  const hotspotContent = `${JSON.stringify(hotspotSet, null, 2)}\n`
+  const artifactMetadata = {
+    wordpressHotspots: inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
+    fuzzObservationSet: inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
+    fuzzHotspotSet: inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
   }
-  const homeboyObservationRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-observations.json", "fuzz-observation-set", "homeboy/fuzz-observation-set/v1", homeboyObservationContent)
-  const homeboyHotspotRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-hotspots.json", "fuzz-hotspot-set", "homeboy/fuzz-hotspot-set/v1", homeboyHotspotContent)
-  const artifactRefs = dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref, homeboyObservationRef, homeboyHotspotRef])
+  const artifactRefs = dedupeFuzzSuiteArtifactRefs(result.artifactRefs)
   const linkedMetadataArtifacts = {
     ...(recordValue(result.metadata?.artifacts) ?? {}),
-    wordpressHotspots: ref,
-    fuzzObservationSet: homeboyObservationRef,
-    fuzzHotspotSet: homeboyHotspotRef,
+    ...artifactMetadata,
   }
   const resultArtifactContent = `${JSON.stringify({ ...result, artifactRefs, metadata: { ...result.metadata, artifacts: linkedMetadataArtifacts } }, null, 2)}\n`
-  const resultRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-result.json", "fuzz-suite-result", result.schema, resultArtifactContent)
+  const resultMetadata = inlineArtifactMetadata("fuzz-suite-result", result.schema, resultArtifactContent)
 
   return {
     ...result,
-    artifactRefs: dedupeFuzzSuiteArtifactRefs([...artifactRefs, resultRef]),
+    artifactRefs,
     metadata: {
       ...result.metadata,
       artifacts: {
         ...linkedMetadataArtifacts,
-        fuzzResult: resultRef,
+        fuzzResult: resultMetadata,
       },
     },
   }
@@ -585,22 +573,22 @@ function pushHotspotObservation(out: WordPressHotspotObservationInput[], observa
   })
 }
 
-function homeboyArtifactRef(path: string, kind: string, schema: string, content: string): FuzzSuiteArtifactRef {
+function inlineArtifactMetadata(kind: string, schema: string, content: string): Record<string, unknown> {
   return {
-    path,
     kind,
     contentType: "application/json",
     sha256: createHash("sha256").update(content).digest("hex"),
     bytes: Buffer.byteLength(content),
     name: kind,
-    metadata: { schema, source: "executeWordPressFuzzSuite" },
+    persisted: false,
+    metadata: { schema, source: "executeWordPressFuzzSuite", storage: "inline-metadata" },
   }
 }
 
-function homeboyFuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): { schema: string; generated_at: string; source: string; observations: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
-  const flattened = observations.flatMap((input) => homeboyFuzzObservations(input))
+function fuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): { schema: string; generated_at: string; source: string; observations: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
+  const flattened = observations.flatMap((input) => fuzzObservations(input))
   return {
-    schema: "homeboy/fuzz-observation-set/v1",
+    schema: "wp-codebox/fuzz-observation-set/v1",
     generated_at: new Date().toISOString(),
     source: "wp-codebox",
     observations: flattened,
@@ -613,7 +601,7 @@ function homeboyFuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, obse
   }
 }
 
-function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observations: Array<Record<string, unknown>>): { schema: string; generated_at: string; source: string; hotspots: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
+function fuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observations: Array<Record<string, unknown>>): { schema: string; generated_at: string; source: string; hotspots: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
   const grouped = new Map<string, Record<string, unknown>[]>()
   for (const observation of observations) {
     const key = [stringValue(observation.case_id), stringValue(observation.target_id), stringValue(observation.subject), stringValue(observation.metric)].join("|")
@@ -632,7 +620,7 @@ function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observat
       metric: first.metric,
       value,
       unit: first.unit,
-      score: homeboyHotspotScore(stringValue(first.metric), value),
+      score: fuzzHotspotScore(stringValue(first.metric), value),
       sample_count: items.reduce((sum, item) => sum + (numberValue(item.sample_count) ?? 1), 0),
       metadata: { sources: items.length },
     }
@@ -640,7 +628,7 @@ function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observat
   const maxScore = scored[0]?.score ?? 0
   const hotspots = scored.map((item, index) => ({ ...item, rank: index + 1, relative_score: maxScore > 0 ? Number((item.score / maxScore).toFixed(6)) : 0 }))
   return {
-    schema: "homeboy/fuzz-hotspot-set/v1",
+    schema: "wp-codebox/fuzz-hotspot-set/v1",
     generated_at: new Date().toISOString(),
     source: "wp-codebox",
     hotspots,
@@ -649,7 +637,7 @@ function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observat
   }
 }
 
-function homeboyFuzzObservations(input: WordPressHotspotObservationInput): Array<Record<string, unknown>> {
+function fuzzObservations(input: WordPressHotspotObservationInput): Array<Record<string, unknown>> {
   const observation = input.observation
   const metadata = recordValue(input.metadata) ?? {}
   const common = {
@@ -661,16 +649,16 @@ function homeboyFuzzObservations(input: WordPressHotspotObservationInput): Array
     metadata: { source: observation.source, execution_id: stringValue(observation.metadata?.executionId) },
   }
   return [
-    homeboyFuzzObservation(common, "timing", "duration-ms", observation.timing?.durationMs, "ms"),
-    homeboyFuzzObservation(common, "database", "query-count", observation.database?.queryCount, "count"),
-    homeboyFuzzObservation(common, "database", "query-time-ms", observation.database?.totalTimeMs, "ms"),
-    homeboyFuzzObservation(common, "memory", "memory-delta-bytes", observation.memory?.deltaBytes, "bytes"),
-    homeboyFuzzObservation(common, "network", "network-failures", observation.network?.failures, "count"),
-    ...Object.entries(observation.browser?.metrics ?? {}).map(([name, value]) => homeboyFuzzObservation({ ...common, subject: `${common.subject}:${name}` }, "browser", name, value, undefined)),
+    fuzzObservation(common, "timing", "duration-ms", observation.timing?.durationMs, "ms"),
+    fuzzObservation(common, "database", "query-count", observation.database?.queryCount, "count"),
+    fuzzObservation(common, "database", "query-time-ms", observation.database?.totalTimeMs, "ms"),
+    fuzzObservation(common, "memory", "memory-delta-bytes", observation.memory?.deltaBytes, "bytes"),
+    fuzzObservation(common, "network", "network-failures", observation.network?.failures, "count"),
+    ...Object.entries(observation.browser?.metrics ?? {}).map(([name, value]) => fuzzObservation({ ...common, subject: `${common.subject}:${name}` }, "browser", name, value, undefined)),
   ].filter((item): item is Record<string, unknown> => Boolean(item))
 }
 
-function homeboyFuzzObservation(common: Record<string, unknown>, family: string, metric: string, value: unknown, unit: string | undefined): Record<string, unknown> | undefined {
+function fuzzObservation(common: Record<string, unknown>, family: string, metric: string, value: unknown, unit: string | undefined): Record<string, unknown> | undefined {
   const number = numberValue(value)
   if (number === undefined || number <= 0) return undefined
   return {
@@ -688,7 +676,7 @@ function homeboyFuzzObservation(common: Record<string, unknown>, family: string,
   }
 }
 
-function homeboyHotspotScore(metric: string | undefined, value: number): number {
+function fuzzHotspotScore(metric: string | undefined, value: number): number {
   if (metric === "query-count") return value * 10
   if (metric === "network-failures") return value * 100
   if (metric === "memory-delta-bytes") return value / 1024 / 1024

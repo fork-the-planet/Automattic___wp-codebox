@@ -114,27 +114,40 @@ assert.deepEqual(nestedPhpInput.settings, { fixtureMode: "small" })
 assert.equal(result.cases[5]?.artifactRefs?.some((ref) => ref.path === "workloads/php-report.json"), true)
 assert.match(steps[17]?.args?.[0] ?? "", /rest-db-query-profiler/)
 assert.match(steps[17]?.args?.[0] ?? "", /woocommerce/)
-const hotspotsRef = result.artifactRefs.find((ref) => ref.kind === "wordpress-hotspots")
-assert.equal(hotspotsRef?.path, "files/wordpress-hotspots.json")
-assert.equal(hotspotsRef?.contentType, "application/json")
-assert.equal(hotspotsRef?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
-const homeboyObservationRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-observation-set")
-assert.equal(homeboyObservationRef?.path, "files/fuzz-observations.json")
-assert.equal(homeboyObservationRef?.metadata?.schema, "homeboy/fuzz-observation-set/v1")
-const homeboyHotspotRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-hotspot-set")
-assert.equal(homeboyHotspotRef?.path, "files/fuzz-hotspots.json")
-assert.equal(homeboyHotspotRef?.metadata?.schema, "homeboy/fuzz-hotspot-set/v1")
-const fuzzResultRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-suite-result")
-assert.equal(fuzzResultRef?.path, "files/fuzz-result.json")
-assert.equal(fuzzResultRef?.metadata?.schema, "wp-codebox/fuzz-suite-result/v1")
-const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { path?: string }; wordpressHotspots?: { path?: string; hotspots?: unknown[] }; fuzzObservationSet?: { path?: string; observations?: unknown[] }; fuzzHotspotSet?: { path?: string; hotspots?: unknown[] } } | undefined
-assert.equal(metadataArtifacts?.fuzzResult?.path, "files/fuzz-result.json")
-assert.equal(metadataArtifacts?.wordpressHotspots?.path, "files/wordpress-hotspots.json")
-assert.equal(metadataArtifacts?.fuzzObservationSet?.path, "files/fuzz-observations.json")
-assert.equal(metadataArtifacts?.fuzzHotspotSet?.path, "files/fuzz-hotspots.json")
+assert.equal(result.artifactRefs.some((ref) => ["wordpress-hotspots", "fuzz-observation-set", "fuzz-hotspot-set", "fuzz-suite-result"].includes(ref.kind)), false)
+const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { persisted?: boolean; metadata?: { schema?: string } }; wordpressHotspots?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzObservationSet?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzHotspotSet?: { persisted?: boolean; metadata?: { schema?: string } } } | undefined
+assert.equal(metadataArtifacts?.fuzzResult?.persisted, false)
+assert.equal(metadataArtifacts?.wordpressHotspots?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
+assert.equal(metadataArtifacts?.fuzzObservationSet?.metadata?.schema, "wp-codebox/fuzz-observation-set/v1")
+assert.equal(metadataArtifacts?.fuzzHotspotSet?.metadata?.schema, "wp-codebox/fuzz-hotspot-set/v1")
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
+
+let restoreCount = 0
+const restoreFailureEpisode = {
+  async reset() {
+    return episode.reset()
+  },
+  async step(action: { command: string; args?: string[] }, observation?: unknown): Promise<RuntimeEpisodeStepResult> {
+    const result = await episode.step(action, observation)
+    if (action.command === "wp-codebox.checkpoint-restore") {
+      restoreCount += 1
+      if (restoreCount === 2) {
+        result.execution.exitCode = 1
+        result.execution.stderr = "restore failed"
+      }
+    }
+    return result
+  },
+}
+const restoreFailureResult = await executeWordPressFuzzSuite(restoreFailureEpisode, fuzzSuiteContract({
+  id: "runtime-backed-restore-failure-suite",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "restore-failure-baseline" },
+  cases: [{ id: "destructive-rest-restore-failure", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high", resetRequired: true } }],
+}), { requireCoverage: true })
+assert.equal(restoreFailureResult.status, "failed")
+assert.equal(restoreFailureResult.cases[0]?.diagnostics[0]?.code, "fuzz_suite_runtime_action_restore_failed")
 
 console.log("playground fuzz suite public ok")
 

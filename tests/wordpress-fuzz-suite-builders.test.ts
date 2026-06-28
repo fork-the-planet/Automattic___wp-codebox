@@ -204,8 +204,10 @@ const mutatingDatabaseSuite = databaseInventoryToFuzzSuite(databaseInventory, { 
 assert.equal(mutatingDatabaseSuite.cases.length, 9)
 const dbInsert = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-insert-demo")
 assert.equal(JSON.parse((dbInsert?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").options.mutation, "insert")
+assert.deepEqual(JSON.parse((dbInsert?.input as { args: string[] }).args[0]?.replace("operation-json=", "") ?? "{}").metadata.generatedMutation, { status: "candidate", fixtureBound: false, fixtureBinding: "unbound", preRead: false, affectedRows: "unknown" })
 assert.deepEqual(dbInsert?.resetPolicy, { mode: "checkpoint-per-case", checkpointName: "db-baseline" })
 assert.deepEqual(dbInsert?.mutation, { intent: "write", destructive: false, intensity: "medium", resetRequired: true })
+assert.deepEqual(dbInsert?.metadata?.generatedMutation, { status: "candidate", fixtureBound: false, fixtureBinding: "unbound", preRead: false, affectedRows: "unknown" })
 const dbDelete = mutatingDatabaseSuite.cases.find((entry) => entry.id === "db-delete-demo")
 assert.deepEqual(dbDelete?.mutation, { intent: "delete", destructive: true, intensity: "high", resetRequired: true })
 

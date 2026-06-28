@@ -101,8 +101,23 @@ for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
     cases: [{ id: `${method.toLowerCase()}-blocked`, target: { kind: "runtime-action" }, input: { type: "rest_request", method, path: "/wp/v2/posts/10" } }],
   }), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
   assert.equal(blockedRestMutation.status, "skipped")
-  assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_input_unsupported")
+  assert.equal(blockedRestMutation.cases[0]?.skipReason, "fuzz_suite_reset_policy_required")
   assert.equal(blockedRestMutation.cases[0]?.diagnostics[0]?.metadata?.mutationSkipped, true)
+}
+
+for (const input of [
+  { type: "wp_cli", command: "option update blogname changed" },
+  { type: "php", code: "update_option('blogname', 'changed');" },
+  { type: "browser", operation: "click", selector: "#submit" },
+  { type: "crud_operation", operation: "update", resource: { kind: "post", id: 1 }, values: { title: "changed" } },
+  { type: "db_operation", operation: "write", query: { table: "posts", values: { post_title: "changed" } }, options: { mutation: "insert", bounded: true } },
+]) {
+  const blockedMutation = await runFuzzSuite(fuzzSuiteContract({
+    id: `suite-${input.type}-mutation-blocked`,
+    cases: [{ id: `${input.type}-blocked`, target: { kind: "runtime-action" }, input }],
+  }), { runtimeActionExecutor: async () => { throw new Error("must not execute") } })
+  assert.equal(blockedMutation.status, "skipped")
+  assert.equal(blockedMutation.cases[0]?.skipReason, "fuzz_suite_reset_policy_required")
 }
 
 const allowedRestMutations: string[] = []
@@ -128,8 +143,8 @@ const allowedRestMutation = await runFuzzSuite(fuzzSuiteContract({
 })
 assert.equal(allowedRestMutation.status, "passed")
 assert.deepEqual(allowedRestMutations, ["rest_request"])
-assert.equal(allowedRestMutation.cases[0]?.artifactRefs?.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
-assert.equal(allowedRestMutation.artifactRefs.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), true)
+assert.equal(allowedRestMutation.cases[0]?.artifactRefs?.some((ref) => ref.kind === DELETE_BOUNDARY_ARTIFACT_KIND && ref.path === "files/delete-boundaries/delete-post.json"), undefined)
+assert.equal((allowedRestMutation.cases[0]?.metadata?.deleteBoundary as Record<string, unknown> | undefined)?.artifactPath, "files/delete-boundaries/delete-post.json")
 
 const resetGuardedRestMutationSpecs: ExecutionSpec[] = []
 const resetGuardedRestMutation = await runFuzzSuite(fuzzSuiteContract({
@@ -182,9 +197,19 @@ for (const method of ["POST", "PUT", "PATCH"] as const) {
   })
   assert.equal(mutationResult.status, "passed")
   assert.equal((mutationResult.cases[0]?.metadata?.adapter as Record<string, unknown> | undefined)?.executorKind, "episode")
-  assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === MUTATION_ISOLATION_ARTIFACT_KIND && ref.path === `files/mutation-isolation/${method.toLowerCase()}-entity.json`), true)
-  assert.equal(mutationResult.artifactRefs.some((ref) => ref.kind === MUTATION_ISOLATION_ARTIFACT_KIND && ref.path === `files/mutation-isolation/${method.toLowerCase()}-entity.json`), true)
+  assert.equal(mutationResult.cases[0]?.artifactRefs?.some((ref) => ref.kind === MUTATION_ISOLATION_ARTIFACT_KIND && ref.path === `files/mutation-isolation/${method.toLowerCase()}-entity.json`), undefined)
+  assert.equal((mutationResult.cases[0]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.artifactPath, `files/mutation-isolation/${method.toLowerCase()}-entity.json`)
 }
+
+const failingRuntimeAction = await runFuzzSuite(fuzzSuiteContract({
+  id: "suite-runtime-action-failure",
+  target: { kind: "runtime-action" },
+  cases: [{ id: "browser-fails", input: { type: "browser", operation: "capture" } }],
+}), {
+  runtimeActionExecutor: async ({ action }) => ({ schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data: {}, observedAt: "2026-01-01T00:00:00.000Z", step: { id: "step-failed", index: 0, action: { schema: "wp-codebox/runtime-episode-action/v1", id: "action-failed", kind: "command", command: "wordpress.browser-actions", args: [], digest: { algorithm: "sha256", value: "action" } }, actionRef: { kind: "action", id: "action-failed" }, execution: { id: "exec-failed", command: "wordpress.browser-actions", args: [], exitCode: 2, stdout: "", stderr: "browser failed", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:00:01.000Z" }, executionRef: { kind: "execution", id: "exec-failed" } }, digest: { algorithm: "sha256", value: "failed" } }),
+})
+assert.equal(failingRuntimeAction.status, "failed")
+assert.equal(failingRuntimeAction.cases[0]?.diagnostics[0]?.code, "fuzz_suite_runtime_action_failed")
 
 const plannedEditor = planFuzzSuiteCaseExecutionSpec({
   suite: fuzzSuiteContract({ id: "planner", cases: [] }),
@@ -392,7 +417,7 @@ const mutatingSequenceWithoutReset = await runFuzzSuite(fuzzSuiteContract({
   cases: [{ id: "sequence-mutation", input: { type: "sequence", seed: "seq-mutate", maxSteps: 2, actionFamilies: ["rest", "db"], steps: [{ type: "rest_request", method: "GET", path: "/wp/v2/types" }, { type: "db_operation", operation: "write", query: { table: "demo", values: { name: "sample" } }, options: { mutation: "insert", bounded: true } }] } }],
 }), { runtimeActionExecutor: async () => { throw new Error("must not execute without reset") } })
 assert.equal(mutatingSequenceWithoutReset.status, "skipped")
-assert.equal(mutatingSequenceWithoutReset.cases[0]?.skipReason, "fuzz_suite_sequence_reset_policy_required")
+assert.equal(mutatingSequenceWithoutReset.cases[0]?.skipReason, "fuzz_suite_reset_policy_required")
 
 const sequenceSteps: string[] = []
 const mutatingSequenceWithReset = await runFuzzSuite(fuzzSuiteContract({

@@ -761,7 +761,7 @@ function databaseTableFuzzSuiteCase(table: WordPressDatabaseTableDescriptor, pla
     input: executable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
     resetPolicy: mutates ? options.dbGeneratedMutationResetPolicy : undefined,
     mutation: mutates ? { intent: plan.operation === "delete" ? "delete" : "write", destructive: plan.operation === "delete", intensity: plan.operation === "delete" ? "high" : "medium", resetRequired: true } : undefined,
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_reset_policy" } }),
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), primaryKeyColumns: primaryKeyColumns(table), writable: tableWritable(table), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, safety: { executable, readOnly: !mutates, mutates, reason: executable ? undefined : "db_mutation_requires_reset_policy" }, generatedMutation: mutates ? dbGeneratedMutationMetadata() : undefined }),
   })
 }
 
@@ -779,7 +779,7 @@ function databaseTableCoveragePlanItem(table: WordPressDatabaseTableDescriptor, 
     description: `${plan.label} ${table.baseName || table.name}`,
     input: executable && mutationExecutable ? { args: [`operation-json=${JSON.stringify(databaseOperation(table, plan))}`] } : undefined,
     reason: !executable ? { code: "external_table_not_fuzzed", message: "External database tables are excluded from generic WordPress DB fuzzing." } : !mutationExecutable ? { code: "db_mutation_requires_reset_policy", message: "Generated database mutations require an explicit reset policy before execution." } : undefined,
-    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, observationCapture: missingCaptureMetadata() }),
+    metadata: stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, baseName: table.baseName, classification: table.classification, columnLabels: table.columns.map((column) => column.name), operation: plan.operation, queryFamily: plan.id, seed: plan.seed, replay: plan.replay, observationCapture: missingCaptureMetadata(), generatedMutation: mutates ? dbGeneratedMutationMetadata() : undefined }),
   })
 }
 
@@ -826,7 +826,12 @@ function databaseOperation(table: WordPressDatabaseTableDescriptor, plan: Databa
 }
 
 function dbOperationMetadata(table: WordPressDatabaseTableDescriptor, plan: DatabaseTableOperationPlan): Record<string, unknown> {
-  return { source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, classification: table.classification, operation: plan.operation, queryFamily: plan.id, primaryKeyColumns: primaryKeyColumns(table), columnLabels: table.columns.map((column) => column.name) }
+  const mutates = plan.operation !== "inspect" && plan.operation !== "read"
+  return stripUndefined({ source: "wordpress-db-inventory", table: table.name, tableLabel: table.baseName || table.name, classification: table.classification, operation: plan.operation, queryFamily: plan.id, primaryKeyColumns: primaryKeyColumns(table), columnLabels: table.columns.map((column) => column.name), generatedMutation: mutates ? dbGeneratedMutationMetadata() : undefined })
+}
+
+function dbGeneratedMutationMetadata(): Record<string, unknown> {
+  return { status: "candidate", fixtureBound: false, fixtureBinding: "unbound", preRead: false, affectedRows: "unknown" }
 }
 
 function tableWritable(table: WordPressDatabaseTableDescriptor): boolean {
