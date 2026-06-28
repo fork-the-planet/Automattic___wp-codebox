@@ -3,7 +3,7 @@
  * Plugin Name: WP Codebox
  * Plugin URI: https://github.com/Automattic/wp-codebox
  * Description: Secure coding environments inside WordPress. WordPress ability surface for launching disposable WP Codebox Playground sandboxes that can't touch your host site.
- * Version: 0.10.1
+ * Version: 0.10.2
  * Requires at least: 6.9
  * Requires PHP: 8.2
  * Author: Automattic
@@ -15,7 +15,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'WP_CODEBOX_PLUGIN_VERSION', '0.10.1' );
+define( 'WP_CODEBOX_PLUGIN_VERSION', '0.10.2' );
 define( 'WP_CODEBOX_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WP_CODEBOX_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -30,6 +30,7 @@ require_once __DIR__ . '/src/class-wp-codebox-runtime-dependency-plan.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-profile-resolver.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-recipe-resolver.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-task-builder.php';
+require_once __DIR__ . '/src/class-wp-codebox-browser-contained-site-service.php';
 require_once __DIR__ . '/src/class-wp-codebox-connector-credential-resolvers.php';
 require_once __DIR__ . '/src/class-wp-codebox-inheritance.php';
 require_once __DIR__ . '/src/class-wp-codebox-redaction-policy.php';
@@ -53,6 +54,7 @@ require_once __DIR__ . '/src/class-wp-codebox-agent-run-result-builder.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-outcome-classifier.php';
 require_once __DIR__ . '/src/class-wp-codebox-runtime-provider-registry.php';
 require_once __DIR__ . '/src/class-wp-codebox-wordpress-workload-runner.php';
+require_once __DIR__ . '/src/class-wp-codebox-fuzz-suite-runner.php';
 require_once __DIR__ . '/src/class-wp-codebox-agents-api-adapter.php';
 require_once __DIR__ . '/src/class-wp-codebox-agent-runtime-invoker.php';
 require_once __DIR__ . '/src/class-wp-codebox-browser-runner-template.php';
@@ -71,7 +73,13 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	require_once __DIR__ . '/src/class-wp-codebox-cli-command.php';
 }
 
-add_action( 'plugins_loaded', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ), 20 );
+// The Agents API adapter probes the abilities registry (wp_get_ability) to
+// decide whether to register its runtime profiles/provider. As of WordPress 7.0
+// the Abilities API moved into core and WP_Abilities_Registry::get_instance()
+// emits a _doing_it_wrong notice when accessed before the `init` action. Hook
+// this on `wp_abilities_api_init` — the same signal the plugin's own abilities
+// register on — so the registry is never touched before it is initialized.
+add_action( 'wp_abilities_api_init', array( WP_Codebox_Agents_API_Adapter::class, 'register_if_available' ) );
 add_action( 'plugins_loaded', array( WP_Codebox_Php_Ai_Client_Browser_Provider_Adapter::class, 'register' ), 20 );
 new WP_Codebox_Abilities();
 WP_Codebox_Browser_Provider_Bridge::register();

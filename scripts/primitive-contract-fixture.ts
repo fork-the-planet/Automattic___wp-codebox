@@ -6,6 +6,7 @@ import {
   normalizeRunPlanConcurrency,
   normalizeRunPlanProgressSnapshot,
   normalizeRuntimeMountTarget,
+  PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES,
   redactJsonValue,
   resolveEffectiveRuntimeToolPolicy,
   resolveRuntimeToolAlias,
@@ -224,6 +225,15 @@ export function primitiveContractsFixture(): Record<string, unknown> {
       progressInput: runPlanProgressInput,
       progress: normalizeRunPlanProgressSnapshot(runPlanProgressInput),
       schemas: { plan: RUN_PLAN_SCHEMA, event: RUN_PLAN_EVENT_SCHEMA, progress: RUN_PLAN_PROGRESS_SCHEMA, result: RUN_PLAN_RESULT_SCHEMA },
+    },
+    fuzzRunner: {
+      phpInProcessCapabilities: {
+        schema: PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES.schema,
+        mode: PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES.mode,
+        capabilities: PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES.capabilities,
+        targetKinds: PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES.targetKinds,
+        unsupportedRequiredCapabilities: PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES.unsupportedRequiredCapabilities,
+      },
     },
   }
 }
