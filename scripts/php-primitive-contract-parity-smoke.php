@@ -40,6 +40,7 @@ require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runti
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-runtime-dependency-plan.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-host-recipe-builder.php';
 require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-run-plan.php';
+require_once __DIR__ . '/../packages/wordpress-plugin/src/class-wp-codebox-fuzz-suite-runner.php';
 
 $fixture = json_decode( file_get_contents( __DIR__ . '/../tests/fixtures/primitive-contracts.json' ), true );
 if ( ! is_array( $fixture ) ) {
@@ -142,5 +143,11 @@ assert_same_contract( $fixture['runPlan']['dependencyBatches'], $run_plan->depen
 assert_same_contract( $fixture['runPlan']['concurrency']['defaulted'], $run_plan->normalize_concurrency( '', array( 'default_concurrency' => 3, 'max_concurrency' => 5 ) ), 'run-plan default concurrency' );
 assert_same_contract( $fixture['runPlan']['concurrency']['clamped'], $run_plan->normalize_concurrency( 99, array( 'max_concurrency' => 2 ) ), 'run-plan clamped concurrency' );
 assert_same_contract( $fixture['runPlan']['progress'], $run_plan->progress_snapshot( $fixture['runPlan']['progressInput'] ), 'run-plan progress snapshot' );
+
+assert_same_contract(
+	$fixture['fuzzRunner']['phpInProcessCapabilities'],
+	WP_Codebox_Fuzz_Suite_Runner::fuzz_suite_runner_capabilities_contract(),
+	'PHP in-process fuzz runner capabilities contract'
+);
 
 fwrite( STDOUT, "PHP primitive contract parity smoke passed\n" );
