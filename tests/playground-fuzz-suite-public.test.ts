@@ -78,6 +78,7 @@ const result = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
   resetPolicy: { mode: "checkpoint-per-case", checkpointName: "fuzz-baseline", fixtureRefs: ["fixtures/store.json"] },
   cases: [
     { id: "rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } },
+    { id: "destructive-rest", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high", resetRequired: true } },
     { id: "browser", target: { kind: "runtime-action" }, input: { type: "browser", operation: "navigate", url: "/" } },
     { id: "db", target: { kind: "runtime-action" }, input: { type: "db_operation", operation: "inspect", resource: { table: "posts" } } },
     { id: "workload", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ command: "wordpress.rest-performance-observation", args: ["path=/wp/v2/types", "capture-queries=1"] }] } },
@@ -91,7 +92,7 @@ assert.equal(result.success, true)
 assert.equal(result.metadata?.runnerMode, "runtime-backed")
 assert.equal(result.metadata?.runtimeBackend, "wordpress-playground")
 assert.equal((result.metadata?.runnerCapabilities as { mode?: string } | undefined)?.mode, "runtime-backed")
-assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation", "wp-codebox.checkpoint-restore", "wordpress.rest-performance-observation", "wp-codebox.checkpoint-restore", "wordpress.run-php", "wp-codebox.checkpoint-restore", "wordpress.run-php"])
+assert.deepEqual(steps.map((step) => step.command), ["wordpress.rest-request", "wp-codebox.checkpoint-create", "wp-codebox.checkpoint-restore", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wp-codebox.checkpoint-create", "wordpress.rest-request", "wp-codebox.checkpoint-restore", "wp-codebox.checkpoint-restore", "wordpress.browser-actions", "wp-codebox.checkpoint-restore", "wordpress.db-operation", "wp-codebox.checkpoint-restore", "wordpress.rest-performance-observation", "wp-codebox.checkpoint-restore", "wordpress.run-php", "wp-codebox.checkpoint-restore", "wordpress.run-php"])
 assert.equal(result.cases[0]?.reset?.status, "passed")
 assert.equal(result.cases[0]?.reset?.checkpointName, "fuzz-baseline")
 assert.deepEqual(result.cases[0]?.reset?.fixtureRefs, ["fixtures/store.json"])
@@ -100,39 +101,53 @@ assert.equal(result.cases[2]?.status, "passed")
 assert.equal(result.cases[3]?.status, "passed")
 assert.equal(result.cases[4]?.status, "passed")
 assert.equal(result.cases[5]?.status, "passed")
-assert.equal(steps[7]?.args?.[0]?.startsWith("operation-json="), true)
-assert.equal(JSON.parse(steps[7]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
-assert.deepEqual(steps[9]?.args, ["path=/wp/v2/types", "capture-queries=1"])
-assert.equal(steps[11]?.command, "wordpress.run-php")
-assert.match(steps[11]?.args?.[0] ?? "", /^code=/)
-const nestedPhpInput = decodeFirstWrapperJson(steps[11]?.args?.[0] ?? "")
+assert.equal(result.cases[6]?.status, "passed")
+assert.equal(steps[11]?.args?.[0]?.startsWith("operation-json="), true)
+assert.equal(JSON.parse(steps[11]?.args?.[0]?.replace("operation-json=", "") ?? "{}").resource.table, "posts")
+assert.deepEqual(steps[13]?.args, ["path=/wp/v2/types", "capture-queries=1"])
+assert.equal(steps[15]?.command, "wordpress.run-php")
+assert.match(steps[15]?.args?.[0] ?? "", /^code=/)
+const nestedPhpInput = decodeFirstWrapperJson(steps[15]?.args?.[0] ?? "")
 assert.deepEqual(nestedPhpInput.runtimeEnv, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
 assert.deepEqual(nestedPhpInput.runtime_env, { WC_REST_BATCH_IMPORT_ITEMS: "2" })
 assert.deepEqual(nestedPhpInput.settings, { fixtureMode: "small" })
-assert.equal(result.cases[4]?.artifactRefs?.some((ref) => ref.path === "workloads/php-report.json"), true)
-assert.match(steps[13]?.args?.[0] ?? "", /rest-db-query-profiler/)
-assert.match(steps[13]?.args?.[0] ?? "", /woocommerce/)
-const hotspotsRef = result.artifactRefs.find((ref) => ref.kind === "wordpress-hotspots")
-assert.equal(hotspotsRef?.path, "files/wordpress-hotspots.json")
-assert.equal(hotspotsRef?.contentType, "application/json")
-assert.equal(hotspotsRef?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
-const homeboyObservationRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-observation-set")
-assert.equal(homeboyObservationRef?.path, "files/fuzz-observations.json")
-assert.equal(homeboyObservationRef?.metadata?.schema, "homeboy/fuzz-observation-set/v1")
-const homeboyHotspotRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-hotspot-set")
-assert.equal(homeboyHotspotRef?.path, "files/fuzz-hotspots.json")
-assert.equal(homeboyHotspotRef?.metadata?.schema, "homeboy/fuzz-hotspot-set/v1")
-const fuzzResultRef = result.artifactRefs.find((ref) => ref.kind === "fuzz-suite-result")
-assert.equal(fuzzResultRef?.path, "files/fuzz-result.json")
-assert.equal(fuzzResultRef?.metadata?.schema, "wp-codebox/fuzz-suite-result/v1")
-const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { path?: string }; wordpressHotspots?: { path?: string; hotspots?: unknown[] }; fuzzObservationSet?: { path?: string; observations?: unknown[] }; fuzzHotspotSet?: { path?: string; hotspots?: unknown[] } } | undefined
-assert.equal(metadataArtifacts?.fuzzResult?.path, "files/fuzz-result.json")
-assert.equal(metadataArtifacts?.wordpressHotspots?.path, "files/wordpress-hotspots.json")
-assert.equal(metadataArtifacts?.fuzzObservationSet?.path, "files/fuzz-observations.json")
-assert.equal(metadataArtifacts?.fuzzHotspotSet?.path, "files/fuzz-hotspots.json")
+assert.equal(result.cases[5]?.artifactRefs?.some((ref) => ref.path === "workloads/php-report.json"), true)
+assert.match(steps[17]?.args?.[0] ?? "", /rest-db-query-profiler/)
+assert.match(steps[17]?.args?.[0] ?? "", /woocommerce/)
+assert.equal(result.artifactRefs.some((ref) => ["wordpress-hotspots", "fuzz-observation-set", "fuzz-hotspot-set", "fuzz-suite-result"].includes(ref.kind)), false)
+const metadataArtifacts = result.metadata?.artifacts as { fuzzResult?: { persisted?: boolean; metadata?: { schema?: string } }; wordpressHotspots?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzObservationSet?: { persisted?: boolean; metadata?: { schema?: string } }; fuzzHotspotSet?: { persisted?: boolean; metadata?: { schema?: string } } } | undefined
+assert.equal(metadataArtifacts?.fuzzResult?.persisted, false)
+assert.equal(metadataArtifacts?.wordpressHotspots?.metadata?.schema, "wp-codebox/wordpress-hotspots/v1")
+assert.equal(metadataArtifacts?.fuzzObservationSet?.metadata?.schema, "wp-codebox/fuzz-observation-set/v1")
+assert.equal(metadataArtifacts?.fuzzHotspotSet?.metadata?.schema, "wp-codebox/fuzz-hotspot-set/v1")
 assert.equal(Array.isArray(metadataArtifacts?.wordpressHotspots?.hotspots), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzObservationSet?.observations), false)
 assert.equal(Array.isArray(metadataArtifacts?.fuzzHotspotSet?.hotspots), false)
+
+let restoreCount = 0
+const restoreFailureEpisode = {
+  async reset() {
+    return episode.reset()
+  },
+  async step(action: { command: string; args?: string[] }, observation?: unknown): Promise<RuntimeEpisodeStepResult> {
+    const result = await episode.step(action, observation)
+    if (action.command === "wp-codebox.checkpoint-restore") {
+      restoreCount += 1
+      if (restoreCount === 2) {
+        result.execution.exitCode = 1
+        result.execution.stderr = "restore failed"
+      }
+    }
+    return result
+  },
+}
+const restoreFailureResult = await executeWordPressFuzzSuite(restoreFailureEpisode, fuzzSuiteContract({
+  id: "runtime-backed-restore-failure-suite",
+  resetPolicy: { mode: "checkpoint-per-case", checkpointName: "restore-failure-baseline" },
+  cases: [{ id: "destructive-rest-restore-failure", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123", bodyJson: { force: true } }, mutation: { intent: "delete", destructive: true, intensity: "high", resetRequired: true } }],
+}), { requireCoverage: true })
+assert.equal(restoreFailureResult.status, "failed")
+assert.equal(restoreFailureResult.cases[0]?.diagnostics[0]?.code, "fuzz_suite_runtime_action_restore_failed")
 
 console.log("playground fuzz suite public ok")
 

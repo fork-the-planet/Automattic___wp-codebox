@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
 import { benchRunCode } from "./bench-command-handlers.js"
 
 import {
+  artifactFileDigest,
+  resolveArtifactPath,
   WORDPRESS_HOTSPOTS_SCHEMA,
   createRuntime,
   createRuntimeEpisode,
-  DELETE_BOUNDARY_ARTIFACT_KIND,
   createWordPressRuntimeCheckpoint,
   executeFuzzSuite,
   openWordPressAdminPage,
@@ -17,19 +19,23 @@ import {
   renderWordPressBlock,
   exerciseWordPressBlock,
   RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+  WORDPRESS_DB_OPERATION_SCHEMA,
+  planBrowserRandomWalk,
   runWordPressCrudOperation,
   runWordPressBrowserAction,
   runWordPressPhp,
   runWordPressWpCli,
+  normalizeWordPressDbOperation,
   visitWordPressPage,
   wordpressHotspotsArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
   deleteBoundaryArtifact,
   isRestMutationMethod,
   mutationArtifactDigest,
-  MUTATION_ISOLATION_ARTIFACT_KIND,
   mutationIsolationArtifact,
   type ArtifactBundle,
+  type ArtifactManifest,
+  type ArtifactManifestFile,
   type ArtifactSpec,
   type ExecutionResult,
   type ExecutionSpec,
@@ -54,6 +60,7 @@ import {
   type RuntimeEpisodeTraceRef,
   type RuntimeEpisodeSpec,
   type RuntimeEpisodeStepResult,
+  type Snapshot,
   type WordPressHotspotObservationInput,
 } from "@automattic/wp-codebox-core/public"
 export {
@@ -149,7 +156,14 @@ export interface WordPressPageLoadActionOptions {
   captureDiagnostics?: string[]
 }
 
-export type WordPressFuzzSuiteExecutionOptions = Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities">
+export interface WordPressFuzzSuiteExecutionOptions extends Omit<FuzzSuiteRunOptions, "executor" | "runtimeActionExecutor" | "runtimeWorkloadExecutor" | "resetExecutor" | "runnerCapabilities"> {
+  artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+}
+type WordPressFuzzSuiteResetEpisode = Pick<RuntimeEpisode, "reset" | "step"> & Partial<Pick<RuntimeEpisode, "restoreSnapshot">>
+
+export interface WordPressFuzzSuiteResetExecutorOptions {
+  artifactBundles?: Array<Pick<ArtifactBundle, "id" | "directory">>
+}
 
 export async function createWordPressRuntime(spec: WordPressRuntimeSpec, options: PlaygroundRuntimeBackendOptions = {}): Promise<Runtime> {
   return createRuntime(wordPressRuntimeCreateSpec(spec), createPlaygroundRuntimeBackend(options))
@@ -211,7 +225,7 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       if (action.type === "db_operation") {
         if (action.operation === "write") {
-          throw new Error("Unsupported WordPress fuzz runtime-action type: db_operation write")
+          return executeRollbackSafeDbMutation(episode, { ...input, action })
         }
         const step = await readWordPressDatabase(episode, { ...action, operation: action.operation as "schema" | "read" | "inspect" | "query-summary" }, action.timeout_ms)
         return {
@@ -229,6 +243,30 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       if (action.type === "browser") {
         return runWordPressBrowserAction(episode, action)
       }
+      if (action.type === "random_walk") {
+        const plan = planBrowserRandomWalk(action as unknown as Record<string, unknown>)
+        if (plan.status === "unsupported") {
+          throw new Error(`Browser random walk is unsupported: ${plan.diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`)
+        }
+        const step = await episode.step({
+          kind: "browser",
+          command: "wordpress.browser-actions",
+          args: [`steps-json=${JSON.stringify(plan.steps)}`, ...(action.capture?.length ? [`capture=${action.capture.join(",")}`] : [])],
+          ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}),
+          operation: "random_walk",
+        }, { type: "browser-result" })
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { operation: "random_walk", mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode, stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout, stderr: step.execution.stderr, executionId: step.execution.id, stepId: step.id, randomWalk: plan },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: digestRuntimeActionObservationData({ operation: "random_walk", args: step.execution.args, exitCode: step.execution.exitCode }),
+        }
+      }
       if (action.type === "browser_probe") {
         return probeWordPressBrowser(episode, action)
       }
@@ -243,6 +281,70 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       }
       throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
     },
+  }
+}
+
+async function executeRollbackSafeDbMutation(
+  episode: Pick<RuntimeEpisode, "step">,
+  input: FuzzSuiteRuntimeActionExecutionInput & { action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "db_operation" }> },
+): Promise<RuntimeActionObservation> {
+  const operation = normalizeWordPressDbOperation({
+    schema: WORDPRESS_DB_OPERATION_SCHEMA,
+    ...input.action,
+    operation: "write",
+    options: { ...(input.action.options ?? {}), allowWrites: true, resetIsolated: true },
+    metadata: { ...(input.action.metadata ?? {}), resetIsolated: true, affectedRowsMayBeZeroOrUnknown: true },
+  })
+  const target = operation.resource?.table ?? operation.query?.table ?? "database"
+  const mutation = typeof operation.options?.mutation === "string" ? operation.options.mutation.toUpperCase() : "WRITE"
+  const checkpointName = mutationCheckpointName(input.suite.id, input.case.id, input.caseIndex)
+  const createStep = await createWordPressRuntimeCheckpoint(episode, {
+    name: checkpointName,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, operation: "db_operation", mutation },
+  })
+  if (createStep.execution.exitCode !== 0) {
+    throw new Error(`Checkpoint create failed for rollback-isolated DB mutation ${input.case.id}: ${createStep.execution.stderr}`)
+  }
+  const step = await episode.step({ kind: "command", command: "wordpress.db-operation", args: [`operation-json=${JSON.stringify(operation)}`], ...(input.action.timeout_ms !== undefined ? { timeoutMs: input.action.timeout_ms } : {}) }, { type: "command-result" })
+  const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
+  const stdout = parseJsonRecord(step.execution.stdout) ?? step.execution.stdout
+  const resultMetadata = recordValue(recordValue(stdout)?.metadata)
+  const artifact = mutationIsolationArtifact({
+    operation: "db_operation",
+    target,
+    method: mutation,
+    checkpointName,
+    beforeCheckpoint: mutationStepEvidence(createStep, "created"),
+    afterObservation: mutationStepEvidence(step, "observed"),
+    restore: mutationStepEvidence(restoreStep, restoreStep.execution.exitCode === 0 ? "passed" : "failed"),
+    affectedIdentifiers: undefined,
+    metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+  })
+  const artifactWithRef = { ...artifact, artifactPath: `files/mutation-isolation/${input.case.id}.json`, persisted: false }
+  const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
+  const artifactWithDigest = { ...artifactWithRef, sha256: mutationArtifactDigest(artifactWithRef), bytes: Buffer.byteLength(content) }
+  const data = {
+    operation,
+    mappedCommand: step.execution.command,
+    args: step.execution.args,
+    exitCode: step.execution.exitCode,
+    stdout,
+    stderr: step.execution.stderr,
+    executionId: step.execution.id,
+    stepId: step.id,
+    mutationIsolationArtifact: artifactWithDigest,
+    mutation: { target, kind: mutation, affectedRows: resultMetadata?.affectedRows ?? null, affectedRowsMayBeZeroOrUnknown: true },
+  }
+  return {
+    schema: "wp-codebox/runtime-action-observation/v1",
+    type: input.action.type,
+    status: "ok",
+    action: input.action,
+    data,
+    observedAt: new Date().toISOString(),
+    step,
+    artifactRefs: step.observation?.artifactRefs,
+    digest: digestRuntimeActionObservationData(data),
   }
 }
 
@@ -266,6 +368,9 @@ async function executeRollbackSafeRestMutation(
     name: checkpointName,
     metadata: { suiteId: input.suite.id, caseId: input.case.id, caseIndex: input.caseIndex, target, method, operation: "rest_request" },
   })
+  if (createStep.execution.exitCode !== 0) {
+    throw new Error(`Checkpoint create failed for rollback-isolated REST mutation ${input.case.id}: ${createStep.execution.stderr}`)
+  }
   const observation = await requestWordPressRest(episode, input.action)
   const restoreStep = await restoreWordPressRuntimeCheckpoint(episode, checkpointName)
   const status = restObservationStatus(observation)
@@ -286,18 +391,13 @@ async function executeRollbackSafeRestMutation(
   const artifactWithRef = {
     ...artifact,
     artifactPath: method === "DELETE" ? `files/delete-boundaries/${input.case.id}.json` : `files/mutation-isolation/${input.case.id}.json`,
+    persisted: false,
   }
   const content = `${JSON.stringify(artifactWithRef, null, 2)}\n`
   const artifactWithDigest = {
     ...artifactWithRef,
     sha256: mutationArtifactDigest(artifactWithRef),
     bytes: Buffer.byteLength(content),
-  }
-  const artifactRef: RuntimeEpisodeTraceRef = {
-    kind: method === "DELETE" ? DELETE_BOUNDARY_ARTIFACT_KIND : MUTATION_ISOLATION_ARTIFACT_KIND,
-    id: `${input.case.id}:${artifactWithDigest.artifactKind}`,
-    path: artifactWithDigest.artifactPath,
-    digest: { algorithm: "sha256", value: artifactWithDigest.sha256 },
   }
   const data = {
     ...observation.data,
@@ -307,7 +407,7 @@ async function executeRollbackSafeRestMutation(
   return {
     ...observation,
     data,
-    artifactRefs: [...(observation.artifactRefs ?? []), artifactRef],
+    artifactRefs: observation.artifactRefs,
     digest: digestRuntimeActionObservationData(data),
   }
 }
@@ -352,7 +452,7 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
   }
 }
 
-export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpisode, "reset" | "step">): FuzzSuiteResetExecutor {
+export function createWordPressFuzzSuiteResetExecutor(episode: WordPressFuzzSuiteResetEpisode, options: WordPressFuzzSuiteResetExecutorOptions = {}): FuzzSuiteResetExecutor {
   let checkpointCreated = false
   return {
     async resetFuzzSuiteCase({ suite, case: fuzzCase, caseIndex, policy }): Promise<FuzzSuiteCaseResetResult> {
@@ -387,18 +487,83 @@ export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpiso
         }
       }
       if (policy.mode === "restore-snapshot") {
+        const snapshotRef = policy.snapshotRef ?? policy.snapshot_ref
+        if (!snapshotRef) {
+          return {
+            mode: policy.mode,
+            status: "failed",
+            fixtureRefs,
+            diagnostics: [{
+              severity: "error",
+              code: "fuzz_suite_snapshot_ref_missing",
+              caseId: fuzzCase.id,
+              message: `Fuzz suite case ${fuzzCase.id} uses restore-snapshot reset policy without a snapshotRef.`,
+            }],
+            metadata: { resetPerformed: false, restorePerformed: false },
+          }
+        }
+        const sameRuntimeSnapshotRef = isSameRuntimeSnapshotRef(snapshotRef)
+        const externalSnapshot = !sameRuntimeSnapshotRef ? await externalSnapshotFromArtifactRef(snapshotRef, options) : undefined
+        if (!sameRuntimeSnapshotRef && externalSnapshot && !externalSnapshot.snapshot) {
+          const unsupportedReason = externalSnapshot.unsupportedReason ?? "external-snapshot-artifact-restore-unavailable"
+          return {
+            mode: policy.mode,
+            status: "unsupported",
+            snapshotRef,
+            fixtureRefs,
+            diagnostics: [{
+              severity: "error",
+              code: "fuzz_suite_snapshot_ref_unsupported",
+              caseId: fuzzCase.id,
+              message: externalSnapshot.message ?? `Snapshot ref ${snapshotRef} is not a same-runtime snapshot id or supported local snapshot artifact ref.`,
+              metadata: { snapshotRef, supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason, ...externalSnapshot.metadata },
+            }],
+            metadata: { resetPerformed: false, restorePerformed: false, supportedSnapshotRef: "same-runtime snapshot id or artifact:<bundle-id>/files/...", unsupportedReason, ...externalSnapshot.metadata },
+          }
+        }
+        if (episode.restoreSnapshot) {
+          try {
+            const restoreInput = externalSnapshot?.snapshot ?? snapshotRef
+            const restored = await episode.restoreSnapshot(restoreInput)
+            return {
+              mode: policy.mode,
+              status: "passed",
+              snapshotRef,
+              fixtureRefs,
+              artifactRefs: fuzzSuiteSnapshotArtifactRefs(restored),
+              diagnostics: [],
+              metadata: { resetPerformed: true, restorePerformed: true, snapshotId: restored.id, semantics: restored.semantics, ...(externalSnapshot?.metadata ? { externalSnapshot: externalSnapshot.metadata } : {}) },
+            }
+          } catch (error) {
+            return {
+              mode: policy.mode,
+              status: "failed",
+              snapshotRef,
+              fixtureRefs,
+              diagnostics: [{
+                severity: "error",
+                code: "fuzz_suite_snapshot_restore_failed",
+                caseId: fuzzCase.id,
+                message: error instanceof Error ? error.message : String(error),
+                metadata: { snapshotRef },
+              }],
+              metadata: { resetPerformed: false, restorePerformed: false, snapshotRef },
+            }
+          }
+        }
         return {
           mode: policy.mode,
           status: "unsupported",
-          snapshotRef: policy.snapshotRef ?? policy.snapshot_ref,
+          snapshotRef,
           fixtureRefs,
           diagnostics: [{
             severity: "error",
             code: "fuzz_suite_snapshot_restore_unsupported",
             caseId: fuzzCase.id,
-            message: "The public Playground episode facade cannot restore arbitrary snapshotRef values; use checkpoint-per-case for same-run runtime restoration.",
+            message: "The supplied runtime episode cannot restore snapshot refs; provide a RuntimeEpisode with restoreSnapshot support, or use checkpoint-per-case for same-run runtime restoration.",
+            metadata: { snapshotRef, supportedResetModes: ["none", "checkpoint-per-case"], runtimePrimitiveRequired: "snapshot-restore" },
           }],
-          metadata: { resetPerformed: false, restorePerformed: false, supportedResetModes: ["none", "checkpoint-per-case"] },
+          metadata: { resetPerformed: false, restorePerformed: false, supportedResetModes: ["none", "checkpoint-per-case"], unsupportedReason: "snapshot-restore-primitive-unavailable" },
         }
       }
       return { mode: "none", status: "not-required" }
@@ -407,7 +572,7 @@ export function createWordPressFuzzSuiteResetExecutor(episode: Pick<RuntimeEpiso
 }
 
 export function executeWordPressFuzzSuite(
-  episode: Pick<RuntimeEpisode, "reset" | "step">,
+  episode: WordPressFuzzSuiteResetEpisode,
   suite: FuzzSuiteContract,
   options: WordPressFuzzSuiteExecutionOptions = {},
 ): Promise<FuzzSuiteResultEnvelope> {
@@ -440,7 +605,7 @@ export function executeWordPressFuzzSuite(
       }
       return execution
     },
-    resetExecutor: createWordPressFuzzSuiteResetExecutor(episode),
+    resetExecutor: createWordPressFuzzSuiteResetExecutor(episode, { artifactBundles: options.artifactBundles }),
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     metadata: {
       ...options.metadata,
@@ -459,40 +624,32 @@ function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, ob
     artifactRefs: result.artifactRefs,
     metadata: { suiteId: result.suite.id, runnerMode: result.metadata?.runnerMode },
   })
-  const homeboyObservationSet = homeboyFuzzObservationSetArtifact(result, observations)
-  const homeboyHotspotSet = homeboyFuzzHotspotSetArtifact(result, homeboyObservationSet.observations)
+  const observationSet = fuzzObservationSetArtifact(result, observations)
+  const hotspotSet = fuzzHotspotSetArtifact(result, observationSet.observations)
   const content = `${JSON.stringify(artifact, null, 2)}\n`
-  const homeboyObservationContent = `${JSON.stringify(homeboyObservationSet, null, 2)}\n`
-  const homeboyHotspotContent = `${JSON.stringify(homeboyHotspotSet, null, 2)}\n`
-  const ref: FuzzSuiteArtifactRef = {
-    path: "files/wordpress-hotspots.json",
-    kind: "wordpress-hotspots",
-    contentType: "application/json",
-    sha256: createHash("sha256").update(content).digest("hex"),
-    bytes: Buffer.byteLength(content),
-    name: "wordpress-hotspots",
-    metadata: { schema: WORDPRESS_HOTSPOTS_SCHEMA, source: "executeWordPressFuzzSuite" },
+  const observationContent = `${JSON.stringify(observationSet, null, 2)}\n`
+  const hotspotContent = `${JSON.stringify(hotspotSet, null, 2)}\n`
+  const artifactMetadata = {
+    wordpressHotspots: inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
+    fuzzObservationSet: inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
+    fuzzHotspotSet: inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
   }
-  const homeboyObservationRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-observations.json", "fuzz-observation-set", "homeboy/fuzz-observation-set/v1", homeboyObservationContent)
-  const homeboyHotspotRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-hotspots.json", "fuzz-hotspot-set", "homeboy/fuzz-hotspot-set/v1", homeboyHotspotContent)
-  const artifactRefs = dedupeFuzzSuiteArtifactRefs([...result.artifactRefs, ref, homeboyObservationRef, homeboyHotspotRef])
+  const artifactRefs = dedupeFuzzSuiteArtifactRefs(result.artifactRefs)
   const linkedMetadataArtifacts = {
     ...(recordValue(result.metadata?.artifacts) ?? {}),
-    wordpressHotspots: ref,
-    fuzzObservationSet: homeboyObservationRef,
-    fuzzHotspotSet: homeboyHotspotRef,
+    ...artifactMetadata,
   }
   const resultArtifactContent = `${JSON.stringify({ ...result, artifactRefs, metadata: { ...result.metadata, artifacts: linkedMetadataArtifacts } }, null, 2)}\n`
-  const resultRef: FuzzSuiteArtifactRef = homeboyArtifactRef("files/fuzz-result.json", "fuzz-suite-result", result.schema, resultArtifactContent)
+  const resultMetadata = inlineArtifactMetadata("fuzz-suite-result", result.schema, resultArtifactContent)
 
   return {
     ...result,
-    artifactRefs: dedupeFuzzSuiteArtifactRefs([...artifactRefs, resultRef]),
+    artifactRefs,
     metadata: {
       ...result.metadata,
       artifacts: {
         ...linkedMetadataArtifacts,
-        fuzzResult: resultRef,
+        fuzzResult: resultMetadata,
       },
     },
   }
@@ -507,22 +664,22 @@ function pushHotspotObservation(out: WordPressHotspotObservationInput[], observa
   })
 }
 
-function homeboyArtifactRef(path: string, kind: string, schema: string, content: string): FuzzSuiteArtifactRef {
+function inlineArtifactMetadata(kind: string, schema: string, content: string): Record<string, unknown> {
   return {
-    path,
     kind,
     contentType: "application/json",
     sha256: createHash("sha256").update(content).digest("hex"),
     bytes: Buffer.byteLength(content),
     name: kind,
-    metadata: { schema, source: "executeWordPressFuzzSuite" },
+    persisted: false,
+    metadata: { schema, source: "executeWordPressFuzzSuite", storage: "inline-metadata" },
   }
 }
 
-function homeboyFuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): { schema: string; generated_at: string; source: string; observations: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
-  const flattened = observations.flatMap((input) => homeboyFuzzObservations(input))
+function fuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[]): { schema: string; generated_at: string; source: string; observations: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
+  const flattened = observations.flatMap((input) => fuzzObservations(input))
   return {
-    schema: "homeboy/fuzz-observation-set/v1",
+    schema: "wp-codebox/fuzz-observation-set/v1",
     generated_at: new Date().toISOString(),
     source: "wp-codebox",
     observations: flattened,
@@ -535,7 +692,7 @@ function homeboyFuzzObservationSetArtifact(result: FuzzSuiteResultEnvelope, obse
   }
 }
 
-function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observations: Array<Record<string, unknown>>): { schema: string; generated_at: string; source: string; hotspots: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
+function fuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observations: Array<Record<string, unknown>>): { schema: string; generated_at: string; source: string; hotspots: Array<Record<string, unknown>>; summary: Record<string, unknown>; metadata: Record<string, unknown> } {
   const grouped = new Map<string, Record<string, unknown>[]>()
   for (const observation of observations) {
     const key = [stringValue(observation.case_id), stringValue(observation.target_id), stringValue(observation.subject), stringValue(observation.metric)].join("|")
@@ -554,7 +711,7 @@ function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observat
       metric: first.metric,
       value,
       unit: first.unit,
-      score: homeboyHotspotScore(stringValue(first.metric), value),
+      score: fuzzHotspotScore(stringValue(first.metric), value),
       sample_count: items.reduce((sum, item) => sum + (numberValue(item.sample_count) ?? 1), 0),
       metadata: { sources: items.length },
     }
@@ -562,7 +719,7 @@ function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observat
   const maxScore = scored[0]?.score ?? 0
   const hotspots = scored.map((item, index) => ({ ...item, rank: index + 1, relative_score: maxScore > 0 ? Number((item.score / maxScore).toFixed(6)) : 0 }))
   return {
-    schema: "homeboy/fuzz-hotspot-set/v1",
+    schema: "wp-codebox/fuzz-hotspot-set/v1",
     generated_at: new Date().toISOString(),
     source: "wp-codebox",
     hotspots,
@@ -571,7 +728,7 @@ function homeboyFuzzHotspotSetArtifact(result: FuzzSuiteResultEnvelope, observat
   }
 }
 
-function homeboyFuzzObservations(input: WordPressHotspotObservationInput): Array<Record<string, unknown>> {
+function fuzzObservations(input: WordPressHotspotObservationInput): Array<Record<string, unknown>> {
   const observation = input.observation
   const metadata = recordValue(input.metadata) ?? {}
   const common = {
@@ -583,16 +740,16 @@ function homeboyFuzzObservations(input: WordPressHotspotObservationInput): Array
     metadata: { source: observation.source, execution_id: stringValue(observation.metadata?.executionId) },
   }
   return [
-    homeboyFuzzObservation(common, "timing", "duration-ms", observation.timing?.durationMs, "ms"),
-    homeboyFuzzObservation(common, "database", "query-count", observation.database?.queryCount, "count"),
-    homeboyFuzzObservation(common, "database", "query-time-ms", observation.database?.totalTimeMs, "ms"),
-    homeboyFuzzObservation(common, "memory", "memory-delta-bytes", observation.memory?.deltaBytes, "bytes"),
-    homeboyFuzzObservation(common, "network", "network-failures", observation.network?.failures, "count"),
-    ...Object.entries(observation.browser?.metrics ?? {}).map(([name, value]) => homeboyFuzzObservation({ ...common, subject: `${common.subject}:${name}` }, "browser", name, value, undefined)),
+    fuzzObservation(common, "timing", "duration-ms", observation.timing?.durationMs, "ms"),
+    fuzzObservation(common, "database", "query-count", observation.database?.queryCount, "count"),
+    fuzzObservation(common, "database", "query-time-ms", observation.database?.totalTimeMs, "ms"),
+    fuzzObservation(common, "memory", "memory-delta-bytes", observation.memory?.deltaBytes, "bytes"),
+    fuzzObservation(common, "network", "network-failures", observation.network?.failures, "count"),
+    ...Object.entries(observation.browser?.metrics ?? {}).map(([name, value]) => fuzzObservation({ ...common, subject: `${common.subject}:${name}` }, "browser", name, value, undefined)),
   ].filter((item): item is Record<string, unknown> => Boolean(item))
 }
 
-function homeboyFuzzObservation(common: Record<string, unknown>, family: string, metric: string, value: unknown, unit: string | undefined): Record<string, unknown> | undefined {
+function fuzzObservation(common: Record<string, unknown>, family: string, metric: string, value: unknown, unit: string | undefined): Record<string, unknown> | undefined {
   const number = numberValue(value)
   if (number === undefined || number <= 0) return undefined
   return {
@@ -610,7 +767,7 @@ function homeboyFuzzObservation(common: Record<string, unknown>, family: string,
   }
 }
 
-function homeboyHotspotScore(metric: string | undefined, value: number): number {
+function fuzzHotspotScore(metric: string | undefined, value: number): number {
   if (metric === "query-count") return value * 10
   if (metric === "network-failures") return value * 100
   if (metric === "memory-delta-bytes") return value / 1024 / 1024
@@ -934,6 +1091,117 @@ function workloadResultArtifactRefs(execution: ExecutionResult): NonNullable<Exe
 
 function fuzzSuiteStepArtifactRefs(step: RuntimeEpisodeStepResult): FuzzSuiteArtifactRef[] {
   return (step.execution.artifactRefs ?? []).flatMap((ref) => {
+    const path = ref.path ?? ref.artifactId ?? ref.id
+    return path ? [{
+      path,
+      kind: ref.kind,
+      sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined,
+      metadata: { id: ref.id, artifactId: ref.artifactId, digest: ref.digest },
+    }] : []
+  })
+}
+
+function isSameRuntimeSnapshotRef(snapshotRef: string): boolean {
+  return /^[a-zA-Z0-9._-]+$/.test(snapshotRef)
+}
+
+interface ExternalSnapshotResolution {
+  snapshot?: Snapshot
+  unsupportedReason?: string
+  message?: string
+  metadata?: Record<string, unknown>
+}
+
+async function externalSnapshotFromArtifactRef(snapshotRef: string, options: WordPressFuzzSuiteResetExecutorOptions): Promise<ExternalSnapshotResolution> {
+  if (/^https?:\/\//i.test(snapshotRef)) {
+    return {
+      unsupportedReason: "remote-snapshot-ref-unsupported",
+      message: `Snapshot ref ${snapshotRef} is remote; restore-snapshot only supports trusted local artifact bundle refs.`,
+    }
+  }
+
+  const match = /^artifact:([^/]+)\/(files\/.+)$/.exec(snapshotRef)
+  if (!match) {
+    return {
+      unsupportedReason: "unsupported-snapshot-ref-format",
+      message: `Snapshot ref ${snapshotRef} is not a supported local artifact snapshot ref.`,
+    }
+  }
+
+  const [, bundleId, artifactPath] = match
+  const bundle = options.artifactBundles?.find((candidate) => candidate.id === bundleId)
+  if (!bundle) {
+    return {
+      unsupportedReason: "trusted-artifact-bundle-unavailable",
+      message: `Snapshot ref ${snapshotRef} names artifact bundle ${bundleId}, but that bundle was not supplied as a trusted local artifact bundle.`,
+      metadata: { bundleId, artifactPath },
+    }
+  }
+
+  let absolutePath: string
+  try {
+    absolutePath = resolveArtifactPath(bundle.directory, artifactPath).absolutePath
+  } catch (error) {
+    return {
+      unsupportedReason: "artifact-path-outside-bundle",
+      message: error instanceof Error ? error.message : String(error),
+      metadata: { bundleId, artifactPath },
+    }
+  }
+
+  try {
+    const payloadText = await readFile(absolutePath, "utf8")
+    const manifestFile = await artifactManifestFileForPath(bundle.directory, artifactPath)
+    const digest = artifactFileDigest(payloadText)
+    if (manifestFile?.sha256 && manifestFile.sha256.value !== digest.value) {
+      return {
+        unsupportedReason: "snapshot-artifact-hash-mismatch",
+        message: `Snapshot artifact ${artifactPath} does not match the SHA-256 recorded in ${bundleId}/manifest.json.`,
+        metadata: { bundleId, artifactPath, expectedSha256: manifestFile.sha256.value, actualSha256: digest.value },
+      }
+    }
+
+    const payload = JSON.parse(payloadText) as Record<string, unknown>
+    if (payload.schema !== "wp-codebox/wordpress-runtime-snapshot/v1" || payload.compatibility === undefined) {
+      return {
+        unsupportedReason: "snapshot-artifact-schema-unsupported",
+        message: `Snapshot artifact ${artifactPath} is not a wp-codebox/wordpress-runtime-snapshot/v1 artifact.`,
+        metadata: { bundleId, artifactPath },
+      }
+    }
+
+    const snapshotId = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : snapshotRef
+    const createdAt = typeof payload.createdAt === "string" && payload.createdAt.length > 0 ? payload.createdAt : new Date(0).toISOString()
+    const snapshot: Snapshot = {
+      id: snapshotId,
+      createdAt,
+      semantics: "runtime-state-artifact",
+      metadata: { artifact: { absolutePath }, artifactRef: snapshotRef },
+      artifactRefs: [{ kind: "runtime-snapshot-artifact", id: snapshotRef, artifactId: snapshotRef, path: artifactPath, digest }],
+    }
+
+    return { snapshot, metadata: { bundleId, artifactPath, sha256: digest.value } }
+  } catch (error) {
+    return {
+      unsupportedReason: "snapshot-artifact-unreadable",
+      message: error instanceof Error ? error.message : String(error),
+      metadata: { bundleId, artifactPath },
+    }
+  }
+}
+
+async function artifactManifestFileForPath(bundleDirectory: string, artifactPath: string): Promise<ArtifactManifestFile | undefined> {
+  try {
+    const manifestPath = resolveArtifactPath(bundleDirectory, "manifest.json").absolutePath
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ArtifactManifest
+    return Array.isArray(manifest.files) ? manifest.files.find((file) => file.path === artifactPath) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function fuzzSuiteSnapshotArtifactRefs(snapshot: { artifactRefs?: RuntimeEpisodeTraceRef[] }): FuzzSuiteArtifactRef[] {
+  return (snapshot.artifactRefs ?? []).flatMap((ref) => {
     const path = ref.path ?? ref.artifactId ?? ref.id
     return path ? [{
       path,
