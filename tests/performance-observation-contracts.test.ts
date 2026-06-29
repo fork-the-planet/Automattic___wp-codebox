@@ -72,7 +72,7 @@ assert.match(restObservationCode, /'hooks' => array\( 'status' => 'captured'/)
 assert.match(restObservationCode, /add_filter\( 'all', \$wp_codebox_hook_sampler, PHP_INT_MIN, 0 \)/)
 
 const pageLoadCode = pageLoadPhpCode({
-  command: "wordpress.frontend-page-load",
+  command: "wordpress.simulated-frontend-page-load",
   surface: "frontend",
   method: "GET",
   path: "/",

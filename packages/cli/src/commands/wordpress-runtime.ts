@@ -28,12 +28,13 @@ export async function runFuzzSuiteCommand(args: string[]): Promise<number> {
   }
 
   const options = await parsePublicRuntimeCommandOptions(args)
+  const suite = normalizePublicFuzzSuite(options.input)
   if (options.runnerMode === "runtime-backed" && !options.dryRun && !fuzzSuiteRequiresRecipeRuntime(options.input)) {
-    await runRuntimeBackedFuzzSuiteCommand(options)
+    await runRuntimeBackedFuzzSuiteCommand(options, suite)
     return 0
   }
 
-  const result = await runFuzzSuite(options.input as unknown as FuzzSuiteContract, {
+  const result = await runFuzzSuite(suite, {
     executor: (spec) => runWordPressFuzzCommand(spec, options),
     runtimeWorkloadExecutor: (input) => runWordPressWorkloadFuzzCase(input, options),
     supportedTargetKinds: ["runtime"],
@@ -94,8 +95,7 @@ export async function runFuzzReadinessCommand(args: string[]): Promise<number> {
   return 0
 }
 
-async function runRuntimeBackedFuzzSuiteCommand(options: PublicRuntimeCommandOptions): Promise<void> {
-  const suite = options.input as unknown as FuzzSuiteContract
+async function runRuntimeBackedFuzzSuiteCommand(options: PublicRuntimeCommandOptions, suite = normalizePublicFuzzSuite(options.input)): Promise<void> {
   const requirements = fuzzSuiteRuntimeRequirements(options.input)
   const episode = await createWordPressEpisode({
     runtime: {
@@ -125,6 +125,15 @@ async function runRuntimeBackedFuzzSuiteCommand(options: PublicRuntimeCommandOpt
   } finally {
     await episode.close()
   }
+}
+
+function normalizePublicFuzzSuite(input: Record<string, unknown>): FuzzSuiteContract {
+  return {
+    ...input,
+    schema: "wp-codebox/fuzz-suite/v1",
+    id: stringValue(input.id) ?? "wordpress-fuzz-suite",
+    cases: arrayOption(input.cases) as FuzzSuiteContract["cases"],
+  } as FuzzSuiteContract
 }
 
 function runtimeBackedFuzzSuitePolicy(suite: FuzzSuiteContract): RuntimePolicy {

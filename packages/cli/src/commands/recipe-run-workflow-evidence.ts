@@ -182,8 +182,8 @@ async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[]
   const result = await runFuzzSuite(suite, {
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
     executor: async (spec) => runtime.execute(await recipeExecutionSpec(workflowStepFromExecutionSpec(spec), recipeDirectory, sandboxWorkspace)),
-    runtimeWorkloadExecutor: async ({ workload, case: fuzzCase }) => {
-      const steps = [...workflowStepsFromWorkloadPhase(workload.before), ...workflowStepsFromWorkloadPhase(workload.steps), ...workflowStepsFromWorkloadPhase(workload.after)]
+    runtimeWorkloadExecutor: async ({ suite, workload, case: fuzzCase }) => {
+      const steps = [...workflowStepsFromWorkloadPhase(workload.before, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.steps, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.after, workload, suite, fuzzCase)]
       const workloadStartedAt = new Date().toISOString()
       const executions: ExecutionResult[] = []
       for (const step of steps) {
@@ -237,17 +237,84 @@ async function fuzzSuiteFromRecipeCommandArgs(args: string[], recipeDirectory: s
   throw new Error("wp-codebox/run-fuzz-suite requires input-json=<suite> or input-file=<path>")
 }
 
-function workflowStepsFromWorkloadPhase(value: unknown): WorkspaceRecipe["workflow"]["steps"] {
+function workflowStepsFromWorkloadPhase(value: unknown, workload: Record<string, unknown>, suite: FuzzSuiteContract, fuzzCase: unknown): WorkspaceRecipe["workflow"]["steps"] {
   if (!Array.isArray(value)) {
     return []
   }
-  return value.flatMap((step) => {
+  const commandSteps = value.flatMap((step) => {
     if (!step || typeof step !== "object" || Array.isArray(step)) {
       return []
     }
-    const command = (step as { command?: unknown }).command
-    return typeof command === "string" && command.trim() !== "" ? [step as WorkspaceRecipe["workflow"]["steps"][number]] : []
+    const record = step as Record<string, unknown>
+    const command = record.command
+    if (typeof command !== "string" || command.trim() === "") {
+      return []
+    }
+    const args = Array.isArray(record.args) ? record.args.map(String) : undefined
+    const parsedArgs = stepArgMap(args)
+    if (command === "wordpress.run-workload" && parsedArgs.type?.toLowerCase() === "php") {
+      const path = parsedArgs.path ?? parsedArgs.file ?? ""
+      return [{ command: "wordpress.run-php", args: [`code=${wordpressWorkloadPhpWrapper(path, workload, parsedArgs)}`] }]
+    }
+    return [step as WorkspaceRecipe["workflow"]["steps"][number]]
   })
+  if (commandSteps.length > 0) {
+    return commandSteps
+  }
+  if (value.some((step) => step && typeof step === "object" && !Array.isArray(step) && typeof (step as Record<string, unknown>).type === "string")) {
+    return [{
+      command: "wordpress.bench",
+      args: [
+        `plugin-slug=${runtimeRequirementPluginSlug(suite) ?? typedWorkloadPluginSlug(workload, fuzzCase)}`,
+        `workloads-json=${JSON.stringify([{ id: typeof workload.id === "string" ? workload.id : "wordpress-workload", run: value, metadata: objectValue(workload.metadata) }])}`,
+      ],
+    }]
+  }
+  return []
+}
+
+function wordpressWorkloadPhpWrapper(path: string, workload: Record<string, unknown>, args: Record<string, string>): string {
+  const encodedInput = Buffer.from(JSON.stringify(workload), "utf8").toString("base64")
+  const encodedArgs = Buffer.from(JSON.stringify(args), "utf8").toString("base64")
+  return `$__wp_codebox_workload_input = json_decode(base64_decode('${encodedInput}'), true);\n$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n$__wp_codebox_workload_callable = require ${JSON.stringify(path)};\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(is_array($__wp_codebox_workload_input) ? $__wp_codebox_workload_input : array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+}
+
+function stepArgMap(args: string[] | undefined): Record<string, string> {
+  const parsed: Record<string, string> = {}
+  for (const arg of args ?? []) {
+    const [key, value = ""] = String(arg).split(/=(.*)/s, 2)
+    if (key) parsed[key] = value
+  }
+  return parsed
+}
+
+function runtimeRequirementPluginSlug(suite: FuzzSuiteContract): string | undefined {
+  const requirements = objectValue(objectValue(suite.metadata)?.runtime_requirements)
+  for (const key of ["extra_plugins", "component_contracts"]) {
+    for (const plugin of arrayValue(requirements?.[key])) {
+      const slug = objectValue(plugin)?.slug
+      if (typeof slug === "string" && slug.trim()) return slug
+    }
+  }
+  return undefined
+}
+
+function typedWorkloadPluginSlug(workload: Record<string, unknown>, fuzzCase: unknown): string {
+  const caseRecord = objectValue(fuzzCase)
+  const explicit = stringValue(workload.pluginSlug) ?? stringValue(workload.plugin_slug) ?? stringValue(objectValue(workload.metadata)?.plugin_slug) ?? stringValue(objectValue(caseRecord?.metadata)?.plugin_slug)
+  if (explicit) return explicit
+  const metadata = objectValue(caseRecord?.metadata)
+  const caseMetadata = objectValue(metadata?.caseMetadata) ?? objectValue(metadata?.case_metadata) ?? metadata
+  const activation = stringValue(objectValue(objectValue(objectValue(caseMetadata?.intent)?.plugin)?.activation)?.entrypoint) ?? stringValue(objectValue(objectValue(caseMetadata?.intent)?.plugin)?.activation)
+  return activation?.split("/")[0]?.trim() || "wp-codebox-workload"
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
 }
 
 function workflowStepFromExecutionSpec(spec: { command: string; args?: string[]; diagnostics?: WorkspaceRecipe["workflow"]["steps"][number]["diagnostics"] }): WorkspaceRecipe["workflow"]["steps"][number] {

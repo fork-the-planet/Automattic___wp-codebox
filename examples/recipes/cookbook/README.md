@@ -23,11 +23,9 @@ files plus dry-run evidence limited to shareable metadata.
 
 ## Available recipes
 
-Provider-specific agent compatibility fixtures are kept under
-`tests/fixtures/legacy-compatibility-recipes` rather than public cookbook
-examples. Public examples should demonstrate Codebox-owned abilities, CLI
-commands, browser SDK calls, and recipe commands without exposing private agent
-substrate or recipe-step names as consumer APIs.
+Public examples should demonstrate Codebox-owned abilities, CLI commands,
+browser SDK calls, and recipe commands without exposing private agent substrate
+or recipe-step names as consumer APIs.
 
 The expected successful response from public recipe examples is a JSON recipe run whose runtime
 reports the Playground site title and active theme. Fleet runners should

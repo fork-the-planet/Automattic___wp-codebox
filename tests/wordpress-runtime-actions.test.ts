@@ -51,7 +51,9 @@ const fakeEpisode: WordPressRuntimeActionEpisode = {
         command: action.command,
         args: action.args ?? [],
         exitCode: 0,
-        stdout: action.command.includes("browser") || action.command.includes("editor") || action.command.includes("rest") ? JSON.stringify({ performance: { timing: { durationMs: 12 }, memory: { peakBytes: 1234 }, database: { queryCount: 2, repeatedQueries: [{ fingerprint: "SELECT ?", count: 2 }] } } }) : "ok\n",
+        stdout: action.command === "wordpress.run-php" && (action.args ?? []).some((arg) => arg.includes("wp-codebox/wordpress-rollback-capture-request/v1"))
+          ? JSON.stringify({ schema: "wp-codebox/wordpress-rollback-capture/v1", options: { rollback_probe: { exists: true, value: "same" } }, tables: {}, objects: {} })
+          : action.command.includes("browser") || action.command.includes("editor") || action.command.includes("rest") || action.command.includes("page-load") ? JSON.stringify({ performance: { timing: { durationMs: 12 }, memory: { peakBytes: 1234 }, database: { queryCount: 2, repeatedQueries: [{ fingerprint: "SELECT ?", count: 2 }] } } }) : "ok\n",
         stderr: "",
         startedAt: "2026-01-01T00:00:00.000Z",
         finishedAt: "2026-01-01T00:00:00.000Z",
@@ -104,8 +106,8 @@ assert.deepEqual(calls.map((call) => call.command), [
   "wordpress.db-operation",
   "wordpress.block-render",
   "wordpress.block-exercise",
-  "wordpress.admin-page-load",
-  "wordpress.frontend-page-load",
+  "wordpress.simulated-admin-page-load",
+  "wordpress.simulated-frontend-page-load",
 ])
 assert.deepEqual(calls[0]?.args, ["command=option get siteurl"])
 assert.ok(calls[1]?.args.includes("code=echo get_bloginfo('name');"))
@@ -193,8 +195,11 @@ assert.deepEqual(calls.slice(beforeFuzzCalls).map((call) => call.command), [
   "wordpress.browser-probe",
   "wordpress.crud-operation",
   "wp-codebox.checkpoint-create",
+  "wordpress.run-php",
   "wordpress.db-operation",
+  "wordpress.run-php",
   "wp-codebox.checkpoint-restore",
+  "wordpress.run-php",
 ])
 assert.equal((runtimeActionFuzzResult.cases[1]?.metadata?.adapter as Record<string, unknown> | undefined)?.actionType, "random_walk")
 assert.equal((runtimeActionFuzzResult.cases[6]?.metadata?.mutationIsolation as Record<string, unknown> | undefined)?.artifactKind, "mutation-isolation")

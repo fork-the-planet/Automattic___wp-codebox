@@ -211,12 +211,13 @@ capture, workspace command execution, workspace publication, tool-call transcrip
 recording, artifact handoff, and runtime evidence result schemas.
 
 WP Codebox owns the names and schemas. The runner workspace ability surface is
-`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and
-`wp-codebox/publish`. Callers own policy: repository selection, authorization,
+`wp-codebox/runner-workspace-prepare`, `wp-codebox/runner-workspace-capture`,
+`wp-codebox/runner-workspace-command`, and `wp-codebox/runner-workspace-publish`.
+Callers own policy: repository selection, authorization,
 retries, retention, publication approval, and how resulting refs are attached to
 their job records.
 
-The contract intentionally uses WP Codebox task names and short WP Codebox
+The contract intentionally uses WP Codebox task names and runner workspace
 ability names. Downstream product names, backend ability names, and
 orchestration policy stay outside the runtime invocation payload.
 

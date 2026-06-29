@@ -715,7 +715,7 @@ Supported runtime commands today:
 - `wordpress.theme-setup`: install, switch, or list WordPress.org themes inside the contained runtime; accepts `action=install|switch|list`, `theme=<slug>` or `slug=<slug>`, and optional `activate=true`. Paths, URLs, and package files are rejected.
 - `wordpress.phpunit`: run a mounted plugin's PHPUnit suite; accepts `plugin-slug=<slug>` (or explicit `code`/`code-file`) plus `test-file`, `autoload-file`, `tests-dir`, and `phpunit-xml`.
 - `wordpress.core-phpunit`: run WordPress core's PHPUnit suite against a mounted `wordpress-develop` checkout; accepts `core-root`, `tests-dir`, `phpunit-xml`, `test-file`, `autoload-file`, and `multisite`. **Precondition:** the mounted checkout must already have Composer dev dependencies installed — see below.
-- `wordpress.simulated-admin-page-load` and `wordpress.simulated-frontend-page-load`: simulate admin/frontend page loads in-process. Backward-compatible public aliases `wordpress.admin-page-load` and `wordpress.frontend-page-load` still map to these simulated contracts.
+- `wordpress.simulated-admin-page-load` and `wordpress.simulated-frontend-page-load`: simulate admin/frontend page loads in-process.
 - `wordpress.server-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` through the live preview HTTP server without a browser. Its performance observation is marked `source=server-http` and `kind=server-page-load`.
 - `wordpress.browser-page-load`: load `surface=admin|frontend` plus `path=<path>` or `url=<path-or-url>` in Playwright by wrapping `wordpress.browser-probe`.
 - `wordpress.browser-probe`: boot the live preview, visit `url=<path-or-url>` with Playwright, and capture generic browser replay/audit evidence under `files/browser/`.
@@ -1248,10 +1248,10 @@ already use them and expose `meta.canonical_ability` in ability metadata.
 - `wp-codebox/run-agent-task-fanout`
 - `wp-codebox/create-browser-playground-session`
 - `wp-codebox/browser-connector-request`
-- `wp-codebox/prepare`
-- `wp-codebox/capture`
-- `wp-codebox/command`
-- `wp-codebox/publish`
+- `wp-codebox/runner-workspace-prepare`
+- `wp-codebox/runner-workspace-capture`
+- `wp-codebox/runner-workspace-command`
+- `wp-codebox/runner-workspace-publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/discard-artifact`
@@ -1367,7 +1367,7 @@ Failed `agent-task-run` responses also include `failure_evidence` with `schema: 
 
 Provider stacks are assembled from generic primitives: `provider_plugin_paths`, `component_contracts`, `runtime_stack_mounts`, `runtime_overlays`, and `secret_env`. A provider plugin path may point at any prepared checkout; when the checkout has a Composer package name, WP Codebox uses the package basename as the mounted plugin slug so branch/worktree directory names do not become WordPress plugin identities.
 
-Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements. Provider-specific compatibility fixtures live under `tests/fixtures/legacy-compatibility-recipes` so public examples keep the consumer-facing Codebox API boundary clear.
+Use explicit `runtime_overlays` for bundled libraries or scoped runtime replacements so public examples keep the consumer-facing Codebox API boundary clear.
 
 Consumers that need a stable interpretation layer can import `normalizeAgentTaskRunResult()`, `AGENT_TASK_RUN_RESULT_SCHEMA`, and `AGENT_TASK_RUN_RESULT_JSON_SCHEMA` from `@automattic/wp-codebox-core`. The helper accepts the current `agent-task-run` response, including `agentResult`, `completionOutcome`, and nested `metadata.recipe_run` records. The returned `wp-codebox/agent-task-run-result/v1` envelope normalizes `completed`/`success` into `succeeded` or `failed`, exposes terminal statuses such as `no_op`, `timeout`, `provider_error`, and `unable_to_remediate`, groups artifact bundle, changed-files, patch, transcript, log, and runtime refs, and includes no-op/failure metadata for parent schedulers.
 

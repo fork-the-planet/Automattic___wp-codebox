@@ -218,11 +218,11 @@ export function exerciseWordPressBlock(episode: WordPressRuntimeActionEpisode, i
 }
 
 export function loadWordPressAdminPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageLoadOptions = {}): Promise<RuntimeEpisodeStepResult> {
-  return runWordPressCommand(episode, "wordpress.admin-page-load", pageLoadArgs(page), page.timeoutMs)
+  return runWordPressCommand(episode, "wordpress.simulated-admin-page-load", pageLoadArgs(page), page.timeoutMs)
 }
 
 export function loadWordPressFrontendPage(episode: WordPressRuntimeActionEpisode, page: WordPressPageLoadOptions = {}): Promise<RuntimeEpisodeStepResult> {
-  return runWordPressCommand(episode, "wordpress.frontend-page-load", pageLoadArgs(page), page.timeoutMs)
+  return runWordPressCommand(episode, "wordpress.simulated-frontend-page-load", pageLoadArgs(page), page.timeoutMs)
 }
 
 export function executeWordPressRestMatrix(matrix: WordPressRestMatrixContract, options: FuzzSuiteRunOptions = {}): Promise<WordPressRestMatrixResultEnvelope> {

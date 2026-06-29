@@ -155,7 +155,7 @@ public static function fuzz_suite_runtime_backed_runner_capabilities_contract( a
 		'targetKinds'                     => array( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' ),
 		'operationKinds'                  => array( 'read', 'crud', 'mutation-isolation', 'delete-boundary' ),
 		'runtimeActionTypes'              => array( 'admin_page', 'browser', 'browser_probe', 'crud_operation', 'db_operation', 'editor_open', 'page', 'php', 'rest_request', 'wp_cli' ),
-		'commands'                        => array( 'wp-codebox.checkpoint-create', 'wp-codebox.checkpoint-list', 'wp-codebox.checkpoint-restore', 'wordpress.ability', 'wordpress.admin-page-load', 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.editor-open', 'wordpress.ensure-plugin-active', 'wordpress.frontend-page-load', 'wordpress.http-request', 'wordpress.plugin-state', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.run-workload', 'wordpress.server-page-load', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load', 'wordpress.wp-cli' ),
+		'commands'                        => array( 'wp-codebox.checkpoint-create', 'wp-codebox.checkpoint-list', 'wp-codebox.checkpoint-restore', 'wordpress.ability', 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.editor-open', 'wordpress.ensure-plugin-active', 'wordpress.http-request', 'wordpress.plugin-state', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.run-workload', 'wordpress.server-page-load', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load', 'wordpress.wp-cli' ),
 		'unsupportedRequiredCapabilities' => array(),
 	);
 	if ( ! empty( $suite ) ) {
@@ -375,7 +375,7 @@ private static function fuzz_suite_runtime_action_step( array $input ): array {
 	}
 	if ( 'admin_page' === $type || 'page' === $type ) {
 		return array(
-			'command' => 'admin_page' === $type ? 'wordpress.admin-page-load' : 'wordpress.frontend-page-load',
+			'command' => 'admin_page' === $type ? 'wordpress.simulated-admin-page-load' : 'wordpress.simulated-frontend-page-load',
 			'args'    => self::fuzz_suite_args_from_map( array( 'path' => $input['path'] ?? null, 'url' => $input['url'] ?? null, 'method' => $input['method'] ?? null, 'query-json' => $input['query'] ?? null, 'body-json' => $input['body'] ?? null, 'user' => $input['user'] ?? null, 'session' => $input['session'] ?? null, 'capture-diagnostics' => self::fuzz_suite_csv_arg( $input['capture_diagnostics'] ?? $input['captureDiagnostics'] ?? null ) ) ),
 			'action'  => $type,
 		);
@@ -1599,8 +1599,8 @@ private static function fuzz_suite_unsupported_step_reason( string $command, arr
 		'wordpress.browser-actions'    => array( 'wp_codebox_fuzz_runtime_action_browser_unsupported', 'runtime_action_browser_unsupported', 'Runtime-action type browser requires the browser runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
 		'wordpress.browser-probe'      => array( 'wp_codebox_fuzz_runtime_action_browser_probe_unsupported', 'runtime_action_browser_probe_unsupported', 'Runtime-action type browser_probe requires the browser runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
 		'wordpress.editor-open'        => array( 'wp_codebox_fuzz_runtime_action_editor_open_unsupported', 'runtime_action_editor_open_unsupported', 'Runtime-action type editor_open requires the browser/editor runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
-		'wordpress.admin-page-load'    => array( 'wp_codebox_fuzz_runtime_action_admin_page_unsupported', 'runtime_action_admin_page_unsupported', 'Runtime-action type admin_page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
-		'wordpress.frontend-page-load' => array( 'wp_codebox_fuzz_runtime_action_page_unsupported', 'runtime_action_page_unsupported', 'Runtime-action type page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.simulated-admin-page-load'    => array( 'wp_codebox_fuzz_runtime_action_admin_page_unsupported', 'runtime_action_admin_page_unsupported', 'Runtime-action type admin_page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
+		'wordpress.simulated-frontend-page-load' => array( 'wp_codebox_fuzz_runtime_action_page_unsupported', 'runtime_action_page_unsupported', 'Runtime-action type page requires the page-load runtime executor; the public PHP fuzz-suite ability records a structured skip.' ),
 		'wordpress.runtime-action'     => array( 'wp_codebox_fuzz_runtime_action_unsupported', 'runtime_action_unsupported', 'Runtime-action type is not supported by the public PHP fuzz-suite ability.' ),
 	);
 

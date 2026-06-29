@@ -5,7 +5,7 @@ import { wordpressFixtureUserPhpCode, type WordPressUserSessionResolution } from
 export type PageLoadSurface = "admin" | "frontend"
 
 export interface PageLoadCommandInput {
-  command: "wordpress.admin-page-load" | "wordpress.frontend-page-load" | "wordpress.simulated-admin-page-load" | "wordpress.simulated-frontend-page-load"
+  command: "wordpress.simulated-admin-page-load" | "wordpress.simulated-frontend-page-load"
   surface: PageLoadSurface
   method: string
   path: string

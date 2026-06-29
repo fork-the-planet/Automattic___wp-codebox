@@ -125,8 +125,8 @@ export function normalizeRuntimePackageArtifactDeclarations(value: unknown): Run
       direction,
       required: typeof entry.required === "boolean" ? entry.required : undefined,
       path: stringValue(entry.path) || undefined,
-      contentType: stringValue(entry.contentType ?? entry.content_type) || undefined,
-      payloadSchema: payloadSchema(entry.payloadSchema ?? entry.payload_schema ?? entry.artifactSchema ?? entry.artifact_schema),
+      contentType: stringValue(entry.contentType) || undefined,
+      payloadSchema: payloadSchema(entry.payloadSchema),
       metadata: isPlainObject(entry.metadata) ? entry.metadata : {},
     })]
   })

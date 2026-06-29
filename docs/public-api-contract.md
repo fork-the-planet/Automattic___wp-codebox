@@ -318,8 +318,8 @@ The stable public surface is grouped by lifecycle area rather than by product:
   `wp-codebox/fuzz-suite-result/v1` inputs. The schema carries stable
   `identifier` fields plus artifact refs instead of exposing backend runtime or
   Playground internals.
-- **WordPress page-load coverage:** `wordpress.admin-page-load` and
-  `wordpress.frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
+- **WordPress page-load coverage:** `wordpress.simulated-admin-page-load` and
+  `wordpress.simulated-frontend-page-load` return `wp-codebox/wordpress-page-load-result/v1`
   with `mode: "simulated"`, status, target, resolved admin screen or frontend
   queried-object identity where WordPress exposes it, redirects, notices/errors,
   optional query/performance observations, and a JSON artifact ref. These commands

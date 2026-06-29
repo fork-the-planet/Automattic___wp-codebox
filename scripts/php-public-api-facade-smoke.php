@@ -229,7 +229,7 @@ expect( $blocked instanceof WP_Error, 'Expected non-wp-codebox ability names to 
 expect( 'wp_codebox_api_ability_not_supported' === $blocked->get_error_code(), 'Expected unsupported ability error code.' );
 expect( ! str_contains( json_encode( $blocked->get_error_data(), JSON_UNESCAPED_SLASHES ) ?: '', 'external-backend' ), 'Unsupported ability errors must not echo backend ability names.' );
 
-foreach ( array( 'agents/run-runtime-package', 'datamachine/jobs-list', 'playground/run-blueprint' ) as $raw_ability ) {
+foreach ( array( 'datamachine/jobs-list', 'playground/run-blueprint' ) as $raw_ability ) {
 	$blocked = WP_Codebox_API::execute_ability( $raw_ability, array() );
 	expect( $blocked instanceof WP_Error, 'Expected raw backend ability name to be rejected: ' . $raw_ability );
 }
@@ -266,10 +266,6 @@ $runner_workspace_abilities = array(
 	'wp-codebox/runner-workspace-capture' => array( 'method' => 'capture_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-capture-result/v1' ),
 	'wp-codebox/runner-workspace-command' => array( 'method' => 'run_runner_workspace_command', 'schema' => 'wp-codebox/runner-workspace-command-result/v1' ),
 	'wp-codebox/runner-workspace-publish' => array( 'method' => 'publish_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-publication-result/v1' ),
-	'wp-codebox/prepare-runner-workspace' => array( 'method' => 'prepare_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-prepare-result/v1' ),
-	'wp-codebox/capture-runner-workspace' => array( 'method' => 'capture_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-capture-result/v1' ),
-	'wp-codebox/run-runner-workspace-command' => array( 'method' => 'run_runner_workspace_command', 'schema' => 'wp-codebox/runner-workspace-command-result/v1' ),
-	'wp-codebox/publish-runner-workspace' => array( 'method' => 'publish_runner_workspace', 'schema' => 'wp-codebox/runner-workspace-publication-result/v1' ),
 );
 
 foreach ( $runner_workspace_abilities as $ability_name => $expected ) {

@@ -222,20 +222,11 @@ const failedExit = normalizeAgentTaskRunResult({ success: true, status: "complet
 assert.equal(failedExit.status, "failed")
 assert.equal(agentTaskRunExitCode({ success: true, agent_task_run_result: failedExit }), 1)
 
-const strictLegacyNoOp = normalizeAgentTaskRunResult({ success: true, agent_result: { noOpReason: "Nothing to do", changedFiles: { count: 0 }, patch: { bytes: 0 } } }, { exitStatus: 0 })
-assert.equal(strictLegacyNoOp.status, "succeeded")
-assert.equal(strictLegacyNoOp.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), false)
-
 const strictNestedTerminal = normalizeAgentTerminalResult({ agent_runtime: { success: true, result: { pending_tools: ["review"], completed: false } } })
 assert.equal(strictNestedTerminal, undefined)
 
 const strictRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } })
 assert.deepEqual(strictRuntimeWorkload.outputs, {})
-assert.equal(strictRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), false)
-
-const compatRuntimeWorkload = normalizeAgentRuntimeWorkload({ outputs: { answer: "legacy" } }, { compatMode: true })
-assert.deepEqual(compatRuntimeWorkload.outputs, { answer: "legacy" })
-assert.equal(compatRuntimeWorkload.diagnostics.some((diagnostic) => diagnostic.class === "wp-codebox.normalizer.compat_mode_used"), true)
 
 const typedArtifactRefs = normalizeArtifactResultTypedArtifacts({
   typed_artifacts: [{

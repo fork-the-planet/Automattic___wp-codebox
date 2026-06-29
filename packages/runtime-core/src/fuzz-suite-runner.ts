@@ -947,7 +947,7 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
       }
 
       if (input.payload.type === "admin_page" || input.payload.type === "page") {
-        const command = input.payload.type === "admin_page" ? "wordpress.admin-page-load" : "wordpress.frontend-page-load"
+        const command = input.payload.type === "admin_page" ? "wordpress.simulated-admin-page-load" : "wordpress.simulated-frontend-page-load"
         return {
           status: "supported",
           spec: stripUndefined({

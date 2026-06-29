@@ -3,7 +3,6 @@ import type { RuntimeRunArtifactRef } from "./run-registry.js"
 export const MATERIALIZATION_RESULT_SCHEMA = "wp-codebox/materialization-result/v1" as const
 export const BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA = "wp-codebox/browser-artifact-persistence/ref/v1" as const
 export const BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA
-export const LEGACY_BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA = "wp-codebox/browser-artifact-persistence-projection/v1" as const
 export const ARTIFACT_BUNDLE_FILE_MANIFEST_SCHEMA = "wp-codebox/artifact-bundle-file-manifest/v1" as const
 
 export interface MaterializationArtifactRef {
@@ -295,12 +294,12 @@ export function normalizeMaterializationArtifactRef(input: unknown, defaults: Pa
     return undefined
   }
 
-  const kind = stringValue(source.kind ?? source.artifact_type ?? source.role) || defaults.kind
-  const id = stringValue(source.id ?? source.artifact_id ?? source.artifactId) || defaults.id
-  const path = stringValue(source.path ?? source.artifacts_path ?? source.artifactsPath ?? source.directory) || defaults.path
-  const digest = normalizeDigest(source.digest ?? source.sha256 ?? source.contentDigest ?? source.content_digest) ?? defaults.digest
+  const kind = stringValue(source.kind) || defaults.kind
+  const id = stringValue(source.id) || defaults.id
+  const path = stringValue(source.path) || defaults.path
+  const digest = normalizeDigest(source.digest ?? source.sha256) ?? defaults.digest
 
-  if (!id && !path && !digest && !stringValue(source.kind ?? source.artifact_type ?? source.role)) {
+  if (!id && !path && !digest && !stringValue(source.kind)) {
     return undefined
   }
 
@@ -349,7 +348,7 @@ export function artifactBundleFileManifest(input: BrowserArtifactProjectionInput
 }
 
 export function isBrowserArtifactPersistenceRef(input: unknown): input is BrowserArtifactPersistenceRef {
-  return isRecord(input) && (input.schema === BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA || input.schema === LEGACY_BROWSER_ARTIFACT_PERSISTENCE_PROJECTION_SCHEMA)
+  return isRecord(input) && input.schema === BROWSER_ARTIFACT_PERSISTENCE_REF_SCHEMA
 }
 
 export function materializationRunArtifactRefs(results: MaterializationPhaseResult[]): RuntimeRunArtifactRef[] {
@@ -411,7 +410,7 @@ function normalizeDigest(input: unknown): MaterializationArtifactRef["digest"] |
   }
   const value = stringValue(input.value)
   const algorithm = stringValue(input.algorithm) || "sha256"
-  return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest) ?? normalizeDigest(input.contentDigest) ?? normalizeDigest(input.content_digest)
+  return value ? { algorithm, value } : normalizeDigest(input.sha256) ?? normalizeDigest(input.digest)
 }
 
 function phaseDiagnostics(phase: MaterializationPhaseResult): MaterializationDiagnostic[] {

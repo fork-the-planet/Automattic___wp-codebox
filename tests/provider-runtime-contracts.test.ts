@@ -58,6 +58,7 @@ assert.doesNotMatch(JSON.stringify(credentialResolution), /token-value|secret_en
 
 const abilitiesPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-abilities.php", "utf8")
 const runnerWorkspacePhp = await readFile("packages/wordpress-plugin/src/trait-wp-codebox-abilities-runner-publication.php", "utf8")
+const runnerWorkspaceDescriptorsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-ability-descriptors.php", "utf8")
 const runnerWorkspaceAdapterPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-runner-workspace-adapter.php", "utf8")
 const providerCredentialsPhp = await readFile("packages/wordpress-plugin/src/class-wp-codebox-provider-credentials.php", "utf8")
 const registeredAbilityIds = [
@@ -65,44 +66,19 @@ const registeredAbilityIds = [
   contract.abilities.workspaceCapture,
   contract.abilities.workspaceCommand,
   contract.abilities.workspacePublish,
-  "wp-codebox/prepare",
-  "wp-codebox/capture",
-  "wp-codebox/command",
-  "wp-codebox/publish",
-  "wp-codebox/prepare-runner-workspace",
-  "wp-codebox/capture-runner-workspace",
-  "wp-codebox/run-runner-workspace-command",
-  "wp-codebox/publish-runner-workspace",
-  "wp-codebox/runner-workspace-publish",
 ]
 
 for (const abilityId of registeredAbilityIds) {
-  assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", abilityId), new RegExp(`'${abilityId}'`))
+  assert.match(runnerWorkspaceDescriptorsPhp, new RegExp(`'canonical_ability'\\s*=>\\s*'${abilityId}'`))
 }
 
-assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePrepare), /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'prepare_runner_workspace'\s*\)/)
-assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspaceCapture), /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'capture_runner_workspace'\s*\)/)
-assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspaceCommand), /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'run_runner_workspace_command'\s*\)/)
-assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspaceCommand), /'permission_callback'\s*=>\s*array\(\s*self::class,\s*'can_run_agent_task'\s*\)/)
-assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePublish), /'execute_callback'\s*=>\s*array\(\s*self::class,\s*'publish_runner_workspace'\s*\)/)
-assert.match(phpCallBlock(abilitiesPhp, "wp_register_ability", contract.abilities.workspacePublish), /'permission_callback'\s*=>\s*array\(\s*self::class,\s*'can_run_agent_task'\s*\)/)
+assert.match(runnerWorkspaceDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'prepare_runner_workspace'\s*\)/)
+assert.match(runnerWorkspaceDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'capture_runner_workspace'\s*\)/)
+assert.match(runnerWorkspaceDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'run_runner_workspace_command'\s*\)/)
+assert.match(runnerWorkspaceDescriptorsPhp, /'execute_callback'\s*=>\s*array\(\s*WP_Codebox_Abilities::class,\s*'publish_runner_workspace'\s*\)/)
+assert.match(abilitiesPhp, /'permission_callback'\s*=>\s*array\(\s*self::class,\s*'can_run_agent_task'\s*\)/)
 
-const aliasExpectations = new Map([
-  ["wp-codebox/prepare", contract.abilities.workspacePrepare],
-  ["wp-codebox/prepare-runner-workspace", contract.abilities.workspacePrepare],
-  ["wp-codebox/capture", contract.abilities.workspaceCapture],
-  ["wp-codebox/capture-runner-workspace", contract.abilities.workspaceCapture],
-  ["wp-codebox/command", contract.abilities.workspaceCommand],
-  ["wp-codebox/run-runner-workspace-command", contract.abilities.workspaceCommand],
-  ["wp-codebox/publish", contract.abilities.workspacePublish],
-  ["wp-codebox/publish-runner-workspace", contract.abilities.workspacePublish],
-])
-
-for (const [alias, canonical] of aliasExpectations) {
-  const block = phpCallBlock(abilitiesPhp, "wp_register_ability", alias)
-  assert.match(block, new RegExp(`'canonical_ability'\\s*=>\\s*'${canonical}'`))
-  assert.match(block, new RegExp(`'alias_of'\\s*=>\\s*'${canonical}'`))
-}
+assert.doesNotMatch(abilitiesPhp, /alias_of|register_compatibility_ability_aliases/)
 
 assert.match(runnerWorkspaceAdapterPhp, /apply_filters\(\s*'wp_codebox_runner_workspace_backend'/)
 assert.match(providerCredentialsPhp, /wp_codebox_provider_credential_requirements/)
