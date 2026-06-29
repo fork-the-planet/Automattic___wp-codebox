@@ -9,6 +9,7 @@ interface PlaygroundCommandRuntime {
   runCommandAgent(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runPhp(spec: ExecutionSpec): Promise<PlaygroundCommandOutput>
   runWpCli(spec: ExecutionSpec): Promise<string>
+  runInvokeWpCli(spec: ExecutionSpec): Promise<string>
   runWordPressSession(spec: ExecutionSpec): Promise<string>
   runWordPressNonce(spec: ExecutionSpec): Promise<string>
   runWordPressActionAuth(spec: ExecutionSpec): Promise<string>
@@ -22,6 +23,9 @@ interface PlaygroundCommandRuntime {
   runCacheChurnObservation(spec: ExecutionSpec): Promise<string>
   runRuntimeDiscovery(spec: ExecutionSpec): Promise<string>
   runRestRouteInventory(spec: ExecutionSpec): Promise<string>
+  runExecutionSurfaces(spec: ExecutionSpec): Promise<string>
+  runInvokeHook(spec: ExecutionSpec): Promise<string>
+  runInvokeCronEvent(spec: ExecutionSpec): Promise<string>
   runAdminPageInventory(spec: ExecutionSpec): Promise<string>
   runAdminActionInventory(spec: ExecutionSpec): Promise<string>
   runFuzzAdminPages(spec: ExecutionSpec): Promise<string>

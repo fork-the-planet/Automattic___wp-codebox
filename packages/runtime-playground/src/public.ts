@@ -13,6 +13,7 @@ import {
   createRuntime,
   createRuntimeEpisode,
   createWordPressRuntimeCheckpoint,
+  describeWordPressExecutionSurfaces,
   executeFuzzSuite,
   openWordPressAdminPage,
   openWordPressEditor,
@@ -37,6 +38,9 @@ import {
   fuzzArtifactBundleContract,
   fuzzMinimizeUnsupportedCapability,
   fuzzReplayCaseRef,
+  invokeWordPressCronEvent,
+  invokeWordPressHook,
+  invokeWordPressWpCli,
   runtimeArtifactStorageDescriptor,
   deleteBoundaryArtifact,
   isRestMutationMethod,
@@ -94,6 +98,7 @@ import {
 } from "@automattic/wp-codebox-core/public"
 export {
   collectWordPressArtifacts,
+  describeWordPressExecutionSurfaces,
   discoverWordPressRuntime,
   executeFuzzSuite,
   executeWordPressRestMatrix,
@@ -103,6 +108,9 @@ export {
   inventoryWordPressDatabase,
   inventoryWordPressFrontendUrls,
   inventoryWordPressRestRoutes,
+  invokeWordPressCronEvent,
+  invokeWordPressHook,
+  invokeWordPressWpCli,
   listWordPressRuntimeCheckpoints,
   loadWordPressAdminPage,
   loadWordPressFrontendPage,
@@ -142,6 +150,10 @@ export {
   type WordPressRuntimeArtifactSource,
   type WordPressRuntimeDiscoveryOptions,
   type WordPressRuntimeDiscoveryCoveragePlanOptions,
+  type WordPressExecutionSurfaceOptions,
+  type WordPressInvokeCronEventOptions,
+  type WordPressInvokeHookOptions,
+  type WordPressInvokeWpCliOptions,
   type WordPressRuntimeInventoryOptions,
   type WordPressRestPerformanceObservationOptions,
   type WordPressRuntimeCheckpointListOptions,
@@ -265,6 +277,50 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
           return executeDisposableSandboxDbMutation(episode, { ...input, action })
         }
         const step = await readWordPressDatabase(episode, { ...action, operation: action.operation as "schema" | "read" | "inspect" | "query-summary" }, action.timeout_ms)
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { stepId: step.id, executionId: step.execution.id, mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: { algorithm: "sha256", value: step.execution.command },
+        }
+      }
+      if (action.type === "wordpress_hook") {
+        const step = await invokeWordPressHook(episode, {
+          hook: action.hook,
+          args: action.args,
+          mutates: action.mutates,
+          capability: action.capability,
+          destructiveBoundary: action.destructive_boundary,
+          timeoutMs: action.timeout_ms,
+        })
+        return {
+          schema: "wp-codebox/runtime-action-observation/v1",
+          type: action.type,
+          status: "ok",
+          action,
+          data: { stepId: step.id, executionId: step.execution.id, mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode },
+          observedAt: new Date().toISOString(),
+          step,
+          artifactRefs: step.observation?.artifactRefs,
+          digest: { algorithm: "sha256", value: step.execution.command },
+        }
+      }
+      if (action.type === "wordpress_cron_event") {
+        const step = await invokeWordPressCronEvent(episode, {
+          hook: action.hook,
+          operation: action.operation,
+          args: action.args,
+          timestamp: action.timestamp,
+          mutates: action.mutates,
+          capability: action.capability,
+          destructiveBoundary: action.destructive_boundary,
+          timeoutMs: action.timeout_ms,
+        })
         return {
           schema: "wp-codebox/runtime-action-observation/v1",
           type: action.type,
