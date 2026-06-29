@@ -237,6 +237,7 @@ assert.deepEqual(barrelExportModules(contractsBarrel), [
   "./sandbox-isolation-proof-contracts.js",
   "./wordpress-crud-contracts.js",
   "./wordpress-block-exercise-contracts.js",
+  "./wordpress-admin-action-contracts.js",
   "./wordpress-db-contracts.js",
   "./wordpress-fuzz-suite-builders.js",
   "./wordpress-hotspots-contracts.js",
