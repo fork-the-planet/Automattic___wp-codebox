@@ -154,6 +154,43 @@ caller requests required coverage, pass `requireCoverage: true`; unsupported
 required capabilities fail closed with `status: "error"` instead of looking like a
 successful structured skip.
 
+### WordPress fuzz runtime contract
+
+HBEX and other orchestrator consumers should read the versioned public descriptor
+`wp-codebox/wordpress-fuzz-runtime-contract/v1` instead of probing runtime commands
+or private implementation details. The same descriptor is exposed through:
+
+- PHP: `WP_Codebox_API::wordpress_fuzz_runtime_contract()`
+- Ability discovery metadata on `wp-codebox/run-fuzz-suite`
+- WP-CLI: `wp codebox wordpress-fuzz-runtime-contract --format=json`
+- Node CLI: `wp-codebox fuzz descriptor --format=json`
+- TypeScript: `wordpressFuzzRuntimeContract()` from `@automattic/wp-codebox-core/contracts`
+
+The descriptor enumerates explicit action families, reset modes, artifact
+expectations, destructive-mode requirements, unsupported capabilities, and HBEX
+schema ids. Unsupported features are declared as data in
+`unsupportedCapabilities`; consumers should not infer support by trying commands.
+
+The public destructive contract is bounded: destructive fuzz coverage requires
+`checkpoint-per-case` reset mode plus `mutation-isolation-artifact` and
+`delete-boundary-artifact` evidence. Raw delete capability is intentionally
+`null`; delete coverage is represented by the explicit `delete-boundary-artifact`
+contract.
+
+HBEX schema ids advertised by the descriptor include:
+
+- `wp-codebox/wordpress-fuzz-runtime-contract/v1`
+- `wp-codebox/fuzz-suite/v1`
+- `wp-codebox/fuzz-suite-result/v1`
+- `wp-codebox/fuzz-runner-capabilities/v1`
+- `wp-codebox/fuzz-runner-readiness/v1`
+- `wp-codebox/fuzz-coverage-plan/v1`
+- `wp-codebox/fuzz-fixture-plan/v1`
+- `wp-codebox/rest-mutation-fixture-opt-in/v1`
+- `wp-codebox/mutation-isolation-artifact/v1`
+- `wp-codebox/delete-boundary-artifact/v1`
+- `wp-codebox/wordpress-workload-run/v1`
+
 TypeScript callers running through the public Codebox contract should build fuzz
 suites with `@automattic/wp-codebox-core/contracts`. Use `wp-codebox/run-fuzz-suite`
 or `WP_Codebox_API` for in-process WordPress ability coverage, and use the public
@@ -314,6 +351,18 @@ The stable public surface is grouped by lifecycle area rather than by product:
   skips. `wp-codebox/fuzz-suite-result/v1` reports case status, diagnostics,
   artifact refs, and suite summary without embedding product-specific Woo,
   Gutenberg, Jetpack, or Core assertions.
+- **Sandbox isolation proof:** `wp-codebox/sandbox-isolation-proof/v1` is the
+  destructive fuzzing proof artifact for disposable sandbox lifecycle evidence.
+  The required fields are `schema`, `artifactKind`, `version`, `status`,
+  `baseline`, `mutation`, `restore`, `diff`, `runtimeBoundary`,
+  `runtimeBoundary.destroy`, `artifacts`, and `generatedAt`. A passing proof
+  records baseline creation, the mutating step, restore/reset evidence, a diff
+  verdict such as `clean-after-restore`, explicit artifact refs, and a disposable
+  runtime boundary with `hostAccess: "declared-mounts-only"` and
+  `runtimeBoundary.destroy.status: "destroyed"`. Callers build it with
+  `sandboxIsolationProof()` from `@automattic/wp-codebox-core/public` or
+  `@automattic/wp-codebox-core/contracts`; the helper rejects missing destroy
+  evidence or missing artifact refs instead of returning a partial proof.
 - **Artifacts:** manifest, paths, capture policy, layout, references, review,
   diagnostics, test result, export link, storage, result envelope, evidence
   envelope, and materialization contracts.
@@ -402,6 +451,15 @@ are generated and executed. Product adapters may translate Woo, Gutenberg,
 Jetpack, Core, or other domain-specific probes into these generic case records at
 their own boundary; those product semantics are not part of the Codebox fuzz
 suite contract.
+
+For destructive fuzzing, callers should attach a
+`wp-codebox/sandbox-isolation-proof/v1` artifact alongside the
+`wp-codebox/fuzz-suite-result/v1` case result. The proof must contain a baseline
+creation command/ref, mutating command/ref, restore command/ref, a machine-readable
+diff verdict after restore, explicit bundle-relative artifact refs, and destroyed
+runtime lifecycle evidence. `sandboxIsolationProof()` fails closed when these
+boundary facts are missing, so orchestrators can treat absence of the proof as a
+blocked destructive run rather than a successful isolated mutation.
 
 Agent task callers use the `wp-codebox/run-agent-task` ability or
 `wp-codebox agent-task-run --json`. Caller-facing results normalize to
