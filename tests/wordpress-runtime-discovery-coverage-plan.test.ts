@@ -67,8 +67,8 @@ assert.equal(plan.discovered.some((item) => item.id === "crud-list-user"), true)
 assert.equal(plan.discovered.some((item) => item.id === "crud-list-option"), true)
 assert.equal(plan.discovered.some((item) => item.id === "crud-read-metadata-post"), true)
 assert.equal(plan.discovered.some((item) => item.id === "page-load-mode-wordpress-simulated-frontend-page-load"), true)
-assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.frontend-page-load"), false)
-assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.admin-page-load"), false)
+assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.simulated-frontend-page-load"), true)
+assert.equal(plan.discovered.some((item) => item.target?.entrypoint === "wordpress.simulated-admin-page-load"), true)
 
 const crudListPostArgs = (plan.generated.find((item) => item.id === "crud-list-post")?.input as { args: string[] }).args
 const crudListPostOperation = JSON.parse(crudListPostArgs[0]?.replace(/^operation-json=/, "") ?? "{}")

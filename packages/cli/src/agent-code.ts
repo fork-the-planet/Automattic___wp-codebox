@@ -321,9 +321,7 @@ function wp_codebox_registered_provider_ids(object $registry): array {
 }
 
 function wp_codebox_runtime_task_ability_candidates(string $requested_ability): array {
-    $aliases = function_exists('apply_filters') ? apply_filters('wp_codebox_runtime_task_ability_aliases', array(
-        'runtime-package/run' => array('agents/run-runtime-package', 'wp-codebox/run-runtime-package'),
-    )) : array();
+    $aliases = function_exists('apply_filters') ? apply_filters('wp_codebox_runtime_task_ability_aliases', array()) : array();
     $candidates = array($requested_ability);
     if (is_array($aliases) && isset($aliases[$requested_ability]) && is_array($aliases[$requested_ability])) {
         $candidates = array_merge($candidates, array_values($aliases[$requested_ability]));
@@ -545,7 +543,7 @@ async function normalizeRuntimeTask(config: Record<string, unknown> | undefined,
 }
 
 async function runtimeTaskInputWithInlineBundle(ability: string, input: Record<string, unknown>, workspace?: SandboxWorkspaceContract): Promise<Record<string, unknown>> {
-  if (!['runtime-package/run', 'agents/run-runtime-package', 'wp-codebox/run-runtime-package'].includes(ability)) return input
+  if (ability !== 'wp-codebox/run-runtime-package') return input
   const packageDescriptor = recordValue(input.package)
   if (!packageDescriptor || recordValue(packageDescriptor.bundle)) return input
   const source = typeof packageDescriptor.source === 'string' ? packageDescriptor.source.trim() : ''

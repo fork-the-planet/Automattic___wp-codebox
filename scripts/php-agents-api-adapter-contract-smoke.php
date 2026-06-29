@@ -63,7 +63,7 @@ function assert_no_agents_api_schema_leaks( mixed $value, string $path = '$' ): 
 $names = WP_Codebox_Agents_API_Adapter::ability_names();
 assert( 'agents/chat' === $names['chat'] );
 assert( 'agents/run-task' === $names['run_task'] );
-assert( 'agents/run-runtime-package' === $names['run_runtime_package'] );
+assert( 'wp-codebox/run-runtime-package' === $names['run_runtime_package'] );
 assert( 'agents/get-task-run' === $names['get_task_run'] );
 assert( 'agents/get-chat-run' === $names['get_chat_run'] );
 
@@ -74,7 +74,7 @@ $runtime_task_invocation = WP_Codebox_Agents_API_Adapter::browser_runtime_defaul
 	array(
 		'runtime_task' => array(
 			'kind'    => 'bundle',
-			'ability' => 'runtime-package/run',
+			'ability' => 'wp-codebox/run-runtime-package',
 			'input'   => array(
 				'package'  => array( 'slug' => 'example-agent' ),
 				'workflow' => array( 'id' => 'example-artifact-flow' ),
@@ -82,7 +82,7 @@ $runtime_task_invocation = WP_Codebox_Agents_API_Adapter::browser_runtime_defaul
 		),
 	)
 );
-assert( array( 'type' => 'ability', 'name' => 'agents/run-runtime-package' ) === $runtime_task_invocation );
+assert( array( 'type' => 'ability', 'name' => 'wp-codebox/run-runtime-package' ) === $runtime_task_invocation );
 
 $adapter = new WP_Codebox_Agents_API_Adapter();
 assert( false === $adapter->is_available( WP_Codebox_Agents_API_Adapter::default_chat_ability() ) );
@@ -205,7 +205,7 @@ $runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_
 		'task_input' => array(
 			'runtime_task' => array(
 				'kind'    => 'bundle',
-				'ability' => 'runtime-package/run',
+				'ability' => 'wp-codebox/run-runtime-package',
 				'input'   => array(
 					'package'  => array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ),
 					'workflow' => array( 'id' => 'example-artifact-flow' ),
@@ -214,7 +214,7 @@ $runtime_package_browser_input = WP_Codebox_Agents_API_Adapter::browser_runtime_
 			),
 		),
 	),
-	array( 'type' => 'ability', 'name' => 'agents/run-runtime-package' ),
+	array( 'type' => 'ability', 'name' => 'wp-codebox/run-runtime-package' ),
 	'codebox-session'
 );
 assert( array( 'slug' => 'example-agent', 'source' => 'bundles/example-agent' ) === $runtime_package_browser_input['package'] );

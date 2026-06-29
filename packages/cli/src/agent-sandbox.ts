@@ -108,6 +108,10 @@ export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRunt
 }
 
 export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract): Promise<ExecutionSpec & { args: string[] }> {
+  if (step.command === "wordpress.run-workload") {
+    return await wordpressRunWorkloadExecutionSpec(step)
+  }
+
   if (step.command === "wp-codebox.agent-runtime-probe") {
     return {
       command: "wordpress.run-php",
@@ -156,6 +160,84 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
   }
 
   return { command: step.command, args: [...(step.args ?? []), ...commandDiagnosticsCaptureArgs(step.diagnostics)], diagnostics: step.diagnostics }
+}
+
+async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number]): Promise<ExecutionSpec & { args: string[] }> {
+  const args = step.args ?? []
+  const workloadJson = commandArgValue(args, "workload-json")
+  if (workloadJson) {
+    const workload = JSON.parse(workloadJson) as Record<string, unknown>
+    const phases = [workload.before, workload.steps, workload.after].flatMap((value) => Array.isArray(value) ? value : [])
+    const commandStep = phases.find((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && (entry as Record<string, unknown>).command === "wordpress.run-workload") as Record<string, unknown> | undefined
+    if (commandStep) {
+      const nestedArgs = Array.isArray(commandStep.args) ? commandStep.args.map(String) : []
+      return await wordpressRunWorkloadExecutionSpec({ command: "wordpress.run-workload", args: nestedArgs, diagnostics: step.diagnostics })
+    }
+    if (phases.some((entry) => entry && typeof entry === "object" && !Array.isArray(entry) && typeof (entry as Record<string, unknown>).type === "string")) {
+      return {
+        command: "wordpress.bench",
+        args: [
+          `plugin-slug=${wordpressWorkloadPluginSlug(workload)}`,
+          `workloads-json=${JSON.stringify([{ id: typeof workload.id === "string" ? workload.id : "wordpress-workload", run: phases, metadata: workload.metadata }])}`,
+        ],
+        diagnostics: step.diagnostics,
+      }
+    }
+  }
+  const parsedArgs = commandArgsRecord(args)
+  const path = parsedArgs.path ?? parsedArgs.file
+  const type = parsedArgs.type?.toLowerCase() ?? (path?.toLowerCase().endsWith(".php") ? "php" : undefined)
+  if (type !== "php") {
+    throw new Error(`wordpress.run-workload recipe steps currently require type=php; received args=${JSON.stringify(args)}`)
+  }
+  if (!path) {
+    throw new Error("wordpress.run-workload recipe steps require path=<php-file> or file=<php-file>")
+  }
+  if (parsedArgs.type === undefined) {
+    parsedArgs.type = type
+  }
+  const encodedArgs = Buffer.from(JSON.stringify(parsedArgs), "utf8").toString("base64")
+  const source = await readableTextFile(path)
+  const encodedSource = typeof source === "string" ? Buffer.from(source, "utf8").toString("base64") : undefined
+  const callableLoader = encodedSource ? `$__wp_codebox_workload_file = tempnam(sys_get_temp_dir(), 'wp-codebox-workload-');\nif (false === $__wp_codebox_workload_file) { throw new RuntimeException('Unable to create temporary PHP workload file.'); }\nfile_put_contents($__wp_codebox_workload_file, base64_decode('${encodedSource}'));\n$__wp_codebox_workload_callable = require $__wp_codebox_workload_file;\nunlink($__wp_codebox_workload_file);` : `$__wp_codebox_workload_callable = require ${JSON.stringify(path)};`
+  const code = `$__wp_codebox_workload_args = json_decode(base64_decode('${encodedArgs}'), true);\n${callableLoader}\nif (!is_callable($__wp_codebox_workload_callable)) { throw new RuntimeException('PHP workload file must return a callable.'); }\n$__wp_codebox_workload_result = $__wp_codebox_workload_callable(array(), is_array($__wp_codebox_workload_args) ? $__wp_codebox_workload_args : array());\nif (is_array($__wp_codebox_workload_result) || is_object($__wp_codebox_workload_result)) { echo json_encode($__wp_codebox_workload_result, JSON_UNESCAPED_SLASHES) . "\\n"; } elseif (false === $__wp_codebox_workload_result) { exit(1); }`
+  return { command: "wordpress.run-php", args: [`code=${code}`, ...commandDiagnosticsCaptureArgs(step.diagnostics)], diagnostics: step.diagnostics }
+}
+
+async function readableTextFile(path: string): Promise<string | undefined> {
+  if (path.trim() === "") {
+    return undefined
+  }
+  try {
+    return await readFile(path, "utf8")
+  } catch {
+    return undefined
+  }
+}
+
+function commandArgsRecord(args: string[]): Record<string, string> {
+  const parsed: Record<string, string> = {}
+  for (const arg of args) {
+    const [key, value = ""] = String(arg).split(/=(.*)/s, 2)
+    if (key) parsed[key] = value
+  }
+  return parsed
+}
+
+function wordpressWorkloadPluginSlug(workload: Record<string, unknown>): string {
+  const metadata = recordValue(workload.metadata)
+  const explicit = stringValue(workload.pluginSlug) ?? stringValue(workload.plugin_slug) ?? stringValue(metadata?.plugin_slug)
+  if (explicit) return explicit
+  const activation = stringValue(recordValue(recordValue(recordValue(metadata?.intent)?.plugin)?.activation)?.entrypoint) ?? stringValue(recordValue(recordValue(metadata?.intent)?.plugin)?.activation)
+  return activation?.split("/")[0]?.trim() || "wordpress"
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
 export function agentRuntimeMetadata(options: AgentRuntimeProbeOptions, runtimeMetadata: (artifactsDirectory: string | undefined, wpVersion: string) => Record<string, unknown>, defaultWordPressVersion: string): Record<string, unknown> {

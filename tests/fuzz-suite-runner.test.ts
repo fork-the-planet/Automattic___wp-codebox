@@ -67,7 +67,7 @@ assert.equal(result.coveragePlan?.schema, "wp-codebox/fuzz-coverage-plan/v1")
 assert.deepEqual({ discovered: result.coveragePlan?.summary.discovered, generated: result.coveragePlan?.summary.generated, executable: result.coveragePlan?.summary.executable, executed: result.coveragePlan?.summary.executed, skipped: result.coveragePlan?.summary.skipped, untested: result.coveragePlan?.summary.untested }, { discovered: 15, generated: 15, executable: 15, executed: 14, skipped: 1, untested: 0 })
 assert.deepEqual(result.coveragePlan?.executed.map((item) => item.id), result.cases.filter((item) => item.status !== "skipped").map((item) => item.id))
 assert.equal(result.coveragePlan?.skipped[0]?.reason?.code, "fuzz_suite_target_adapter_unsupported")
-assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.browser-actions", "wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.run-workload"])
+assert.deepEqual(executed.map((spec) => spec.command), ["inspect-mounted-inputs", "wordpress.run-php", "wordpress.http-request", "wordpress.rest-request", "wordpress.ability", "wordpress.rest-request", "wordpress.browser-actions", "wordpress.browser-actions", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.editor-open", "wordpress.crud-operation", "wordpress.db-operation", "wordpress.run-workload"])
 assert.deepEqual(executed[0], { command: "inspect-mounted-inputs", args: ["--json"], cwd: "/workspace", timeoutMs: 1000 })
 assert.deepEqual(executed[2], { command: "wordpress.http-request", args: ["url=/", "method=GET", "expect-status=200"], method: "GET", path: "/" })
 assert.deepEqual(executed[3], { command: "wordpress.rest-request", args: ["path=/wp/v2/types", "method=GET", "params-json={\"context\":\"view\"}"], method: "GET", path: "/wp/v2/types" })
@@ -76,8 +76,8 @@ assert.deepEqual(executed[5], { command: "wordpress.rest-request", args: ["path=
 assert.deepEqual(executed[6], { command: "wordpress.browser-actions", args: ['steps-json=[{"kind":"navigate","url":"/sample-page/"}]', "capture=console,screenshot"] })
 assert.deepEqual(JSON.parse(executed[7]?.args?.[0]?.replace("steps-json=", "") ?? "[]"), planBrowserRandomWalk({ context: "admin", seed: "seed-walk", max_steps: 4, action_families: ["capture", "press"], start_url: "/wp-admin/edit.php" }).steps)
 assert.equal(executed[7]?.args?.[1], "capture=console")
-assert.deepEqual(executed[8], { command: "wordpress.admin-page-load", args: ["path=plugins.php", "capture-diagnostics=php-notices"] })
-assert.deepEqual(executed[9], { command: "wordpress.frontend-page-load", args: ["path=/sample-page/", "query-json={\"preview\":true}"] })
+assert.deepEqual(executed[8], { command: "wordpress.simulated-admin-page-load", args: ["path=plugins.php", "capture-diagnostics=php-notices"] })
+assert.deepEqual(executed[9], { command: "wordpress.simulated-frontend-page-load", args: ["path=/sample-page/", "query-json={\"preview\":true}"] })
 assert.deepEqual(executed[10], { command: "wordpress.editor-open", args: ["target=post-new", "post-type=page", "capture=editor-state"] })
 assert.equal(JSON.parse(executed[11]?.args?.[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-crud-operation/v1")
 assert.equal(JSON.parse(executed[12]?.args?.[0]?.replace("operation-json=", "") ?? "{}").schema, "wp-codebox/wordpress-db-operation/v1")
@@ -309,9 +309,9 @@ assert.equal(noExecutor.cases[0]?.diagnostics[0]?.code, "fuzz_suite_executor_una
 
 const requiredRuntimeOnPhpRunner = await runFuzzSuite(fuzzSuiteContract({
   id: "suite-runtime-required-on-php-runner",
-  target: { kind: "runtime", entrypoint: "wordpress.admin-page-load" },
+  target: { kind: "runtime", entrypoint: "wordpress.simulated-admin-page-load" },
   cases: [{ id: "admin-page", input: { args: ["path=plugins.php"] } }],
-  metadata: { requiredRunnerCapabilities: { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.admin-page-load"] } },
+  metadata: { requiredRunnerCapabilities: { capabilities: ["target:runtime", "runtime"], targetKinds: ["runtime"], commands: ["wordpress.simulated-admin-page-load"] } },
 }), {
   requireCoverage: true,
   runnerCapabilities: PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES,
@@ -320,7 +320,7 @@ assert.equal(requiredRuntimeOnPhpRunner.status, "error")
 assert.equal(requiredRuntimeOnPhpRunner.success, false)
 assert.equal(requiredRuntimeOnPhpRunner.diagnostics[0]?.code, "fuzz_suite_required_runner_capabilities_unsupported")
 assert.equal(requiredRuntimeOnPhpRunner.cases[0]?.skipReason, "fuzz_suite_required_runner_capabilities_unsupported")
-assert.deepEqual((requiredRuntimeOnPhpRunner.metadata?.runnerCapabilities as { unsupportedRequiredCapabilities?: string[] } | undefined)?.unsupportedRequiredCapabilities, ["target:runtime", "runtime", "command:wordpress.admin-page-load"])
+assert.deepEqual((requiredRuntimeOnPhpRunner.metadata?.runnerCapabilities as { unsupportedRequiredCapabilities?: string[] } | undefined)?.unsupportedRequiredCapabilities, ["target:runtime", "runtime", "command:wordpress.simulated-admin-page-load"])
 
 const phpCapabilities = fuzzRunnerCapabilitiesContract(PHP_IN_PROCESS_FUZZ_SUITE_RUNNER_CAPABILITIES, {
   capabilities: ["target:rest", "runtime"],

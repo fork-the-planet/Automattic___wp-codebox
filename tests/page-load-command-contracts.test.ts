@@ -4,28 +4,18 @@ import { httpRequestInputFromArgs } from "../packages/runtime-playground/src/com
 import { pageLoadInputFromArgs } from "../packages/runtime-playground/src/page-load-command-handlers.js"
 import { wordpressBrowserPageLoadAction, wordpressServerPageLoadAction, wordpressSimulatedAdminPageLoadAction, wordpressSimulatedFrontendPageLoadAction } from "../packages/runtime-playground/src/public.js"
 
-const adminAlias = getCommandDefinition("wordpress.admin-page-load")
 const simulatedAdmin = getCommandDefinition("wordpress.simulated-admin-page-load")
-const frontendAlias = getCommandDefinition("wordpress.frontend-page-load")
 const simulatedFrontend = getCommandDefinition("wordpress.simulated-frontend-page-load")
 const serverPageLoad = getCommandDefinition("wordpress.server-page-load")
 const browserPageLoad = getCommandDefinition("wordpress.browser-page-load")
 
-assert.equal(adminAlias?.handler.kind, "playground")
-assert.equal(adminAlias?.handler.method, "runAdminPageLoad")
-assert.match(adminAlias?.description ?? "", /Backward-compatible alias/)
-assert.deepEqual(adminAlias?.metadata, { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-admin-page-load", excludeFromFuzzTargets: true })
+assert.equal(getCommandDefinition("wordpress.admin-page-load"), undefined)
 assert.equal(simulatedAdmin?.handler.kind, "playground")
 assert.equal(simulatedAdmin?.handler.method, "runAdminPageLoad")
-assert.equal(simulatedAdmin?.metadata?.deprecated, undefined)
 
-assert.equal(frontendAlias?.handler.kind, "playground")
-assert.equal(frontendAlias?.handler.method, "runFrontendPageLoad")
-assert.match(frontendAlias?.description ?? "", /Backward-compatible alias/)
-assert.deepEqual(frontendAlias?.metadata, { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-frontend-page-load", excludeFromFuzzTargets: true })
+assert.equal(getCommandDefinition("wordpress.frontend-page-load"), undefined)
 assert.equal(simulatedFrontend?.handler.kind, "playground")
 assert.equal(simulatedFrontend?.handler.method, "runFrontendPageLoad")
-assert.equal(simulatedFrontend?.metadata?.deprecated, undefined)
 
 const fuzzTargetCommands = fuzzTargetCommandDefinitions().map((command) => command.id)
 assert.equal(fuzzTargetCommands.includes("wordpress.admin-page-load"), false)
@@ -48,7 +38,6 @@ assert.equal(browserPageLoad?.validation, undefined)
 
 assert.equal(pageLoadInputFromArgs([], "admin").command, "wordpress.simulated-admin-page-load")
 assert.equal(pageLoadInputFromArgs([], "frontend").command, "wordpress.simulated-frontend-page-load")
-assert.equal(pageLoadInputFromArgs([], "admin", "wordpress.admin-page-load").command, "wordpress.admin-page-load")
 
 const httpInput = httpRequestInputFromArgs(["url=/", "expect-status=200"])
 assert.equal(httpInput.command, "wordpress.http-request")

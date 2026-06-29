@@ -23,13 +23,13 @@ try {
     concept_packet: { title: "Runtime task ability available" },
   })
 
-  const alias = await runRuntimeTaskRecipe(root, componentPath, "runtime-package/run")
-  const aliasRuntime = sandboxAgentRuntime(alias)
-  assert.equal(alias.success, true, JSON.stringify(aliasRuntime, null, 2))
-  assert.equal(aliasRuntime.success, true, JSON.stringify(aliasRuntime, null, 2))
-  assert.equal(aliasRuntime.result?.schema, "example/runtime-package-result/v1")
-  assert.equal(aliasRuntime.result?.success, true)
-  assert.equal(aliasRuntime.result?.concept_packet?.title, "Runtime task ability available")
+  const runtimePackage = await runRuntimeTaskRecipe(root, componentPath, "wp-codebox/run-runtime-package")
+  const runtimePackageRuntime = sandboxAgentRuntime(runtimePackage)
+  assert.equal(runtimePackage.success, true, JSON.stringify(runtimePackageRuntime, null, 2))
+  assert.equal(runtimePackageRuntime.success, true, JSON.stringify(runtimePackageRuntime, null, 2))
+  assert.equal(runtimePackageRuntime.result?.schema, "example/runtime-package-result/v1")
+  assert.equal(runtimePackageRuntime.result?.success, true)
+  assert.equal(runtimePackageRuntime.result?.concept_packet?.title, "Runtime task ability available")
 
   const missing = await runRuntimeTaskRecipe(root, componentPath, "example/missing-runtime-task")
   const missingRuntime = sandboxAgentRuntime(missing)
@@ -76,10 +76,10 @@ add_action( 'wp_abilities_api_init', static function (): void {
     );
 
     wp_register_ability(
-        'agents/run-runtime-package',
+        'wp-codebox/run-runtime-package',
         array(
             'label' => 'Example Runtime Package Adapter',
-            'description' => 'Synthetic runtime package adapter for sandbox ability alias tests.',
+            'description' => 'Synthetic runtime package adapter for sandbox ability tests.',
             'category' => 'wp-codebox',
             'execute_callback' => static function ( array $input ): array {
                 return array(

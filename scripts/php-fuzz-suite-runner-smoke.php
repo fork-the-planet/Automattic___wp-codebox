@@ -591,8 +591,8 @@ $required_runtime = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 		'schema'          => 'wp-codebox/fuzz-suite/v1',
 		'id'              => 'required-runtime-suite',
 		'requireCoverage' => true,
-		'target'          => array( 'kind' => 'runtime', 'entrypoint' => 'wordpress.admin-page-load' ),
-		'metadata'        => array( 'requiredRunnerCapabilities' => array( 'capabilities' => array( 'target:runtime', 'runtime' ), 'targetKinds' => array( 'runtime' ), 'commands' => array( 'wordpress.admin-page-load' ) ) ),
+		'target'          => array( 'kind' => 'runtime', 'entrypoint' => 'wordpress.simulated-admin-page-load' ),
+		'metadata'        => array( 'requiredRunnerCapabilities' => array( 'capabilities' => array( 'target:runtime', 'runtime' ), 'targetKinds' => array( 'runtime' ), 'commands' => array( 'wordpress.simulated-admin-page-load' ) ) ),
 		'cases'           => array( array( 'id' => 'admin-page', 'input' => array( 'args' => array( 'path=plugins.php' ) ) ) ),
 	)
 );
@@ -601,7 +601,7 @@ assert( false === $required_runtime['success'] );
 assert( 'error' === $required_runtime['status'] );
 assert( 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported' === $required_runtime['diagnostics'][0]['code'] );
 assert( 'wp_codebox_fuzz_suite_required_runner_capabilities_unsupported' === $required_runtime['cases'][0]['skipReason'] );
-assert( array( 'target:runtime', 'runtime', 'command:wordpress.admin-page-load' ) === $required_runtime['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'] );
+assert( array( 'target:runtime', 'runtime', 'command:wordpress.simulated-admin-page-load' ) === $required_runtime['metadata']['runnerCapabilities']['unsupportedRequiredCapabilities'] );
 
 $GLOBALS['menu'] = null;
 $GLOBALS['submenu'] = null;

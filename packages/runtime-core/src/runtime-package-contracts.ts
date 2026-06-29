@@ -59,15 +59,11 @@ export interface RuntimePackageResult {
 }
 
 export interface RuntimePackageTaskOptions {
-  runtimePackage?: string
   package?: unknown
   workflow?: unknown
   input?: unknown
-  artifactDeclarations?: unknown
   artifact_declarations?: unknown
-  outputProjections?: unknown
   output_projections?: unknown
-  requiredArtifacts?: unknown
   required_artifacts?: unknown
   metadata?: unknown
   workspaceRoot?: string
@@ -81,7 +77,7 @@ export interface RuntimePackageTaskValidationResult {
 
 export function normalizeRuntimePackageTask(options: RuntimePackageTaskOptions): RuntimePackageTask {
   const metadata = isPlainObject(options.metadata) ? options.metadata : {}
-  const descriptor = runtimePackageDescriptor(options.package, options.runtimePackage, metadata)
+  const descriptor = runtimePackageDescriptor(options.package)
   const packageSlug = stringValue(descriptor.slug)
   if (!packageSlug) {
     throw new Error("normalizeRuntimePackageTask requires package.slug")
@@ -97,9 +93,9 @@ export function normalizeRuntimePackageTask(options: RuntimePackageTaskOptions):
     package: normalizedPackage,
     workflow: runtimePackageWorkflow(options.workflow, normalizedPackage.slug),
     input: isPlainObject(options.input) ? options.input : {},
-    artifact_declarations: normalizeRuntimePackageArtifactDeclarations(options.artifact_declarations ?? options.artifactDeclarations),
-    output_projections: normalizeRuntimePackageOutputProjections(options.output_projections ?? options.outputProjections),
-    required_artifacts: runtimePackageRequiredArtifacts(options.required_artifacts ?? options.requiredArtifacts, options.artifact_declarations ?? options.artifactDeclarations),
+    artifact_declarations: normalizeRuntimePackageArtifactDeclarations(options.artifact_declarations),
+    output_projections: normalizeRuntimePackageOutputProjections(options.output_projections),
+    required_artifacts: runtimePackageRequiredArtifacts(options.required_artifacts, options.artifact_declarations),
     metadata,
   }) as RuntimePackageTask
 }
@@ -168,16 +164,12 @@ export function runtimePackageImportFailureResult(packageDescriptor: RuntimePack
   })
 }
 
-function runtimePackageDescriptor(value: unknown, runtimePackage?: string, metadata: Record<string, unknown> = {}): RuntimePackageDescriptor {
-  const metadataDescriptor = isPlainObject(metadata.runtime_package_descriptor) ? metadata.runtime_package_descriptor : undefined
-  const record = isPlainObject(value) ? value : metadataDescriptor
+function runtimePackageDescriptor(value: unknown): RuntimePackageDescriptor {
+  const record = isPlainObject(value) ? value : undefined
   if (record) {
-    return { slug: stringValue(record.slug ?? record.id), source: stringValue(record.source) }
+    return { slug: stringValue(record.slug), source: stringValue(record.source) }
   }
-  const packageName = stringValue(runtimePackage)
-  if (!packageName) return { slug: "", source: "" }
-  if (isPathLikePackageSource(packageName)) return { slug: runtimePackageSlug(packageName), source: packageName }
-  return { slug: packageName, source: "" }
+  return { slug: "", source: "" }
 }
 
 function runtimePackageWorkflow(value: unknown, fallbackId: string): RuntimePackageWorkflowDescriptor | undefined {

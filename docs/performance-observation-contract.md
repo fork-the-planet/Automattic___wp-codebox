@@ -32,6 +32,6 @@ Limitations:
 
 Page-load commands share the public `wp-codebox/wordpress-page-load-result/v1` result envelope. The top-level `mode` field distinguishes the execution path:
 
-- `mode: "simulated"` is used by `wordpress.simulated-admin-page-load`, `wordpress.simulated-frontend-page-load`, and the backward-compatible `wordpress.admin-page-load` / `wordpress.frontend-page-load` aliases. These synthesize an admin or frontend request inside the WordPress PHP process and can report WordPress identity, redirects, notices, errors, optional `$wpdb` diagnostics, and in-process memory timing.
+- `mode: "simulated"` is used by `wordpress.simulated-admin-page-load` and `wordpress.simulated-frontend-page-load`. These synthesize an admin or frontend request inside the WordPress PHP process and can report WordPress identity, redirects, notices, errors, optional `$wpdb` diagnostics, and in-process memory timing.
 - `mode: "server-http"` is used by `wordpress.server-page-load`. It requests the runtime preview HTTP server without starting a browser, so the result includes HTTP status/headers and network timing but reports PHP memory, database, and hooks as unsupported.
 - `mode: "browser"` is used by `wordpress.browser-page-load`. It wraps the existing browser-probe output with the page-load envelope while preserving browser artifact fields and recording the wrapped probe schema in `browserProbeSchema`.

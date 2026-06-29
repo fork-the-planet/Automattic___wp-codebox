@@ -136,6 +136,7 @@ return static function ( array $input, array $args ): array {
       runtime_package_descriptor: { source: samplePluginSource },
       requiredRunnerCapabilities: { targetKinds: ["runtime"], commands: ["wordpress.run-workload"] },
       runtime_requirements: {
+        extra_plugins: [{ slug: "sample-plugin", source: samplePluginSource, path: samplePluginSource, loadAs: "plugin", activate: true }],
         bench_env: { WC_REST_BATCH_IMPORT_ITEMS: "2" },
         settings: { fixtureMode: "small" },
       },

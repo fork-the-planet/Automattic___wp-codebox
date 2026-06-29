@@ -84,7 +84,6 @@ assert.deepEqual(manifest.abilities, CODEBOX_PUBLIC_RUNTIME_ABILITIES)
 
 assert.equal(manifest.schemas.agentTask.runRequest, AGENT_TASK_RUN_REQUEST_SCHEMA)
 assert.equal(manifest.schemas.agentTask.runResult, AGENT_TASK_RUN_RESULT_SCHEMA)
-assert.equal(manifest.schemas.agentTask.legacyRunResponse, AGENT_TASK_RUN_RESULT_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.profile, RUNTIME_PROFILE_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.previewLease, PREVIEW_LEASE_SCHEMA)
 assert.equal(manifest.schemas.runtimeBoundary.browserSessionProductDto, BROWSER_SESSION_PRODUCT_DTO_SCHEMA)

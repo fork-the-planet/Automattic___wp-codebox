@@ -160,8 +160,8 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const artifactsRecord = objectValue(run.artifacts) || {}
     const runtimeRecord = objectValue(run.runtime) || {}
     const agentBundle = objectValue(input.agent_bundle) || {}
-    const workload = normalizeAgentRuntimeWorkload(run, {
-      compatMode: true,
+    const metadataRuntime = objectValue(objectValue(run.metadata)?.agent_runtime)
+    const workload = normalizeAgentRuntimeWorkload(metadataRuntime?.workload ?? run, {
       requiredOutputs: stringRecord(agentBundle.engine_data_outputs),
       toolRecorders: agentBundle.tool_recorders,
       workloadId: stringValue(agentBundle.workload_id) || stringValue(agentBundle.agent_slug) || stringValue(agentBundle.flow_slug) || undefined,
@@ -175,10 +175,9 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
     const normalizedRunResult = normalizeAgentTaskRunResult({
       ...run,
       success: recipeSuccess,
-      agent_result: agentResult,
-      agent_task_result: agentTaskResult,
+      agentResult,
       terminal_result: terminalResult,
-      completion_outcome: completionOutcome,
+      completionOutcome,
       workspace_artifact_policy: objectValue((input as Record<string, unknown>).workspace_artifact_policy),
       run_metadata: stripUndefined({
         run_id: stringValue(runRecord.runId),
@@ -189,7 +188,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
         orchestrator: input.orchestrator,
         parent_request_schema: stringValue(input.parent_request?.schema),
       }),
-    }, { exitStatus: capture.exitCode, compatMode: true })
+    }, { exitStatus: capture.exitCode })
     const success = normalizedRunResult.success
     const failureEvidence = success ? undefined : buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, capture })
     const outputDiagnostics = [...diagnostics(run, success ? 0 : capture.exitCode, success, failureEvidence), ...(hasAgentBundle ? workload.diagnostics.map((diagnostic) => ({ ...diagnostic })) : [])]
@@ -263,7 +262,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
   } catch (error) {
     const run = { success: false, error: serializeUnknownError(error) }
     generatedRecipeArtifact = recipeJson ? await persistGeneratedRecipeArtifact(artifacts, recipeJson) : undefined
-    const normalizedRunResult = normalizeAgentTaskRunResult(run, { exitStatus: capture?.exitCode ?? 1, compatMode: true })
+    const normalizedRunResult = normalizeAgentTaskRunResult(run, { exitStatus: capture?.exitCode ?? 1 })
     const failureEvidence = buildFailureEvidence({ input, task, wpVersion, artifacts, recipePath, generatedRecipeArtifact, run, capture, error })
     const failureDiagnostics = diagnostics(run, capture?.exitCode ?? 1, false, failureEvidence)
     const agentTaskRunResult = withFailureEvidence(normalizedRunResult, failureEvidence, failureDiagnostics)
@@ -276,7 +275,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       artifactBundle: agentTaskRunResult.refs.artifact_bundles[0],
       artifactRefs: [...agentTaskRunResult.refs.artifact_bundles, ...agentTaskRunResult.artifacts],
       result: {
-        agent_reply: agentReply({}, normalizeAgentTerminalResult(run, { compatMode: true }), agentTaskRunResult),
+        agent_reply: agentReply({}, normalizeAgentTerminalResult(run), agentTaskRunResult),
         transcript_refs: agentTaskRunResult.refs.transcripts,
         evidence_refs: evidence,
         preview: previewMetadata(session, run),
@@ -299,7 +298,7 @@ export async function runAgentTask(input: AgentTaskRunInput, options: AgentTaskR
       agent_task_result: {},
       agent_task_run_result: agentTaskRunResult,
       headless_agent_task_result: headlessAgentTaskResult,
-      terminal_result: normalizeAgentTerminalResult(run, { compatMode: true }),
+      terminal_result: normalizeAgentTerminalResult(run),
       completion_outcome: {},
       component_contracts: componentContractReport(run),
       structured_artifacts: [],
@@ -526,11 +525,9 @@ function evidenceRefs(run: Record<string, unknown>, artifacts: string, failureEv
 }
 
 function terminalResultFromRun(run: Record<string, unknown>, agentTaskResult: Record<string, unknown>): AgentTerminalResult | undefined {
-  return normalizeAgentTerminalResult(run.terminalResult, { compatMode: true })
-    ?? normalizeAgentTerminalResult(run.terminal_result, { compatMode: true })
-    ?? normalizeAgentTerminalResult(agentTaskResult.terminal_result, { compatMode: true })
-    ?? normalizeAgentTerminalResult(agentTaskResult.terminalResult, { compatMode: true })
-    ?? normalizeAgentTerminalResult(agentSandboxRuntime(run), { compatMode: true })
+  return normalizeAgentTerminalResult(run.terminal_result)
+    ?? normalizeAgentTerminalResult(agentTaskResult.terminal_result)
+    ?? normalizeAgentTerminalResult(agentSandboxRuntime(run))
 }
 
 function componentContractReport(run: Record<string, unknown>): Array<Record<string, unknown>> {

@@ -70,4 +70,58 @@ assert.equal(aliasExecution.exitCode, 0)
 assert.equal(aliasResult.schema, "wp-codebox/fuzz-suite-result/v1")
 assert.equal(aliasResult.status, "passed")
 
+executed.length = 0
+const phpWorkloadSuite = fuzzSuiteContract({
+  id: "nested-php-workload-suite",
+  cases: [{
+    id: "php-file-case",
+    target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: {
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      steps: [{ command: "wordpress.run-workload", args: ["path=/tmp/workload.php", "type=php"] }],
+    },
+  }],
+})
+const phpExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(phpWorkloadSuite)}`] } }, process.cwd())
+assert.equal(phpExecution.exitCode, 0)
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+assert.match(executed[0]?.args?.[0] ?? "", /require "\/tmp\/workload\.php"/)
+
+executed.length = 0
+const typedWorkloadSuite = fuzzSuiteContract({
+  id: "nested-typed-workload-suite",
+  metadata: { runtime_requirements: { extra_plugins: [{ slug: "woocommerce" }] } },
+  cases: [{
+    id: "typed-workload-case",
+    target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: {
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      steps: [{ type: "php", code: "return array('ok' => true);" }],
+    },
+  }],
+})
+const typedExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(typedWorkloadSuite)}`] } }, process.cwd())
+assert.equal(typedExecution.exitCode, 0)
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
+assert.ok(executed[0]?.args?.includes("plugin-slug=woocommerce"))
+
+executed.length = 0
+const typedJsonPathWorkloadSuite = fuzzSuiteContract({
+  id: "nested-typed-json-path-workload-suite",
+  metadata: { runtime_requirements: { extra_plugins: [{ slug: "woocommerce" }] } },
+  cases: [{
+    id: "typed-json-path-workload-case",
+    target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: {
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      steps: [{ type: "php", code: "return array('ok' => true);" }],
+      metadata: { source_path: "/tmp/rest-db-query-profile.workload.json", source_entry: "rest-db-query-profile" },
+    },
+  }],
+})
+const typedJsonPathExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(typedJsonPathWorkloadSuite)}`] } }, process.cwd())
+assert.equal(typedJsonPathExecution.exitCode, 0)
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
+assert.ok(executed[0]?.args?.includes("plugin-slug=woocommerce"))
+
 console.log("nested fuzz suite recipe command ok")

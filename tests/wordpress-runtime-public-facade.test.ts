@@ -11,8 +11,8 @@ import {
   setWordPressPluginState,
   setupWordPressPlugin,
   setupWordPressTheme,
-  wordpressAdminPageLoadAction,
-  wordpressFrontendPageLoadAction,
+  wordpressSimulatedAdminPageLoadAction,
+  wordpressSimulatedFrontendPageLoadAction,
 } from "../packages/runtime-playground/src/public.js"
 
 assert.equal(typeof createWordPressRuntime, "function")
@@ -23,8 +23,8 @@ assert.equal(typeof exerciseWordPressBlock, "function")
 assert.equal(typeof setupWordPressPlugin, "function")
 assert.equal(typeof setWordPressPluginState, "function")
 assert.equal(typeof setupWordPressTheme, "function")
-assert.equal(typeof wordpressAdminPageLoadAction, "function")
-assert.equal(typeof wordpressFrontendPageLoadAction, "function")
+assert.equal(typeof wordpressSimulatedAdminPageLoadAction, "function")
+assert.equal(typeof wordpressSimulatedFrontendPageLoadAction, "function")
 assert.equal(typeof collectWordPressRuntimeArtifacts, "function")
 assert.equal(typeof collectWordPressEpisodeArtifacts, "function")
 assert.equal(typeof collectBrowserArtifactMetrics, "function")
@@ -83,12 +83,12 @@ const artifactBundle = { id: "bundle", directory: "artifacts/runtime", contentDi
 assert.equal(await collectWordPressRuntimeArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)
 assert.equal(await collectWordPressEpisodeArtifacts({ async collectArtifacts() { return artifactBundle } }), artifactBundle)
 
-assert.deepEqual(wordpressAdminPageLoadAction({ path: "edit.php?post_type=page", user: "admin", captureDiagnostics: ["wpdb-queries"] }), {
-  command: "wordpress.admin-page-load",
+assert.deepEqual(wordpressSimulatedAdminPageLoadAction({ path: "edit.php?post_type=page", user: "admin", captureDiagnostics: ["wpdb-queries"] }), {
+  command: "wordpress.simulated-admin-page-load",
   args: ["path=edit.php?post_type=page", "user=admin", "capture-diagnostics=wpdb-queries"],
 })
-assert.deepEqual(wordpressFrontendPageLoadAction({ path: "/sample-page/", query: { preview: true } }), {
-  command: "wordpress.frontend-page-load",
+assert.deepEqual(wordpressSimulatedFrontendPageLoadAction({ path: "/sample-page/", query: { preview: true } }), {
+  command: "wordpress.simulated-frontend-page-load",
   args: ["path=/sample-page/", "query-json={\"preview\":true}"],
 })
 

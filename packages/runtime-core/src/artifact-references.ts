@@ -34,16 +34,12 @@ export interface ArtifactReferenceDigestInput {
   value?: string
   sha256?: string | ArtifactReferenceDigestInput
   digest?: string | ArtifactReferenceDigestInput
-  contentDigest?: string | ArtifactReferenceDigestInput
-  content_digest?: string | ArtifactReferenceDigestInput
 }
 
 export interface ArtifactReferenceFileInput {
   path?: string
   kind?: string
   contentType?: string
-  mime?: string
-  mimeType?: string
   sha256?: string | ArtifactReferenceDigestInput
   digest?: string | ArtifactReferenceDigestInput
   viewer?: ArtifactViewerMetadata
@@ -148,8 +144,6 @@ export function normalizeArtifactDigest(input: string | ArtifactReferenceDigestI
 
   return normalizeArtifactDigest(input.sha256)
     ?? normalizeArtifactDigest(input.digest)
-    ?? normalizeArtifactDigest(input.contentDigest)
-    ?? normalizeArtifactDigest(input.content_digest)
 }
 
 export function normalizeArtifactFileDigest(input: string | ArtifactReferenceDigestInput | undefined): ArtifactFileDigest | undefined {
@@ -163,32 +157,24 @@ export function normalizePublicArtifactRefDTO(input: unknown, defaults: Partial<
   }
 
   const digest = normalizeArtifactDigest(record.digest as ArtifactReferenceDigestInput | string | undefined)
-    ?? normalizeArtifactDigest(record.contentDigest as ArtifactReferenceDigestInput | string | undefined)
-    ?? normalizeArtifactDigest(record.content_digest as ArtifactReferenceDigestInput | string | undefined)
     ?? normalizeArtifactDigest(record.sha256 as ArtifactReferenceDigestInput | string | undefined)
     ?? defaults.digest
   const path = stringValue(record.path)
-    || stringValue(record.relativePath)
-    || stringValue(record.artifact)
-    || stringValue(record.uri)
-    || stringValue(record.directory)
-    || stringValue(record.artifacts_path)
-    || stringValue(record.artifactsPath)
     || defaults.path
-  const kind = stringValue(record.kind) || stringValue(record.artifact_type) || stringValue(record.role) || defaults.kind || kindForArtifactPath(path) || "artifact"
+  const kind = stringValue(record.kind) || defaults.kind || kindForArtifactPath(path) || "artifact"
   const sha256 = stringValue(record.sha256) || digest?.value || defaults.sha256
   const metadata = asRecord(record.metadata)
 
   return stripUndefined({
     schema: PUBLIC_ARTIFACT_REF_DTO_SCHEMA,
     kind,
-    id: stringValue(record.id) || stringValue(record.artifact_id) || stringValue(record.artifactId) || defaults.id,
+    id: stringValue(record.id) || defaults.id,
     path,
-    url: stringValue(record.url) || (stringValue(record.uri) && stringValue(record.uri) !== path ? stringValue(record.uri) : undefined) || defaults.url,
+    url: stringValue(record.url) || defaults.url,
     contentType: normalizeArtifactContentType(record as ArtifactReferenceFileInput, defaults.contentType),
     sha256,
     digest,
-    size_bytes: numberValue(record.size_bytes) ?? numberValue(record.sizeBytes) ?? defaults.size_bytes,
+    size_bytes: numberValue(record.size_bytes) ?? defaults.size_bytes,
     label: stringValue(record.label) || defaults.label,
     metadata: metadata && Object.keys(metadata).length > 0 ? metadata : defaults.metadata,
   })
@@ -292,7 +278,7 @@ function browserSessionRuntimeAccess(session: Record<string, unknown>): RuntimeA
 }
 
 export function normalizeArtifactContentType(input: ArtifactReferenceFileInput | undefined, fallback = "application/octet-stream"): string {
-  const contentType = input?.contentType ?? input?.mimeType ?? input?.mime
+  const contentType = input?.contentType
   return typeof contentType === "string" && contentType.trim().length > 0 ? contentType : fallback
 }
 

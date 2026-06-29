@@ -3,7 +3,7 @@ import type { BackendNeutralArtifactRef } from "./runtime-neutral-contracts.js"
 
 export const WORDPRESS_PAGE_LOAD_RESULT_SCHEMA = "wp-codebox/wordpress-page-load-result/v1" as const
 
-export type WordPressPageLoadCommand = "wordpress.admin-page-load" | "wordpress.frontend-page-load" | "wordpress.simulated-admin-page-load" | "wordpress.simulated-frontend-page-load" | "wordpress.server-page-load" | "wordpress.browser-page-load"
+export type WordPressPageLoadCommand = "wordpress.simulated-admin-page-load" | "wordpress.simulated-frontend-page-load" | "wordpress.server-page-load" | "wordpress.browser-page-load"
 export type WordPressPageLoadMode = "simulated" | "server-http" | "browser"
 export type WordPressPageLoadSource = "in-process" | "server-http" | "browser"
 export type WordPressPageLoadTargetKind = "admin" | "frontend"
@@ -82,7 +82,7 @@ export const WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA = {
     schema: { const: WORDPRESS_PAGE_LOAD_RESULT_SCHEMA },
     mode: { enum: ["simulated", "server-http", "browser"] },
     source: { enum: ["in-process", "server-http", "browser"] },
-    command: { enum: ["wordpress.admin-page-load", "wordpress.frontend-page-load", "wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.server-page-load", "wordpress.browser-page-load"] },
+    command: { enum: ["wordpress.simulated-admin-page-load", "wordpress.simulated-frontend-page-load", "wordpress.server-page-load", "wordpress.browser-page-load"] },
     status: { enum: ["ok", "redirect", "error"] },
     target: {
       type: "object",

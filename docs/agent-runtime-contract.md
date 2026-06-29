@@ -203,8 +203,6 @@ Preferred ability names for external callers are:
 - `wp-codebox/runner-workspace-command`
 - `wp-codebox/runner-workspace-publish`
 
-Short aliases (`wp-codebox/prepare`, `wp-codebox/capture`, `wp-codebox/command`, and `wp-codebox/publish`) remain registered for existing callers.
-
 ## Provider Runtime Invocation Names
 
 Runtime-core exports `wp-codebox/provider-runtime-invocation-contract/v1` through `providerRuntimeInvocationContract()`. This gives provider bridges and external orchestrators stable WP Codebox-owned names for common generic runtime operations without importing a caller's ability namespace:

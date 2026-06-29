@@ -284,30 +284,6 @@ final class WP_Codebox_Abilities {
 		add_action( 'wp_abilities_api_categories_init', $register_category );
 	}
 
-	/**
-	 * Register compatibility aliases that intentionally mirror a canonical ability.
-	 *
-	 * @param string        $canonical_ability Canonical ability id.
-	 * @param array<string> $alias_ids Alias ability ids to register.
-	 * @param array<string,mixed> $canonical_definition Canonical ability definition.
-	 * @param string        $alias_description Alias-specific description.
-	 */
-	private static function register_compatibility_ability_aliases( string $canonical_ability, array $alias_ids, array $canonical_definition, string $alias_description ): void {
-		foreach ( $alias_ids as $alias_id ) {
-			$alias_definition                = $canonical_definition;
-			$alias_definition['description'] = $alias_description;
-			$alias_definition['meta']        = array_merge(
-				$canonical_definition['meta'] ?? array(),
-				array(
-					'canonical_ability' => $canonical_ability,
-					'alias_of'          => $canonical_ability,
-				)
-			);
-
-			wp_register_ability( $alias_id, $alias_definition );
-		}
-	}
-
 	private function register(): void {
 		$register_callback = function (): void {
 			$task_input_schema  = self::task_input_schema();
@@ -487,9 +463,7 @@ final class WP_Codebox_Abilities {
 					'meta'                => array( 'show_in_rest' => true, 'canonical_ability' => $canonical_ability ),
 				);
 
-				self::register_compatibility_ability_aliases( $canonical_ability, $runner_workspace_ability['aliases_before'], $canonical_definition, $runner_workspace_ability['alias_description'] );
 				wp_register_ability( $canonical_ability, $canonical_definition );
-				self::register_compatibility_ability_aliases( $canonical_ability, $runner_workspace_ability['aliases_after'], $canonical_definition, $runner_workspace_ability['alias_description'] );
 			}
 
 			foreach ( WP_Codebox_Browser_Ability_Descriptors::descriptors(

@@ -18,10 +18,10 @@ metadata exposes `meta.canonical_ability` for aliases.
 - `wp-codebox/create-browser-materializer-contract`
 - `wp-codebox/create-browser-task-contract`
 - `wp-codebox/browser-connector-request`
-- `wp-codebox/prepare`
-- `wp-codebox/capture`
-- `wp-codebox/command`
-- `wp-codebox/publish`
+- `wp-codebox/runner-workspace-prepare`
+- `wp-codebox/runner-workspace-capture`
+- `wp-codebox/runner-workspace-command`
+- `wp-codebox/runner-workspace-publish`
 - `wp-codebox/list-artifacts`
 - `wp-codebox/get-artifact`
 - `wp-codebox/inspect-artifact`

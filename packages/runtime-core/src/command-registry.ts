@@ -39,9 +39,6 @@ export interface CommandDefinition {
 }
 
 export interface CommandDefinitionMetadata {
-  deprecated?: boolean
-  aliasOnly?: boolean
-  aliasFor?: string
   excludeFromFuzzTargets?: boolean
 }
 
@@ -210,6 +207,20 @@ export const commandRegistry = [
     ],
     outputShape: "Raw command stdout from the PHP snippet.",
     policyRequirement: "Runtime policy commands must include wordpress.run-php.",
+    recipe: true,
+    handler: { kind: "playground", method: "runPhp" },
+  },
+  {
+    id: "wordpress.run-workload",
+    description: "Run a WordPress workload step. Recipe execution lowers PHP workload files to wordpress.run-php and typed workload JSON to wordpress.bench.",
+    acceptedArgs: [
+      { name: "path", description: "Path to a PHP workload file that returns a callable.", format: "path" },
+      { name: "file", description: "Alias for path.", format: "path" },
+      { name: "type", description: "Workload type. Recipe execution currently supports type=php.", format: "php" },
+    ],
+    outputShape: "wp-codebox/wordpress-workload-run-result/v1 JSON or raw workload stdout.",
+    policyRequirement: "Runtime policy commands must include wordpress.run-workload, wordpress.run-php, and wordpress.bench.",
+    requiresPolicyCommands: ["wordpress.run-php", "wordpress.bench"],
     recipe: true,
     handler: { kind: "playground", method: "runPhp" },
   },
@@ -612,26 +623,6 @@ export const commandRegistry = [
     handler: { kind: "playground", method: "runFrontendUrlInventory" },
   },
   {
-    id: "wordpress.admin-page-load",
-    description: "Backward-compatible alias for wordpress.simulated-admin-page-load. Loads a WordPress admin target in-process; it does not perform a real server or browser page load.",
-    metadata: { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-admin-page-load", excludeFromFuzzTargets: true },
-    acceptedArgs: [
-      { name: "path", description: "Admin path relative to wp-admin, such as index.php or edit.php?post_type=page. Defaults to index.php.", format: "admin path" },
-      { name: "url", description: "Optional admin URL or path. Relative paths are resolved under wp-admin/.", format: "path or URL" },
-      { name: "method", description: "HTTP method for the synthetic request; defaults to GET.", format: "GET|POST" },
-      { name: "query-json", description: "Optional query parameters merged into the target URL.", format: "JSON object" },
-      { name: "body-json", description: "Optional request body parameters for POST-like loads.", format: "JSON object" },
-      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before loading the admin page.", format: "fixture user name" },
-      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before loading the admin page.", format: "user session name" },
-      { name: "capture-diagnostics", description: "Opt-in comma-separated bounded diagnostics capture. Currently supports wpdb-queries.", format: "comma-separated enum" },
-    ],
-    outputShape: "wp-codebox/wordpress-page-load-result/v1 JSON with mode=simulated, admin target, status, resolved screen/page identity, redirects, notices, errors, optional performance observation, and artifact refs.",
-    outputSchema: { id: WORDPRESS_PAGE_LOAD_RESULT_SCHEMA, jsonSchema: WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA },
-    policyRequirement: "Runtime policy commands must include wordpress.admin-page-load.",
-    recipe: true,
-    handler: { kind: "playground", method: "runAdminPageLoad" },
-  },
-  {
     id: "wordpress.simulated-admin-page-load",
     description: "Simulate a WordPress admin page load in-process and report stable status, screen/page identity, redirects, notices, errors, performance observations, and artifact refs without requiring a server HTTP request or browser.",
     acceptedArgs: [
@@ -649,26 +640,6 @@ export const commandRegistry = [
     policyRequirement: "Runtime policy commands must include wordpress.simulated-admin-page-load.",
     recipe: true,
     handler: { kind: "playground", method: "runAdminPageLoad" },
-  },
-  {
-    id: "wordpress.frontend-page-load",
-    description: "Backward-compatible alias for wordpress.simulated-frontend-page-load. Loads a WordPress frontend target in-process; it does not perform a real server or browser page load.",
-    metadata: { deprecated: true, aliasOnly: true, aliasFor: "wordpress.simulated-frontend-page-load", excludeFromFuzzTargets: true },
-    acceptedArgs: [
-      { name: "path", description: "Frontend path relative to home URL. Defaults to /.", format: "frontend path" },
-      { name: "url", description: "Optional frontend URL or path.", format: "path or URL" },
-      { name: "method", description: "HTTP method for the synthetic request; defaults to GET.", format: "GET|POST" },
-      { name: "query-json", description: "Optional query parameters merged into the target URL.", format: "JSON object" },
-      { name: "body-json", description: "Optional request body parameters for POST-like loads.", format: "JSON object" },
-      { name: "user", description: "Named fixture user from recipe inputs.fixtureUsers to resolve before loading the frontend page.", format: "fixture user name" },
-      { name: "session", description: "Named user session from recipe inputs.userSessions to resolve before loading the frontend page.", format: "user session name" },
-      { name: "capture-diagnostics", description: "Opt-in comma-separated bounded diagnostics capture. Currently supports wpdb-queries.", format: "comma-separated enum" },
-    ],
-    outputShape: "wp-codebox/wordpress-page-load-result/v1 JSON with mode=simulated, frontend target, status, resolved queried-object/page identity, redirects, errors, optional performance observation, and artifact refs.",
-    outputSchema: { id: WORDPRESS_PAGE_LOAD_RESULT_SCHEMA, jsonSchema: WORDPRESS_PAGE_LOAD_RESULT_JSON_SCHEMA },
-    policyRequirement: "Runtime policy commands must include wordpress.frontend-page-load.",
-    recipe: true,
-    handler: { kind: "playground", method: "runFrontendPageLoad" },
   },
   {
     id: "wordpress.simulated-frontend-page-load",

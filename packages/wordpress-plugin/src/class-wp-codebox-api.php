@@ -82,17 +82,9 @@ final class WP_Codebox_API {
 		self::ABILITY_STAGE_ARTIFACT_APPLY                  => 'stage_artifact_apply',
 		self::ABILITY_APPLY_APPROVED_ARTIFACT               => 'apply_approved_artifact',
 		'wp-codebox/runner-workspace-prepare'               => 'prepare_runner_workspace',
-		'wp-codebox/prepare-runner-workspace'               => 'prepare_runner_workspace',
-		'wp-codebox/prepare'                                => 'prepare_runner_workspace',
 		'wp-codebox/runner-workspace-capture'               => 'capture_runner_workspace',
-		'wp-codebox/capture-runner-workspace'               => 'capture_runner_workspace',
-		'wp-codebox/capture'                                => 'capture_runner_workspace',
 		'wp-codebox/runner-workspace-command'               => 'run_runner_workspace_command',
-		'wp-codebox/run-runner-workspace-command'           => 'run_runner_workspace_command',
-		'wp-codebox/command'                                => 'run_runner_workspace_command',
 		'wp-codebox/runner-workspace-publish'               => 'publish_runner_workspace',
-		'wp-codebox/publish-runner-workspace'               => 'publish_runner_workspace',
-		'wp-codebox/publish'                                => 'publish_runner_workspace',
 	);
 
 	/** @param array<string,mixed> $input Ignored descriptor input. @return array<string,mixed> */
@@ -136,7 +128,6 @@ final class WP_Codebox_API {
 				'runResult'         => 'wp-codebox/agent-task-run-result/v1',
 				'headlessRequest'   => 'wp-codebox/headless-agent-task-request/v1',
 				'headlessResult'    => 'wp-codebox/headless-agent-task-result/v1',
-				'legacyRunResponse' => 'wp-codebox/agent-task-run-result/v1',
 			),
 			'runtimeBoundary'          => array(
 				'profile'                    => 'wp-codebox/runtime-profile/v1',

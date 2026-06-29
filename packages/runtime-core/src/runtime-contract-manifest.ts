@@ -77,7 +77,6 @@ export const RUNTIME_CONTRACT_SCHEMAS = {
     runResult: AGENT_TASK_RUN_RESULT_SCHEMA,
     headlessRequest: HEADLESS_AGENT_TASK_REQUEST_SCHEMA,
     headlessResult: HEADLESS_AGENT_TASK_RESULT_SCHEMA,
-    legacyRunResponse: AGENT_TASK_RUN_RESULT_SCHEMA,
   },
   runtimeBoundary: {
     profile: RUNTIME_PROFILE_SCHEMA,

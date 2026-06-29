@@ -10,7 +10,7 @@ export interface AgentTerminalResult {
   terminal: boolean
   status: AgentTerminalStatus
   success: boolean
-  source: "canonical" | "legacy-fallback" | (string & {})
+  source: "canonical" | (string & {})
   failure_classification?: AgentTerminalFailureClassification
   pending_tools?: {
     detected: boolean
@@ -27,11 +27,7 @@ export interface AgentTerminalResult {
   raw?: Record<string, unknown>
 }
 
-export interface AgentTerminalResultOptions {
-  compatMode?: boolean
-}
-
-export function normalizeAgentTerminalResult(raw: unknown, options: AgentTerminalResultOptions = {}): AgentTerminalResult | undefined {
+export function normalizeAgentTerminalResult(raw: unknown): AgentTerminalResult | undefined {
   const record = objectValue(raw)
   if (Object.keys(record).length === 0) return undefined
 
@@ -40,15 +36,12 @@ export function normalizeAgentTerminalResult(raw: unknown, options: AgentTermina
     return buildTerminalResult(canonical, "canonical")
   }
 
-  const nestedCanonical = legacyTerminalResultRecord(record)
+  const nestedCanonical = nestedTerminalResultRecord(record)
   if (nestedCanonical && canonicalTerminalResultRecord(nestedCanonical)) {
     return buildTerminalResult(nestedCanonical, "canonical")
   }
 
-  if (!options.compatMode) return undefined
-
-  const legacy = legacyTerminalResult(record)
-  return legacy ? withCompatibilityDiagnostic(legacy, "agent-terminal-result-legacy-shape") : undefined
+  return undefined
 }
 
 function canonicalTerminalResultRecord(record: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -59,26 +52,14 @@ function canonicalTerminalResultRecord(record: Record<string, unknown>): Record<
   return undefined
 }
 
-function legacyTerminalResultRecord(record: Record<string, unknown>): Record<string, unknown> | undefined {
-  for (const candidate of [record.terminal_result, record.terminalResult]) {
+function nestedTerminalResultRecord(record: Record<string, unknown>): Record<string, unknown> | undefined {
+  for (const candidate of [record.terminal_result]) {
     const value = objectValue(candidate)
     if (Object.keys(value).length > 0) return value
   }
 
   const directResult = objectValue(record.result)
-  for (const candidate of [directResult.terminal_result, directResult.terminalResult]) {
-    const value = objectValue(candidate)
-    if (Object.keys(value).length > 0) return value
-  }
-
-  const runtime = objectValue(record.agent_runtime)
-  for (const candidate of [runtime.terminal_result, runtime.terminalResult]) {
-    const value = objectValue(candidate)
-    if (Object.keys(value).length > 0) return value
-  }
-
-  const runtimeResult = objectValue(runtime.result)
-  for (const candidate of [runtimeResult.terminal_result, runtimeResult.terminalResult]) {
+  for (const candidate of [directResult.terminal_result]) {
     const value = objectValue(candidate)
     if (Object.keys(value).length > 0) return value
   }
@@ -104,52 +85,6 @@ function buildTerminalResult(record: Record<string, unknown>, source: AgentTermi
     evidence_refs: evidenceRefs(record),
     raw: source === "canonical" ? undefined : record,
   }) as AgentTerminalResult
-}
-
-function legacyTerminalResult(record: Record<string, unknown>): AgentTerminalResult | undefined {
-  const nested = legacyTerminalResultRecord(record)
-  if (nested) return buildTerminalResult(nested, "legacy-fallback")
-
-  const runtime = objectValue(record.agent_runtime)
-  const runtimeResult = runtime.success === true ? objectValue(runtime.result) : {}
-  const candidates = [runtimeResult, record].filter((candidate) => Object.keys(candidate).length > 0)
-
-  for (const candidate of candidates) {
-    const pendingTools = normalizePendingTools(candidate.pending_tools ?? candidate.pendingTools ?? candidate.has_pending_tools ?? candidate.hasPendingTools)
-    const maxTurns = normalizeMaxTurns(candidate.max_turns ?? candidate.maxTurns, candidate)
-    const status = normalizeStatus(stringValue(candidate.status) || stringValue(candidate.state), candidate, pendingTools, maxTurns)
-    const completed = typeof candidate.completed === "boolean" ? candidate.completed : undefined
-    const incomplete = pendingTools?.detected || maxTurns?.reached || status === "processing" || status === "incomplete" || completed === false
-    if (!incomplete) continue
-
-    return buildTerminalResult({
-      status: maxTurns?.reached ? "max_turns" : "incomplete",
-      success: false,
-      terminal: true,
-      failure_classification: maxTurns?.reached ? "max_turns" : "incomplete",
-      pending_tools: pendingTools,
-      max_turns: maxTurns,
-      evidence_refs: evidenceRefs(candidate),
-      legacy_status: status,
-      completed,
-    }, "legacy-fallback")
-  }
-
-  return undefined
-}
-
-function withCompatibilityDiagnostic(result: AgentTerminalResult, adapter: string): AgentTerminalResult {
-  return {
-    ...result,
-    diagnostics: [
-      ...(result.diagnostics ?? []),
-      {
-        class: "wp-codebox.normalizer.compat_mode_used",
-        message: "Agent terminal result was parsed using explicit normalizer compatibility mode.",
-        data: { adapter },
-      },
-    ],
-  }
 }
 
 function normalizeStatus(status: string, record: Record<string, unknown>, pendingTools?: AgentTerminalResult["pending_tools"], maxTurns?: AgentTerminalResult["max_turns"]): AgentTerminalStatus {

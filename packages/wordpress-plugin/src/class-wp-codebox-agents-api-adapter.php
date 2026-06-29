@@ -20,7 +20,7 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	private const CHAT                 = 'agents/chat';
 	private const RUN_TASK             = 'agents/run-task';
-	private const RUN_RUNTIME_PACKAGE  = 'agents/run-runtime-package';
+	private const RUN_RUNTIME_PACKAGE  = 'wp-codebox/run-runtime-package';
 	private const GET_TASK_RUN         = 'agents/get-task-run';
 	private const CANCEL_TASK_RUN      = 'agents/cancel-task-run';
 	private const GET_CHAT_RUN         = 'agents/get-chat-run';
@@ -290,7 +290,7 @@ final class WP_Codebox_Agents_API_Adapter {
 
 	/** @param array<string,mixed> $runtime_task Runtime task descriptor. @return array<string,mixed> */
 	private static function runtime_package_input_from_runtime_task( array $runtime_task ): array {
-		if ( is_array( $runtime_task['input'] ?? null ) && in_array( (string) ( $runtime_task['ability'] ?? '' ), array( 'runtime-package/run', 'wp-codebox/run-runtime-package' ), true ) ) {
+		if ( is_array( $runtime_task['input'] ?? null ) && self::RUN_RUNTIME_PACKAGE === (string) ( $runtime_task['ability'] ?? '' ) ) {
 			return $runtime_task['input'];
 		}
 		if ( is_array( $runtime_task['input'] ?? null ) && 'bundle' === (string) ( $runtime_task['kind'] ?? '' ) ) {

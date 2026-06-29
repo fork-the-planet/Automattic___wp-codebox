@@ -48,9 +48,6 @@ for (const forbiddenConsumerGuidance of [
 const publicExamplesText = await readPublicText(["examples"])
 assert.doesNotMatch(publicExamplesText, /wp-codebox\.agent-sandbox-run|agents\/[a-z0-9._/-]+/i)
 
-const legacyFixturesText = await readPublicText(["tests/fixtures/legacy-compatibility-recipes"])
-assert.match(legacyFixturesText, /wp-codebox\.agent-sandbox-run/)
-
 const publicApiContract = await readFile(new URL("docs/public-api-contract.md", root), "utf8")
 assert.match(publicApiContract, /External integrations should compose the Codebox core facades,\s+WordPress abilities, CLI, or browser SDK/)
 assert.match(publicApiContract, /Product consumers should use the Codebox-owned public surfaces/)
@@ -63,7 +60,7 @@ assert.match(publicApiContract, /Hosts may stream or persist those snapshots in\
 assert.match(publicApiContract, /host UIs own the button, policy, and durable cancellation request transport/)
 
 const cookbookReadme = await readFile(new URL("examples/recipes/cookbook/README.md", root), "utf8")
-assert.match(cookbookReadme, /Provider-specific agent compatibility fixtures are kept under\s+`tests\/fixtures\/legacy-compatibility-recipes`/)
+assert.doesNotMatch(cookbookReadme, /legacy-compatibility-recipes/)
 assert.doesNotMatch(cookbookReadme, /codex-agent-smoke\.json|claude-code-agent-smoke\.json|headless-browser-agent-task\.json/)
 
 console.log("docs boundary language ok")
