@@ -1,13 +1,24 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { applyRecipeRuntimeSetup, type PreparedRecipeRuntimeSetup } from "../packages/cli/src/commands/recipe-runtime-setup.js"
 import type { Runtime, WorkspaceRecipe } from "../packages/runtime-core/src/public.js"
 
 const calls: string[] = []
+const inputMountSource = await mkdtemp(join(tmpdir(), "wp-codebox-input-mount-test-"))
+await writeFile(join(inputMountSource, "phpunit.xml"), "<phpunit />")
 const recipe: WorkspaceRecipe = {
   schema: "wp-codebox/workspace-recipe/v1",
   runtime: { backend: "wordpress-playground" },
-  inputs: {},
+  inputs: {
+    mounts: [{
+      source: inputMountSource,
+      target: "/home/example/public_html/bin/tests",
+      mode: "readonly",
+    }],
+  },
   workflow: { steps: [] },
 }
 const prepared: PreparedRecipeRuntimeSetup = {
@@ -34,13 +45,22 @@ const runtime = {
   async materializeStagedInputs(mounts) {
     assert.equal(this, runtime, "setup calls staged input materializer with runtime binding")
     calls.push(`materialize:${mounts.map((mount) => mount.target).join(",")}`)
-    assert.deepEqual(mounts, [{
-      type: "directory",
-      source: "/tmp/host-bundle",
-      target: "/workspace/example/bundles/runtime-agent",
-      mode: "readwrite",
-      metadata: { kind: "runtime-package-source" },
-    }])
+    assert.deepEqual(mounts, [
+      {
+        type: "directory",
+        source: inputMountSource,
+        target: "/home/example/public_html/bin/tests",
+        mode: "readonly",
+        metadata: undefined,
+      },
+      {
+        type: "directory",
+        source: "/tmp/host-bundle",
+        target: "/workspace/example/bundles/runtime-agent",
+        mode: "readwrite",
+        metadata: { kind: "runtime-package-source" },
+      },
+    ])
   },
   async materializeMounts() { throw new Error("setup should use materializeStagedInputs when available") },
   async execute(spec) { calls.push(`execute:${spec.command}`); throw new Error("setup should not execute commands in this fixture") },
@@ -62,12 +82,19 @@ const phaseExecutor = {
   },
 }
 
-await applyRecipeRuntimeSetup({ recipe, recipeDirectory: process.cwd(), runtime, prepared, phaseExecutor: phaseExecutor as never })
+try {
+  await applyRecipeRuntimeSetup({ recipe, recipeDirectory: process.cwd(), runtime, prepared, phaseExecutor: phaseExecutor as never })
+} finally {
+  await rm(inputMountSource, { recursive: true, force: true })
+}
 
 const mountIndex = calls.indexOf("mount:/workspace/example/bundles/runtime-agent")
-const materializeOperationIndex = calls.indexOf("operation:staged-file.materialize")
-const materializeIndex = calls.indexOf("materialize:/workspace/example/bundles/runtime-agent")
+const inputMountIndex = calls.indexOf("mount:/home/example/public_html/bin/tests")
+const materializeOperationIndex = calls.indexOf("operation:input.materialize")
+const materializeIndex = calls.indexOf("materialize:/home/example/public_html/bin/tests,/workspace/example/bundles/runtime-agent")
+assert.ok(inputMountIndex >= 0, "input source is mounted")
 assert.ok(mountIndex >= 0, "staged source is mounted")
+assert.ok(materializeOperationIndex > inputMountIndex, "materialization is scheduled after input mount")
 assert.ok(materializeOperationIndex > mountIndex, "materialization is scheduled after staged mount")
 assert.ok(materializeIndex > materializeOperationIndex, "materialization runs inside the setup phase before commands")
 assert.equal(calls.some((call) => call.startsWith("execute:")), false)

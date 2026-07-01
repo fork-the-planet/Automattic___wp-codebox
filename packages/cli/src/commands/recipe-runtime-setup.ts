@@ -1,7 +1,7 @@
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
+import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
@@ -153,16 +153,19 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
+  const inputMounts: MountSpec[] = []
   for (const mount of recipe.inputs?.mounts ?? []) {
     const source = resolve(recipeDirectory, mount.source)
     const metadata = await inputMountMetadataWithBaseline(source, mount, inputMountBaselinePaths)
-    await awaitRecipe(`input.mount:${mount.target}`, runtime.mount({
+    const inputMount: MountSpec = {
       type: await recipeMountType(source, mount.type),
       source,
       target: mount.target,
       mode: mount.mode ?? "readwrite",
       metadata,
-    }))
+    }
+    inputMounts.push(inputMount)
+    await awaitRecipe(`input.mount:${mount.target}`, runtime.mount(inputMount))
     interruption?.throwIfInterrupted()
   }
 
@@ -177,16 +180,19 @@ export async function applyRecipeRuntimeSetup(args: {
     interruption?.throwIfInterrupted()
   }
 
-  const canMaterializeStagedInputs = typeof runtime.materializeStagedInputs === "function" || typeof runtime.materializeMounts === "function"
-  if (stagedFiles.length > 0 && canMaterializeStagedInputs) {
-    const stagedMounts = stagedFiles.map((stagedFile) => ({
+  const materializableMounts: MountSpec[] = [
+    ...inputMounts,
+    ...stagedFiles.map((stagedFile) => ({
       type: stagedFile.type,
       source: stagedFile.source,
       target: stagedFile.target,
       mode: "readwrite" as const,
       metadata: stagedFile.metadata,
-    }))
-    await awaitRecipe("staged-file.materialize", () => runtime.materializeStagedInputs ? runtime.materializeStagedInputs(stagedMounts) : runtime.materializeMounts!(stagedMounts))
+    })),
+  ]
+  const canMaterializeStagedInputs = typeof runtime.materializeStagedInputs === "function" || typeof runtime.materializeMounts === "function"
+  if (materializableMounts.length > 0 && canMaterializeStagedInputs) {
+    await awaitRecipe("input.materialize", () => runtime.materializeStagedInputs ? runtime.materializeStagedInputs(materializableMounts) : runtime.materializeMounts!(materializableMounts))
     interruption?.throwIfInterrupted()
   }
 
