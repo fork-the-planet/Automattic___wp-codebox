@@ -221,7 +221,7 @@ async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[]
   const suite = await fuzzSuiteFromRecipeCommandArgs(args, recipeDirectory)
   const result = await runFuzzSuite(suite, {
     runnerCapabilities: RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
-    executor: async (spec) => runtime.execute(await recipeExecutionSpec(workflowStepFromExecutionSpec(spec), recipeDirectory, sandboxWorkspace)),
+    executor: async (spec) => executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: workflowStepFromExecutionSpec(spec) }, recipeDirectory, sandboxWorkspace),
     runtimeWorkloadExecutor: async ({ suite, workload, case: fuzzCase }) => {
       const workloadJson = JSON.stringify(workload)
       const execution = await executeWordPressRunWorkloadJsonRecipeCommand(runtime, [`workload-json=${workloadJson}`], recipeDirectory, sandboxWorkspace, suite, fuzzCase)

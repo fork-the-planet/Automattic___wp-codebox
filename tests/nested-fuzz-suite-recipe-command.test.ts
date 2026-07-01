@@ -158,4 +158,34 @@ assert.equal(nestedJsonExecution.exitCode, 0)
 assert.equal(nestedJsonResult.status, "passed")
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
 
+executed.length = 0
+const childSuite = fuzzSuiteContract({
+  id: "nested-child-suite",
+  cases: [{
+    id: "child-command-case",
+    target: { kind: "command", id: "wordpress.run-php", entrypoint: "wordpress.run-php" },
+    input: { args: ["code=echo 'child';"] },
+  }],
+})
+const workloadJsonFallbackSuite = fuzzSuiteContract({
+  id: "nested-workload-json-fallback-suite",
+  cases: [{
+    id: "workload-json-fallback-case",
+    target: { kind: "command", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" },
+    input: {
+      args: [`workload-json=${JSON.stringify({
+        schema: "wp-codebox/wordpress-workload-run/v1",
+        before: [{ command: "wordpress.run-php", args: ["code=echo 'before';"] }],
+        steps: [{ command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(childSuite)}`] }],
+        after: [],
+      })}`],
+    },
+  }],
+})
+const fallbackExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: { command: "wp-codebox/run-fuzz-suite", args: [`input-json=${JSON.stringify(workloadJsonFallbackSuite)}`] } }, process.cwd())
+const fallbackResult = JSON.parse(fallbackExecution.stdout)
+assert.equal(fallbackExecution.exitCode, 0)
+assert.equal(fallbackResult.status, "passed")
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php", "wordpress.run-php"])
+
 console.log("nested fuzz suite recipe command ok")
