@@ -58,6 +58,7 @@ interface RecipeRunCommonOutputFields {
   completionOutcome?: RecipeRunOutput["completionOutcome"]
   replayStatus?: RecipeRunOutput["replayStatus"]
   fuzzRun?: RecipeRunOutput["fuzzRun"]
+  provenance?: RecipeRunOutput["provenance"]
   artifacts?: ArtifactBundle
   interruption?: RecipeRunOutput["interruption"]
 }
@@ -135,7 +136,7 @@ export function completedRecipeOutputFields(args: {
   }
 }
 
-export async function finalizeRecipeValidationFailure(args: RecipeRunFinalizerBase & { failure: RunOutput["error"]; componentContracts?: RecipeRunComponentContract[]; validation: RecipeRunOutput["validation"] }): Promise<RecipeRunOutput> {
+export async function finalizeRecipeValidationFailure(args: RecipeRunFinalizerBase & { failure: RunOutput["error"]; componentContracts?: RecipeRunComponentContract[]; validation: RecipeRunOutput["validation"]; provenance?: RecipeRunOutput["provenance"] }): Promise<RecipeRunOutput> {
   let runRecord = await args.runRegistry.update(args.runRecord.runId, {
     status: "failed",
     metadata: { runResourceEvidence: await runResourceEvidence({ startedAtMs: args.startedAtMs, status: "failed", failure: args.failure }) },
@@ -148,6 +149,7 @@ export async function finalizeRecipeValidationFailure(args: RecipeRunFinalizerBa
     executions: [],
     componentContracts: args.componentContracts,
     validation: args.validation,
+    provenance: args.provenance,
     run: runRecord,
     error: args.failure,
   })

@@ -64,6 +64,8 @@ register_activation_hook(__FILE__, function () {
   const output = JSON.parse(result.stdout)
   assert.equal(output.schema, "wp-codebox/recipe-run/v1")
   assert.equal(output.success, false)
+  assert.equal(output.provenance.schema, "wp-codebox/recipe-run-provenance/v1")
+  assert.equal(output.provenance.packages.schema, "wp-codebox/package-provenance/v1")
   assert.match(JSON.stringify(output.error), /activation failure smoke sentinel|Failed to activate extra plugin/i)
   assert.ok(output.artifacts?.directory, "activation failure should report a runtime artifact directory")
 
@@ -76,17 +78,29 @@ register_activation_hook(__FILE__, function () {
 
   const failureDiagnostic = pointer.diagnosticArtifacts.find((artifact: { kind?: string }) => artifact.kind === "recipe-run-failure-diagnostics")
   assert.ok(failureDiagnostic, "pointer should expose recipe-run failure diagnostics")
+  const effectiveRecipeArtifact = pointer.diagnosticArtifacts.find((artifact: { kind?: string }) => artifact.kind === "recipe-run-effective-recipe")
+  assert.ok(effectiveRecipeArtifact, "pointer should expose the durable effective recipe JSON artifact")
 
   const diagnostics = JSON.parse(await readFile(join(artifacts, failureDiagnostic.path), "utf8"))
   assert.equal(diagnostics.schema, "wp-codebox/recipe-run-failure-diagnostics/v1")
+  assert.equal(diagnostics.provenance.schema, "wp-codebox/recipe-run-provenance/v1")
   assert.equal(diagnostics.recipe.path, recipePath)
+  assert.equal(diagnostics.recipe.effectiveJson.schema, "wp-codebox/workspace-recipe/v1")
+  assert.equal(diagnostics.recipe.effectiveSha256.length, 64)
   assert.equal(diagnostics.recipe.inputs.extra_plugins[0].pluginFile, "failing-plugin/failing-plugin.php")
   assert.equal(diagnostics.recipe.inputs.secretEnv.length, 0)
   assert.equal(diagnostics.phaseEvidence.some((phase: { name: string; status: string }) => phase.name === "activate_plugins" && phase.status === "failed"), true)
 
+  const effectiveRecipe = JSON.parse(await readFile(join(artifacts, effectiveRecipeArtifact.path), "utf8"))
+  assert.equal(effectiveRecipe.schema, "wp-codebox/recipe-run-effective-recipe/v1")
+  assert.equal(effectiveRecipe.recipe.schema, "wp-codebox/workspace-recipe/v1")
+  assert.equal(effectiveRecipe.sha256, diagnostics.recipe.effectiveSha256)
+
   const runtimeManifest = JSON.parse(await readFile(join(artifacts, pointer.paths.runtimeManifest), "utf8"))
   const runtimeDiagnosticPath = failureDiagnostic.path.split("/").slice(1).join("/")
   assert.equal(runtimeManifest.files.some((file: { kind?: string; path?: string }) => file.kind === "recipe-run-failure-diagnostics" && file.path === runtimeDiagnosticPath), true)
+  const runtimeEffectiveRecipePath = effectiveRecipeArtifact.path.split("/").slice(1).join("/")
+  assert.equal(runtimeManifest.files.some((file: { kind?: string; path?: string }) => file.kind === "recipe-run-effective-recipe" && file.path === runtimeEffectiveRecipePath), true)
 
   console.log("recipe run activation failure artifact smoke passed")
 } finally {
