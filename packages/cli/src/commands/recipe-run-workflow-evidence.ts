@@ -222,7 +222,7 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
   }
 }
 
-function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workflow"]["steps"][number], priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
+export function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workflow"]["steps"][number], priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
   const args = commandArgs(step.args ?? [])
   const artifact = args.artifact ?? args.name ?? ""
   const expectedSchema = args.schema
