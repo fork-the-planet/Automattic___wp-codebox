@@ -1395,13 +1395,7 @@ class PlaygroundRuntime implements Runtime {
       const index = arg.indexOf("=")
       return index === -1 ? [arg, ""] : [arg.slice(0, index), arg.slice(index + 1)]
     }))
-    return `${JSON.stringify({
-      schema: "wp-codebox/workload-result-collection/v1",
-      command: spec.command,
-      status: "ok",
-      artifact: args.get("artifact") ?? null,
-      expectedSchema: args.get("schema") ?? null,
-    }, null, 2)}\n`
+    throw new Error(`wordpress.collect-workload-result requires a workload execution context with a typed payload for artifact=${args.get("artifact") ?? ""}`)
   }
 
   async runCrudOperation(spec: ExecutionSpec): Promise<string> {

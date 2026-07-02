@@ -756,15 +756,14 @@ export const commandRegistry = [
   },
   {
     id: "wordpress.collect-workload-result",
-    description: "Collect a generic workload result marker so declarative workload phases can close with a structured success envelope.",
+    description: "Collect a typed workload artifact payload produced by an earlier workload phase.",
     acceptedArgs: [
       { name: "artifact", description: "Logical workload artifact or coverage name requested by the phase.", format: "string" },
       { name: "schema", description: "Optional expected artifact schema id for runtimes that materialize a concrete artifact.", format: "string" },
     ],
-    outputShape: "wp-codebox/workload-result-collection/v1 JSON with command, status, and requested artifact metadata.",
-    outputSchema: objectEnvelopeSchema("wp-codebox/workload-result-collection/v1", {
-      status: { type: "string" },
-      artifact: { type: ["string", "null"] },
+    outputShape: "The requested typed artifact payload, for example wp-codebox/wordpress-rest-db-query-profile/v1.",
+    outputSchema: objectEnvelopeSchema("wp-codebox/typed-workload-artifact/v1", {
+      schema: { type: "string" },
     }),
     policyRequirement: "Runtime policy commands must include wordpress.collect-workload-result.",
     recipe: true,

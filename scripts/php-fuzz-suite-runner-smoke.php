@@ -346,12 +346,15 @@ $result = WP_Codebox_Fuzz_Suite_Runner_Smoke::run_fuzz_suite(
 			array(
 				'case_id'   => 'collect-artifact',
 				'phases'    => array(
+					'action' => array(
+						array( 'command' => 'wordpress.run-workload', 'args' => array( 'path=' . $json_workload_path ) ),
+					),
 					'assert' => array(
-						array( 'command' => 'wordpress.collect-workload-result', 'args' => array( 'artifact=report' ) ),
+						array( 'command' => 'wordpress.collect-workload-result', 'args' => array( 'artifact=rest_db_query_profile' ) ),
 					),
 				),
 				'artifacts' => array(
-					array( 'name' => 'report', 'path' => 'php-smoke/report.json', 'metadata' => array( 'semantic_key' => 'fuzz.report' ) ),
+					array( 'name' => 'rest_db_query_profile', 'path' => 'php-smoke/rest-db-query-profile.json', 'metadata' => array( 'semantic_key' => 'fuzz.report' ) ),
 				),
 			),
 			array(
@@ -571,11 +574,9 @@ assert( 'json-workload-profiler' === $result['cases'][21]['id'] );
 assert( 'passed' === $result['cases'][21]['status'] );
 assert( 'workloads/rest-db-query-profile.json' === $result['cases'][21]['metadata']['observations'][0]['artifact'] );
 assert( 'rest_db_query_profile' === $result['cases'][21]['metadata']['observations'][1]['artifact'] );
-assert( 'wp-codebox/wordpress-workload-result-collection/v1' === $result['cases'][21]['metadata']['observations'][1]['payload']['schema'] );
-assert( 1 === $result['cases'][21]['metadata']['observations'][1]['payload']['summary']['payloads'] );
-assert( 'wp-codebox/wordpress-rest-db-query-profile/v1' === $result['cases'][21]['metadata']['observations'][1]['payload']['payloads'][0]['payload']['schema'] );
-assert( 1 === $result['cases'][21]['metadata']['observations'][1]['payload']['payloads'][0]['payload']['summary']['case_count'] );
-assert( 4 === $result['cases'][21]['metadata']['observations'][1]['payload']['payloads'][0]['payload']['summary']['query_count'] );
+assert( 'wp-codebox/wordpress-rest-db-query-profile/v1' === $result['cases'][21]['metadata']['observations'][1]['payload']['schema'] );
+assert( 1 === $result['cases'][21]['metadata']['observations'][1]['payload']['summary']['case_count'] );
+assert( 4 === $result['cases'][21]['metadata']['observations'][1]['payload']['summary']['query_count'] );
 assert( 'array' !== ( $result['cases'][21]['metadata']['observations'][0]['return_type'] ?? null ) );
 assert( is_file( WP_CONTENT_DIR . '/uploads/workloads/rest-db-query-profile.json' ) );
 $workload_report = json_decode( file_get_contents( WP_CONTENT_DIR . '/uploads/workloads/rest-db-query-profile.json' ), true );
