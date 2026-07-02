@@ -150,7 +150,11 @@ async function mountHostDirectory(php: ProgrammaticPHP, vfsPath: string, hostPat
 
 function ensureVfsParentDirectory(php: ProgrammaticPHP, vfsPath: string): void {
   const parent = dirname(vfsPath.replace(/\/+$/, ""))
-  if (parent && parent !== "." && parent !== "/" && !php.fileExists(parent)) {
+  if (!parent || parent === "." || parent === "/" || php.fileExists(parent)) {
+    return
+  }
+  ensureVfsParentDirectory(php, parent)
+  if (!php.fileExists(parent)) {
     php.mkdir(parent)
   }
 }

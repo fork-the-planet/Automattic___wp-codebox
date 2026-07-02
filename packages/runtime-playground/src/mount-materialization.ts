@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { materializationPhaseResult, namedFileTreeSkipPolicyNames, phpStringArrayLiteral, type MaterializationPhaseResult, type MountSpec } from "@automattic/wp-codebox-core"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { SKIPPED_CAPTURE_DIRECTORIES } from "./artifacts.js"
+import { assertPlaygroundResponseOk, errorMessage } from "./playground-command-errors.js"
 
 export interface HostMountSnapshot {
   mountIndex: number
@@ -37,11 +38,19 @@ interface HostMountFilePayload {
 }
 
 interface HostMountDirectoryMaterializationResponse {
+  schema?: string
   created?: number
   skipped?: number
   missing?: string[]
   unreadable?: string[]
   unresolved?: string[]
+}
+
+interface HostMountFileMaterializationResponse {
+  schema?: string
+  materialized?: number
+  created?: number
+  skipped?: number
 }
 
 const HOST_MOUNT_FILE_BATCH_SIZE = 100
@@ -196,7 +205,8 @@ async function createHostMountDirectories(server: PlaygroundCliServer, directori
     return { created: 0, skipped: 0 }
   }
   const response = await server.playground.run({ code: hostMountMkdirPhp(directories) })
-  const parsed = JSON.parse(response.text || "{}") as HostMountDirectoryMaterializationResponse
+  assertPlaygroundResponseOk("playground-staged-input-mkdir", response)
+  const parsed = parseMaterializationJson<HostMountDirectoryMaterializationResponse>(response.text, "wp-codebox/host-mount-directory-materialization/v1", "playground-staged-input-mkdir")
   const failures = [
     ...(parsed.missing ?? []).map((path) => `${path} (missing)`),
     ...(parsed.unreadable ?? []).map((path) => `${path} (unreadable)`),
@@ -273,12 +283,26 @@ async function* hostMountEntriesForVfs(mount: MountSpec): AsyncGenerator<HostMou
 
 async function materializeHostMountFilesWithPhp(server: PlaygroundCliServer, files: HostMountFilePayload[], directories: string[]): Promise<{ materialized: number; created: number; skipped: number }> {
   const response = await server.playground.run({ code: hostMountWritePhp(files, directories) })
-  const parsed = JSON.parse(response.text || "{}") as { materialized?: number; created?: number; skipped?: number }
+  assertPlaygroundResponseOk("playground-staged-input-write", response)
+  const parsed = parseMaterializationJson<HostMountFileMaterializationResponse>(response.text, "wp-codebox/host-mount-materialization/v1", "playground-staged-input-write")
   return {
     materialized: parsed.materialized ?? 0,
     created: parsed.created ?? 0,
     skipped: parsed.skipped ?? 0,
   }
+}
+
+function parseMaterializationJson<T extends { schema?: string }>(text: string, schema: string, command: string): T {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text || "{}")
+  } catch (error) {
+    throw new Error(`${command} returned invalid JSON: ${errorMessage(error)}`)
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed as { schema?: unknown }).schema !== schema) {
+    throw new Error(`${command} did not return ${schema}; received ${text.trim() || "empty response"}`)
+  }
+  return parsed as T
 }
 
 export async function applyVfsMountSnapshots(mounts: MountSpec[], snapshots: VfsMountSnapshot[]): Promise<MountMaterializationResult> {

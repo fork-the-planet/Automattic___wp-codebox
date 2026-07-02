@@ -15,7 +15,7 @@ await withTempDir("wp-codebox-staged-input-materialization-", async (root) => {
   const server = {
     playground: {
       async run() {
-        return { text: JSON.stringify({ created: 2, skipped: 0 }) }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 2, skipped: 0 }) }
       },
       async writeFile(path: string, contents: string) {
         written.set(path, contents)
@@ -52,9 +52,9 @@ await withTempDir("wp-codebox-staged-input-materialization-fallback-", async (ro
       async run({ code }: { code: string }) {
         if (code.includes("wp-codebox/host-mount-materialization/v1")) {
           fallbackWrites++
-          return { text: JSON.stringify({ materialized: 1, skipped: 0 }) }
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-materialization/v1", materialized: 1, skipped: 0 }) }
         }
-        return { text: JSON.stringify({ created: 1, skipped: 0 }) }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 1, skipped: 0 }) }
       },
       async writeFile(path: string, contents: string) {
         if (path.endsWith("/flows/store.json")) {
