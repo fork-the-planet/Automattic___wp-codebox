@@ -155,7 +155,7 @@ public static function fuzz_suite_runtime_backed_runner_capabilities_contract( a
 		'targetKinds'                     => array( 'ability', 'command', 'http', 'rest', 'runtime', 'runtime-action' ),
 		'operationKinds'                  => array( 'read', 'crud', 'mutation-isolation', 'delete-boundary' ),
 		'runtimeActionTypes'              => array( 'admin_page', 'browser', 'browser_probe', 'crud_operation', 'db_operation', 'editor_open', 'page', 'php', 'rest_request', 'wp_cli' ),
-		'commands'                        => array( 'wp-codebox.checkpoint-create', 'wp-codebox.checkpoint-list', 'wp-codebox.checkpoint-restore', 'wordpress.ability', 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.editor-open', 'wordpress.ensure-plugin-active', 'wordpress.http-request', 'wordpress.plugin-state', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.run-workload', 'wordpress.server-page-load', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load', 'wordpress.wp-cli' ),
+		'commands'                        => array( 'wp-codebox.checkpoint-create', 'wp-codebox.checkpoint-list', 'wp-codebox.checkpoint-restore', 'wordpress.ability', 'wordpress.browser-actions', 'wordpress.browser-page-load', 'wordpress.browser-probe', 'wordpress.collect-workload-result', 'wordpress.crud-operation', 'wordpress.db-operation', 'wordpress.editor-open', 'wordpress.ensure-plugin-active', 'wordpress.http-request', 'wordpress.plugin-state', 'wordpress.rest-performance-observation', 'wordpress.rest-request', 'wordpress.run-php', 'wordpress.run-workload', 'wordpress.server-page-load', 'wordpress.simulated-admin-page-load', 'wordpress.simulated-frontend-page-load', 'wordpress.wp-cli' ),
 		'unsupportedRequiredCapabilities' => array(),
 	);
 	if ( ! empty( $suite ) ) {
@@ -1070,8 +1070,9 @@ private static function execute_fuzz_suite_collect_artifact( array $args, array 
 	);
 	$collection = WP_Codebox_WordPress_Runtime_Primitives::collect_workload_result( $args, $prior_steps, array_merge( self::fuzz_suite_declared_artifact_refs( $case ), $prior_artifacts ) );
 	$observation['artifact'] = $name;
-	$observation['payload'] = $collection['payload'];
-	return array( 'status' => 'passed', 'observation' => $observation, 'artifactRefs' => $collection['artifactRefs'] );
+	$observation['payload'] = is_array( $collection['payload'] ?? null ) ? $collection['payload'] : array();
+	$diagnostics = is_array( $collection['diagnostics'] ?? null ) ? $collection['diagnostics'] : array();
+	return array( 'status' => (string) ( $collection['status'] ?? 'failed' ), 'observation' => $observation, 'artifactRefs' => is_array( $collection['artifactRefs'] ?? null ) ? $collection['artifactRefs'] : array(), 'diagnostic' => $diagnostics[0] ?? null );
 }
 
 /** @param array<string,string> $args Args. @param array<string,mixed> $case Case. @param array<string,mixed> $suite Suite. @param array<string,mixed> $observation Observation. @return array<string,mixed> */
