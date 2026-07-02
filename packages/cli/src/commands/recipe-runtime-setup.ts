@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto"
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join, posix, resolve } from "node:path"
 import { phpRuntimeRecipePluginPreloadFunction, type ExecutionResult, type MountSpec, type Runtime, type WorkspaceRecipe, type WorkspaceRecipeMount, type WorkspaceRecipePluginRuntimeHealthProbe } from "@automattic/wp-codebox-core"
 import { installMuPluginsCode, installPluginComposerAutoloadersCode, prepareRecipeDependencyOverlays, prepareRecipeExtraPlugins, prepareRecipeRuntimeOverlays, prepareRecipeStagedFiles, prepareRecipeWorkspacePreloads, prepareRecipeWorkspaces, recipeMountType, type PreparedDependencyOverlay, type PreparedExtraPlugin, type PreparedRuntimeOverlay, type PreparedStagedFile, type PreparedWorkspaceMount } from "../recipe-sources.js"
 import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recipe-validation.js"
@@ -17,7 +18,13 @@ export interface PreparedRecipeRuntimeSetup {
   stagedFiles: PreparedStagedFile[]
   overlays: PreparedRuntimeOverlay[]
   inputMountBaselinePaths: string[]
+  inputMountPathMap: InputMountPathMapping[]
   backendPackage?: PreparedRuntimeBackendPackage
+}
+
+export interface InputMountPathMapping {
+  originalTarget: string
+  canonicalTarget: string
 }
 
 export interface RecipeRuntimeSetupResult {
@@ -37,6 +44,7 @@ export async function prepareRecipeRuntimeSetup(recipe: WorkspaceRecipe, recipeD
     stagedFiles: await prepareRecipeStagedFiles(recipe, recipeDirectory),
     overlays: await prepareRecipeRuntimeOverlaysForRun(recipe, recipeDirectory),
     inputMountBaselinePaths: [],
+    inputMountPathMap: recipeInputMountPathMap(recipe),
     backendPackage: await prepareRecipeRuntimeBackendPackage(recipe, recipeDirectory, runtimeBackend),
   }
 }
@@ -50,7 +58,7 @@ export async function applyRecipeRuntimeSetup(args: {
   interruption?: RecipeInterruptionController
 }): Promise<RecipeRuntimeSetupResult> {
   const { recipe, recipeDirectory, runtime, prepared, phaseExecutor, interruption } = args
-  const { workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths } = prepared
+  const { workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, inputMountPathMap } = prepared
   const executions: RecipeExecutionResult[] = []
   const phaseTracker = phaseExecutor.tracker
   const awaitRecipe = <T>(operation: string, promiseOrFactory: Promise<T> | (() => Promise<T>), timeoutMs?: number): Promise<T> => phaseExecutor.operation(operation, promiseOrFactory, timeoutMs)
@@ -154,13 +162,14 @@ export async function applyRecipeRuntimeSetup(args: {
   }
 
   const inputMounts: MountSpec[] = []
-  for (const mount of recipe.inputs?.mounts ?? []) {
+  for (const [index, mount] of (recipe.inputs?.mounts ?? []).entries()) {
     const source = resolve(recipeDirectory, mount.source)
-    const metadata = await inputMountMetadataWithBaseline(source, mount, inputMountBaselinePaths)
+    const target = inputMountPathMap[index]?.canonicalTarget ?? mount.target
+    const metadata = await inputMountMetadataWithBaseline(source, mount, inputMountBaselinePaths, target)
     const inputMount: MountSpec = {
       type: await recipeMountType(source, mount.type),
       source,
-      target: mount.target,
+      target,
       mode: mount.mode ?? "readwrite",
       metadata,
     }
@@ -276,6 +285,63 @@ export function recipeRunExtraPlugin(plugin: PreparedExtraPlugin): Record<string
     provenance: plugin.provenance,
     metadata: plugin.metadata,
   }
+}
+
+export function recipeInputMountPathMap(recipe: WorkspaceRecipe): InputMountPathMapping[] {
+  return (recipe.inputs?.mounts ?? []).map((mount, index) => ({
+    originalTarget: normalizeSandboxPath(mount.target),
+    canonicalTarget: canonicalInputMountTarget(mount.target, index),
+  }))
+}
+
+export function rewriteInputMountPathArgs(args: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {
+  if (mappings.length === 0) {
+    return [...args]
+  }
+  return args.map((arg) => {
+    const separator = arg.indexOf("=")
+    if (separator <= 0) {
+      return arg
+    }
+    const value = arg.slice(separator + 1)
+    if (!value.startsWith("/")) {
+      return arg
+    }
+    const rewritten = rewriteInputMountPath(value, mappings)
+    return rewritten === value ? arg : `${arg.slice(0, separator + 1)}${rewritten}`
+  })
+}
+
+export function rewriteInputMountPath(path: string, mappings: readonly InputMountPathMapping[] = []): string {
+  const normalized = normalizeSandboxPath(path)
+  const match = [...mappings]
+    .sort((a, b) => b.originalTarget.length - a.originalTarget.length)
+    .find((mapping) => pathHasMappedPrefix(normalized, mapping.originalTarget))
+  if (!match) {
+    return path
+  }
+  const suffix = normalized.slice(match.originalTarget.length)
+  return `${match.canonicalTarget}${suffix}`
+}
+
+function canonicalInputMountTarget(target: string, index: number): string {
+  const normalized = normalizeSandboxPath(target)
+  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 12)
+  const name = safeInputMountTargetName(posix.basename(normalized)) || "mount"
+  return `/tmp/wp-codebox-inputs/${index}-${name}-${hash}`
+}
+
+function safeInputMountTargetName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)
+}
+
+function normalizeSandboxPath(path: string): string {
+  const normalized = posix.normalize(path.trim().replace(/\\+/g, "/"))
+  return normalized === "/" ? normalized : normalized.replace(/\/+$/g, "")
+}
+
+function pathHasMappedPrefix(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`)
 }
 
 async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
@@ -416,8 +482,14 @@ function distributionRuntimeData(recipe: WorkspaceRecipe): Record<string, unknow
   }
 }
 
-async function inputMountMetadataWithBaseline(source: string, mount: WorkspaceRecipeMount, cleanupPaths: string[]): Promise<Record<string, unknown> | undefined> {
-  const metadata = mount.metadata ? { ...mount.metadata } : {}
+async function inputMountMetadataWithBaseline(source: string, mount: WorkspaceRecipeMount, cleanupPaths: string[], canonicalTarget: string): Promise<Record<string, unknown> | undefined> {
+  const originalTarget = normalizeSandboxPath(mount.target)
+  const metadata: Record<string, unknown> = {
+    ...(mount.metadata ?? {}),
+    originalTarget,
+    canonicalTarget,
+    canonicalizedTarget: canonicalTarget !== originalTarget,
+  }
   if ((mount.mode ?? "readwrite") !== "readwrite") {
     return Object.keys(metadata).length > 0 ? metadata : undefined
   }

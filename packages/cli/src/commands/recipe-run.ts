@@ -136,6 +136,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let stagedFiles: PreparedStagedFile[] = []
   let overlays: PreparedRuntimeOverlay[] = []
   let inputMountBaselinePaths: string[] = []
+  let inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]> = []
   let backendPackage: PreparedRuntimeBackendPackage | undefined
   let runtime: Awaited<ReturnType<typeof createRuntime>> | undefined
   const executions: RecipeExecutionResult[] = []
@@ -165,7 +166,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
 
   try {
     const preparedRuntimeSetup = await prepareRecipeRuntimeSetup(recipe, recipeDirectory, plan.runtime.backend)
-    ;({ workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, backendPackage } = preparedRuntimeSetup)
+    ;({ workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, inputMountBaselinePaths, inputMountPathMap, backendPackage } = preparedRuntimeSetup)
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
@@ -266,7 +267,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       for (const workflowStep of workflowSteps) {
         const operation = `workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`
         try {
-          const execution = await awaitRecipe(operation, () => executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options))
+          const execution = await awaitRecipe(operation, () => executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap))
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
           interruption?.throwIfInterrupted()
         } catch (error) {
