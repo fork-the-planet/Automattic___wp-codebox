@@ -194,11 +194,12 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
     throw new Error("wordpress.run-workload requires workload-json=<json> for JSON workload execution")
   }
   const workload = parseCommandJsonObject(workloadJson, "workload-json")
+  const workloadAlias = recipeWorkloadInputAlias(workload)
   const steps = [...workflowStepsFromWorkloadPhase(workload.before, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.steps, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.after, workload, suite, fuzzCase)]
   const executions: ExecutionResult[] = []
   for (const [index, step] of steps.entries()) {
     const execution = step.command === "wordpress.collect-workload-result"
-      ? executeRecipeCollectWorkloadResult(step, executions, startedAt)
+      ? executeRecipeCollectWorkloadResult(step, executions, startedAt, workloadAlias)
       : await executeRecipeWorkflowStep(runtime, { phase: "steps", index, step }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap)
     executions.push(execution)
     if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
@@ -207,6 +208,10 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
   }
   const failed = executions.find((execution) => execution.exitCode !== 0)
   const artifacts = recipeWorkloadExecutionArtifacts(executions)
+  if (workloadAlias && !artifacts[workloadAlias]) {
+    const aliasPayloads = dedupeRecipeArtifactPayloads(executions.flatMap(recipeAllWorkloadArtifactPayloadsFromExecution))
+    if (aliasPayloads.length === 1) artifacts[workloadAlias] = aliasPayloads[0]!.payload
+  }
   const payload = stripUndefined({ schema: "wp-codebox/wordpress-workload-run-result/v1", steps: executions.length, exitCode: failed?.exitCode ?? 0, artifacts: Object.keys(artifacts).length > 0 ? artifacts : undefined })
   return {
     id: `wordpress-run-workload:${startedAt}`,
@@ -222,7 +227,7 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
   }
 }
 
-export function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workflow"]["steps"][number], priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
+export function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workflow"]["steps"][number], priorExecutions: ExecutionResult[], startedAt: string, workloadAlias?: string): ExecutionResult {
   const args = commandArgs(step.args ?? [])
   const artifact = args.artifact ?? args.name ?? ""
   const expectedSchema = args.schema
@@ -232,9 +237,12 @@ export function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workfl
     if (command && execution.command !== command) return false
     if (status && (execution.exitCode === 0 ? "passed" : "failed") !== status) return false
     if (!artifact) return true
-    return recipeExecutionMatchesArtifact(execution, artifact)
+    return recipeExecutionMatchesArtifact(execution, artifact) || Boolean(workloadAlias && artifactNameMatches(workloadAlias, artifact) && recipeAllWorkloadArtifactPayloadsFromExecution(execution).length === 1)
   })
-  const payloads = dedupeRecipeArtifactPayloads(matchedExecutions.flatMap((execution) => recipeWorkloadArtifactPayloads(execution, artifact, expectedSchema)))
+  let payloads = dedupeRecipeArtifactPayloads(matchedExecutions.flatMap((execution) => recipeWorkloadArtifactPayloads(execution, artifact, expectedSchema)))
+  if (payloads.length === 0 && workloadAlias && artifactNameMatches(workloadAlias, artifact)) {
+    payloads = dedupeRecipeArtifactPayloads(matchedExecutions.flatMap((execution) => recipeAllWorkloadArtifactPayloadsFromExecution(execution).filter(({ payload }) => !expectedSchema || payload.schema === expectedSchema).map(({ payload }) => ({ name: artifact, payload }))))
+  }
   const missing = artifact && (matchedExecutions.length === 0 || payloads.length === 0)
   const ambiguous = payloads.length > 1
   const diagnostic = missing
@@ -261,6 +269,7 @@ export function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workfl
 function recipeExecutionMatchesArtifact(execution: ExecutionResult, artifact: string): boolean {
   if ((execution.artifactRefs ?? []).some((ref) => recipeArtifactRefMatchesName(ref, artifact))) return true
   return recipeWorkloadArtifactPayloads(execution, artifact).length > 0
+    || Boolean(recipeWorkloadAlias(execution) && artifactNameMatches(recipeWorkloadAlias(execution)!, artifact) && recipeAllWorkloadArtifactPayloadsFromJson(isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout)).length === 1)
 }
 
 function recipeArtifactRefMatchesName(ref: NonNullable<ExecutionResult["artifactRefs"]>[number], artifact: string): boolean {
@@ -277,6 +286,11 @@ function recipeWorkloadArtifactPayloads(execution: ExecutionResult, artifact: st
     }
   }
   collectRecipeArtifactPayloadsFromContainer(json, artifact, expectedSchema, payloads)
+  const alias = recipeWorkloadAlias(execution)
+  if (alias && artifactNameMatches(alias, artifact) && payloads.length === 0) {
+    const aliasPayloads = recipeAllWorkloadArtifactPayloadsFromJson(json).filter(({ payload }) => !expectedSchema || payload.schema === expectedSchema)
+    if (aliasPayloads.length === 1) payloads.push({ name: artifact, payload: aliasPayloads[0]!.payload })
+  }
   for (const ref of execution.artifactRefs ?? []) {
     const record = ref as unknown as Record<string, unknown>
     const payload = isRecord(record.payload) ? record.payload : undefined
@@ -346,15 +360,33 @@ function recipeWorkloadExecutionArtifacts(executions: ExecutionResult[]): Record
       if (seen.has(fingerprint)) continue
       seen.add(fingerprint)
       artifacts[name] = payload
+      const alias = recipeWorkloadAlias(execution)
+      if (alias) artifacts[alias] = payload
     }
   }
   return artifacts
+}
+
+function recipeWorkloadAlias(execution: ExecutionResult): string | undefined {
+  const args = commandArgs(execution.args ?? [])
+  const workload = parseJsonObject(args["workload-json"])
+  const metadata = isRecord(workload?.metadata) ? workload.metadata : undefined
+  return stringValue(metadata?.source_entry ?? metadata?.sourceEntry ?? metadata?.workload)
 }
 
 function recipeAllWorkloadArtifactPayloadsFromJson(json: Record<string, unknown> | undefined): Array<{ name: string; payload: Record<string, unknown> }> {
   const payloads: Array<{ name: string; payload: Record<string, unknown> }> = []
   collectRecipeArtifactPayloadsFromContainer(json, "", undefined, payloads)
   return payloads.filter(({ payload }) => typeof payload.schema === "string")
+}
+
+function recipeAllWorkloadArtifactPayloadsFromExecution(execution: ExecutionResult): Array<{ name: string; payload: Record<string, unknown> }> {
+  return recipeAllWorkloadArtifactPayloadsFromJson(isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout))
+}
+
+function recipeWorkloadInputAlias(workload: Record<string, unknown>): string | undefined {
+  const metadata = isRecord(workload.metadata) ? workload.metadata : undefined
+  return stringValue(metadata?.source_entry ?? metadata?.sourceEntry ?? metadata?.workload)
 }
 
 function recipeWorkloadResultArtifactRefs(execution: ExecutionResult): NonNullable<ExecutionResult["artifactRefs"]> {
