@@ -1409,6 +1409,17 @@ function restDbQueryProfilesFromJson(json: Record<string, unknown> | undefined):
       if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(payloadRecord?.name) })
     }
   }
+  if (json?.schema === "wp-codebox/recipe-run/v1") {
+    profiles.push(...restDbQueryProfilesFromJson(recordValue(json.benchResults)))
+    for (const benchResults of arrayValue(json.benchResultsList)) {
+      profiles.push(...restDbQueryProfilesFromJson(recordValue(benchResults)))
+    }
+    for (const execution of arrayValue(json.executions)) {
+      const executionRecord = recordValue(execution)
+      profiles.push(...restDbQueryProfilesFromJson(recordValue(recordValue(executionRecord?.result)?.json)))
+      profiles.push(...restDbQueryProfilesFromJson(parseJsonRecord(stringValue(executionRecord?.stdout))))
+    }
+  }
   return profiles
 }
 
