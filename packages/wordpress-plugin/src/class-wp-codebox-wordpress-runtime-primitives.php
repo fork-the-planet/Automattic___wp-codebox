@@ -126,32 +126,36 @@ final class WP_Codebox_WordPress_Runtime_Primitives {
 			}
 			$matched_payloads = array_merge( $matched_payloads, self::step_artifact_payloads( $step, $name ) );
 		}
+		$matched_payloads = self::dedupe_artifact_payloads( $matched_payloads );
 		$matched_refs = array_merge( $matched_refs, array_values( array_filter( $artifact_refs, static fn( mixed $ref ): bool => is_array( $ref ) && ( '' === $name || self::artifact_matches_name( $ref, $name ) ) ) ) );
 		$matched_refs = self::dedupe_artifact_refs( $matched_refs );
-		if ( '' !== $name && empty( $matched_refs ) && empty( $matched_payloads ) ) {
+		if ( '' === $name || empty( $matched_payloads ) ) {
 			$diagnostic = array(
 				'severity' => 'error',
 				'code'     => 'wp_codebox_workload_result_artifact_missing',
-				'message'  => 'Requested workload result artifact was not found or had no payload.',
+				'message'  => 'Requested workload result artifact was not found or had no typed payload.',
 				'metadata' => array_filter( array( 'artifact' => $name, 'command' => $command, 'status' => $status ), static fn( mixed $value ): bool => '' !== $value ),
 			);
 
 			return array( 'status' => 'failed', 'payload' => array(), 'artifactRefs' => array(), 'diagnostics' => array( $diagnostic ) );
 		}
-		$payload      = array(
-			'schema'      => 'wp-codebox/wordpress-workload-result-collection/v1',
-			'generatedAt' => gmdate( 'Y-m-d\TH:i:s\Z' ),
-			'query'       => array_filter( array( 'artifact' => $name, 'command' => $command, 'status' => $status ), static fn( mixed $value ): bool => '' !== $value ),
-			'summary'     => array( 'steps' => count( $matched_steps ), 'artifactRefs' => count( $matched_refs ), 'payloads' => count( $matched_payloads ) ),
-			'steps'       => $matched_steps,
-			'payloads'    => $matched_payloads,
-			'artifactRefs'=> $matched_refs,
-		);
+		if ( count( $matched_payloads ) > 1 ) {
+			$diagnostic = array(
+				'severity' => 'error',
+				'code'     => 'wp_codebox_workload_result_artifact_ambiguous',
+				'message'  => 'Requested workload result artifact resolved multiple typed payloads; refine the collection query.',
+				'metadata' => array_filter( array( 'artifact' => $name, 'command' => $command, 'status' => $status, 'payloads' => count( $matched_payloads ) ), static fn( mixed $value ): bool => '' !== $value ),
+			);
+
+			return array( 'status' => 'failed', 'payload' => array(), 'artifactRefs' => array(), 'diagnostics' => array( $diagnostic ) );
+		}
+
+		$payload = is_array( $matched_payloads[0]['payload'] ?? null ) ? $matched_payloads[0]['payload'] : $matched_payloads[0];
 
 		$collection_name = '' === $name ? 'workload-result' : $name;
 		$collection_ref  = array(
 			'name'        => $collection_name,
-			'kind'        => 'wordpress-workload-result-collection',
+			'kind'        => $collection_name,
 			'path'        => 'files/workload-results/' . self::safe_key( $collection_name ) . '.json',
 			'contentType' => 'application/json',
 			'payload'     => $payload,
@@ -217,7 +221,8 @@ final class WP_Codebox_WordPress_Runtime_Primitives {
 	}
 
 	private static function artifact_name_matches( string $candidate, string $name ): bool {
-		return $name === $candidate || str_replace( '_', '-', $name ) === str_replace( '_', '-', $candidate );
+		$normalize = static fn( string $value ): string => str_replace( array( '_', '-' ), '', strtolower( $value ) );
+		return $name === $candidate || str_replace( '_', '-', $name ) === str_replace( '_', '-', $candidate ) || $normalize( $name ) === $normalize( $candidate );
 	}
 
 	/** @param array<string,mixed> $step Step. */
@@ -254,8 +259,28 @@ final class WP_Codebox_WordPress_Runtime_Primitives {
 				$payloads[] = array( 'name' => (string) $artifact_name, 'payload' => $payload );
 			}
 		}
+		foreach ( is_array( $container['artifactRefs'] ?? null ) ? $container['artifactRefs'] : array() as $ref ) {
+			if ( is_array( $ref ) && is_array( $ref['payload'] ?? null ) && ( '' === $name || self::artifact_matches_name( $ref, $name ) ) ) {
+				$payloads[] = array( 'name' => (string) ( $ref['name'] ?? $ref['artifact'] ?? $ref['id'] ?? '' ), 'payload' => $ref['payload'] );
+			}
+		}
 
 		return $payloads;
+	}
+
+	/** @param array<int,array<string,mixed>> $payloads Payloads. @return array<int,array<string,mixed>> */
+	private static function dedupe_artifact_payloads( array $payloads ): array {
+		$seen = array();
+		$out  = array();
+		foreach ( $payloads as $payload ) {
+			$key = (string) ( $payload['name'] ?? '' ) . '|' . wp_json_encode( $payload['payload'] ?? $payload );
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			$out[]        = $payload;
+		}
+		return $out;
 	}
 
 	/** @param array<int,array<string,mixed>> $refs Refs. @return array<int,array<string,mixed>> */

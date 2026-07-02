@@ -908,31 +908,26 @@ function collectWorkloadResultExecution(step: { command: string; args?: string[]
     return executionMatchesArtifact(execution, artifact)
   })
   const payloads = matchedExecutions.flatMap((execution) => workloadArtifactPayloads(execution, artifact, expectedSchema))
-  const artifactRefs = matchedExecutions.flatMap((execution) => (execution.artifactRefs ?? []).filter((ref) => !artifact || artifactRefMatchesName(ref, artifact)))
-  const requiresProfilePayload = artifactNameMatches(artifact, "rest-db-query-profile")
-  const missing = artifact && (matchedExecutions.length === 0 || (requiresProfilePayload && payloads.length === 0))
-  const payload = {
-    schema: "wp-codebox/wordpress-workload-result-collection/v1",
-    generatedAt: new Date().toISOString(),
-    query: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined, expectedSchema: expectedSchema || undefined }),
-    summary: { steps: matchedExecutions.length, artifactRefs: artifactRefs.length, payloads: payloads.length },
-    steps: matchedExecutions.map((execution) => stripUndefined({ command: execution.command, exitCode: execution.exitCode, result: execution.result?.json })),
-    payloads,
-    artifactRefs,
-  }
-  const diagnostic = missing ? { severity: "error", code: "wp_codebox_workload_result_artifact_missing", message: "Requested workload result artifact was not found or had no payload.", metadata: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined }) } : undefined
+  const missing = artifact && (matchedExecutions.length === 0 || payloads.length === 0)
+  const ambiguous = payloads.length > 1
+  const diagnostic = missing
+    ? { severity: "error", code: "wp_codebox_workload_result_artifact_missing", message: "Requested workload result artifact was not found or had no typed payload.", metadata: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined, expectedSchema: expectedSchema || undefined }) }
+    : ambiguous
+      ? { severity: "error", code: "wp_codebox_workload_result_artifact_ambiguous", message: "Requested workload result artifact resolved multiple typed payloads; refine the collection query.", metadata: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined, expectedSchema: expectedSchema || undefined, payloads: payloads.length }) }
+      : undefined
+  const payload = payloads[0]?.payload ?? {}
   const stdout = `${JSON.stringify(payload)}\n`
   return {
     id: `wordpress-collect-workload-result-${artifact || "workload-result"}`,
     command: "wordpress.collect-workload-result",
     args: step.args ?? [],
-    exitCode: missing ? 1 : 0,
+    exitCode: diagnostic ? 1 : 0,
     stdout,
-    stderr: missing ? diagnostic?.message ?? "" : "",
-    result: { schema: "wp-codebox/runtime-command-result/v1", status: missing ? "error" : "ok", json: payload, diagnostics: diagnostic ? [diagnostic] : undefined },
+    stderr: diagnostic?.message ?? "",
+    result: { schema: "wp-codebox/runtime-command-result/v1", status: diagnostic ? "error" : "ok", json: payload, diagnostics: diagnostic ? [diagnostic] : undefined },
     startedAt,
     finishedAt: new Date().toISOString(),
-    artifactRefs: [{ kind: "wordpress-workload-result-collection", id: artifact || "workload-result", artifactId: artifact || "workload-result", path: `files/workload-results/${safeArtifactSegment(artifact || "workload-result")}.json`, payload } as NonNullable<ExecutionResult["artifactRefs"]>[number]],
+    artifactRefs: payloads[0] ? [{ kind: payloads[0].name, id: artifact || payloads[0].name, artifactId: artifact || payloads[0].name, path: `files/workload-results/${safeArtifactSegment(artifact || payloads[0].name)}.json`, payload } as NonNullable<ExecutionResult["artifactRefs"]>[number]] : [],
   }
 }
 
@@ -955,7 +950,19 @@ function workloadArtifactPayloads(execution: ExecutionResult, artifact: string, 
     }
   }
   collectArtifactPayloadsFromContainer(json, artifact, expectedSchema, payloads)
-  return payloads
+  return dedupeArtifactPayloads(payloads)
+}
+
+function dedupeArtifactPayloads(payloads: Array<{ name: string; payload: Record<string, unknown> }>): Array<{ name: string; payload: Record<string, unknown> }> {
+  const seen = new Set<string>()
+  const out: Array<{ name: string; payload: Record<string, unknown> }> = []
+  for (const item of payloads) {
+    const key = `${item.name}:${JSON.stringify(item.payload)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
+  }
+  return out
 }
 
 function collectArtifactPayloadsFromContainer(container: Record<string, unknown> | undefined, artifact: string, expectedSchema: string | undefined, out: Array<{ name: string; payload: Record<string, unknown> }>): void {
@@ -1383,10 +1390,6 @@ function containsRestDbQueryProfilerRequest(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsRestDbQueryProfilerRequest)
   const record = value as Record<string, unknown>
   if (record.type === "rest-db-query-profiler") return true
-  if (record.schema === "wp-codebox/workload-result-collection/v1" || record.schema === "wp-codebox/wordpress-workload-result-collection/v1") {
-    const artifact = stringValue(record.artifact ?? record.name)
-    if (artifact && artifactNameMatches(artifact, "rest-db-query-profile")) return true
-  }
   return Object.values(record).some(containsRestDbQueryProfilerRequest)
 }
 
@@ -1521,13 +1524,6 @@ function restDbQueryProfilesFromJson(json: Record<string, unknown> | undefined):
       const stepRecord = recordValue(step)
       const profile = recordValue(recordValue(stepRecord?.artifacts)?.["rest-db-query-profile"])
       if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(stepRecord?.type) })
-    }
-  }
-  if (json?.schema === "wp-codebox/wordpress-workload-result-collection/v1") {
-    for (const item of arrayValue(json.payloads)) {
-      const payloadRecord = recordValue(item)
-      const profile = recordValue(payloadRecord?.payload)
-      if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile, sourceId: stringValue(payloadRecord?.name) })
     }
   }
   if (json?.schema === "wp-codebox/recipe-run/v1") {
