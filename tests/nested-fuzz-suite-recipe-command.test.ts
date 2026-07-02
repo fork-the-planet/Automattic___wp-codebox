@@ -65,6 +65,23 @@ const runtime = {
         result: { schema: "wp-codebox/runtime-command-result/v1", status: "ok", json: payload },
       }
     }
+    if (spec.command === "wordpress.bench" && (spec.args ?? []).some((arg) => arg.includes("db-inventory"))) {
+      const payload = {
+        schema: "wp-codebox/bench-results/v1",
+        scenarios: [{ id: "recipe-db-inventory", artifacts: { "db-inventory": { schema: "wp-codebox/wordpress-db-inventory/v1", inventory: { totals: { tableCount: 12 } } } } }],
+      }
+      return {
+        id: `exec-${executed.length}`,
+        command: spec.command,
+        args: spec.args ?? [],
+        exitCode: 0,
+        stdout: `${JSON.stringify(payload)}\n`,
+        stderr: "",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:01.000Z",
+        result: { schema: "wp-codebox/runtime-command-result/v1", status: "ok", json: payload },
+      }
+    }
     return {
       id: `exec-${executed.length}`,
       command: spec.command,
@@ -205,6 +222,23 @@ assert.equal(directTypedJsonCollectResult.schema, "wp-codebox/wordpress-workload
 assert.equal(directTypedJsonCollectResult.steps, 2)
 assert.equal(directTypedJsonCollectResult.artifacts["rest-db-query-profile"].schema, "wp-codebox/wordpress-rest-db-query-profile/v1")
 assert.equal(directTypedJsonCollectResult.artifacts["rest-db-query-profile"].summary.query_count, 7)
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
+
+executed.length = 0
+const directDbInventoryCollectWorkload: WorkspaceRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({ schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "db-inventory", "include-columns": true, "include-indexes": true }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=db_inventory"] }] })}`] }],
+  },
+}
+assertWorkspaceRecipeJsonSchema(directDbInventoryCollectWorkload, { recipeCommandIds: ["wordpress.run-workload", "wordpress.bench", "wordpress.collect-workload-result"] })
+const directDbInventoryCollectExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: directDbInventoryCollectWorkload.workflow.steps[0]! }, process.cwd())
+const directDbInventoryCollectResult = JSON.parse(directDbInventoryCollectExecution.stdout)
+assert.equal(directDbInventoryCollectExecution.exitCode, 0)
+assert.equal(directDbInventoryCollectResult.schema, "wp-codebox/wordpress-workload-run-result/v1")
+assert.equal(directDbInventoryCollectResult.steps, 2)
+assert.equal(directDbInventoryCollectResult.artifacts["db-inventory"].schema, "wp-codebox/wordpress-db-inventory/v1")
+assert.equal(directDbInventoryCollectResult.artifacts["db-inventory"].inventory.totals.tableCount, 12)
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
 
 executed.length = 0

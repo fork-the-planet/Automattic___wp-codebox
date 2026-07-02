@@ -295,6 +295,9 @@ function collectRecipeArtifactPayloadsFromContainer(container: Record<string, un
     const payload = isRecord(value) ? value : undefined
     if (payload && (!expectedSchema || payload.schema === expectedSchema)) out.push({ name, payload })
   }
+  for (const scenario of Array.isArray(container.scenarios) ? container.scenarios : []) {
+    if (isRecord(scenario)) collectRecipeArtifactPayloadsFromContainer(scenario, artifact, expectedSchema, out)
+  }
   for (const nestedStep of Array.isArray(container.steps) ? container.steps : []) {
     if (isRecord(nestedStep)) collectRecipeArtifactPayloadsFromContainer(nestedStep, artifact, expectedSchema, out)
   }
@@ -338,8 +341,20 @@ function recipeWorkloadExecutionArtifacts(executions: ExecutionResult[]): Record
       artifacts[name] = profile
       restDbQueryProfileIndex += 1
     }
+    for (const { name, payload } of recipeAllWorkloadArtifactPayloadsFromJson(json)) {
+      const fingerprint = `${name}:${JSON.stringify(payload)}`
+      if (seen.has(fingerprint)) continue
+      seen.add(fingerprint)
+      artifacts[name] = payload
+    }
   }
   return artifacts
+}
+
+function recipeAllWorkloadArtifactPayloadsFromJson(json: Record<string, unknown> | undefined): Array<{ name: string; payload: Record<string, unknown> }> {
+  const payloads: Array<{ name: string; payload: Record<string, unknown> }> = []
+  collectRecipeArtifactPayloadsFromContainer(json, "", undefined, payloads)
+  return payloads.filter(({ payload }) => typeof payload.schema === "string")
 }
 
 function recipeWorkloadResultArtifactRefs(execution: ExecutionResult): NonNullable<ExecutionResult["artifactRefs"]> {
