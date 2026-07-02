@@ -36,6 +36,7 @@ import {
   queryObservationArtifact,
   wordpressRuntimeDiscoveryToCoveragePlan,
   fuzzArtifactBundleContract,
+  fuzzSuiteResultEnvelope,
   fuzzMinimizeSupportedCapability,
   fuzzReplayCaseRef,
   invokeWordPressCronEvent,
@@ -1153,6 +1154,8 @@ export function executeWordPressFuzzSuite(
 }
 
 async function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelope, observations: WordPressHotspotObservationInput[], options: WordPressFuzzSuiteExecutionOptions = {}): Promise<FuzzSuiteResultEnvelope> {
+  const initialRestDbQueryProfiles = restDbQueryProfileArtifactsFromFuzzResult(result)
+  result = resultWithRequiredRestDbQueryProfilePayloads(result, initialRestDbQueryProfiles)
   const artifact = wordpressHotspotsArtifact({
     generatedAt: new Date().toISOString(),
     source: "executeWordPressFuzzSuite",
@@ -1337,6 +1340,66 @@ async function writeFuzzArtifactBundle(input: {
       return written.metadata
     },
   }
+}
+
+function resultWithRequiredRestDbQueryProfilePayloads(result: FuzzSuiteResultEnvelope, profiles: RestDbQueryProfileArtifact[]): FuzzSuiteResultEnvelope {
+  const profileCaseIds = new Set(profiles.flatMap((profile) => profile.caseId ? [profile.caseId] : []))
+  const diagnostics = result.cases.flatMap((fuzzCase) => {
+    if (!caseRequiresRestDbQueryProfilePayload(fuzzCase) || profileCaseIds.has(fuzzCase.id)) return []
+    return [{
+      severity: "error" as const,
+      code: "rest_db_query_profile_payload_missing",
+      caseId: fuzzCase.id,
+      target: fuzzCase.target,
+      message: "A rest-db-query-profiler workload completed without a wp-codebox/wordpress-rest-db-query-profile/v1 payload.",
+      metadata: { requiredSchema: "wp-codebox/wordpress-rest-db-query-profile/v1", artifact: "rest-db-query-profile" },
+    }]
+  })
+  if (diagnostics.length === 0) return result
+
+  const diagnosticByCaseId = new Map(diagnostics.map((diagnostic) => [diagnostic.caseId, diagnostic]))
+  return fuzzSuiteResultEnvelope({
+    suite: result.suite,
+    cases: result.cases.map((fuzzCase) => {
+      const diagnostic = diagnosticByCaseId.get(fuzzCase.id)
+      return diagnostic ? { ...fuzzCase, status: "failed", success: false, diagnostics: dedupeDiagnostics([...(fuzzCase.diagnostics ?? []), diagnostic]) } : fuzzCase
+    }),
+    diagnostics: dedupeDiagnostics([...result.diagnostics, ...diagnostics]),
+    artifactRefs: result.artifactRefs,
+    coverageSummary: result.coverageSummary,
+    coveragePlan: result.coveragePlan,
+    metadata: result.metadata,
+  })
+}
+
+function caseRequiresRestDbQueryProfilePayload(fuzzCase: FuzzSuiteResultEnvelope["cases"][number]): boolean {
+  const execution = recordValue(fuzzCase.metadata?.execution)
+  const json = recordValue(recordValue(execution?.result)?.json)
+  return containsRestDbQueryProfilerRequest(fuzzCase.metadata?.input) || containsRestDbQueryProfilerRequest(recordValue(fuzzCase.metadata?.replay)?.input) || containsRestDbQueryProfilerRequest(json)
+}
+
+function containsRestDbQueryProfilerRequest(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  if (Array.isArray(value)) return value.some(containsRestDbQueryProfilerRequest)
+  const record = value as Record<string, unknown>
+  if (record.type === "rest-db-query-profiler") return true
+  if (record.schema === "wp-codebox/workload-result-collection/v1" || record.schema === "wp-codebox/wordpress-workload-result-collection/v1") {
+    const artifact = stringValue(record.artifact ?? record.name)
+    if (artifact && artifactNameMatches(artifact, "rest-db-query-profile")) return true
+  }
+  return Object.values(record).some(containsRestDbQueryProfilerRequest)
+}
+
+function dedupeDiagnostics<T extends { code?: string; caseId?: string; message?: string }>(diagnostics: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const diagnostic of diagnostics) {
+    const key = `${diagnostic.code ?? ""}|${diagnostic.caseId ?? ""}|${diagnostic.message ?? ""}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(diagnostic)
+  }
+  return out
 }
 
 interface RestDbQueryProfileArtifact {
