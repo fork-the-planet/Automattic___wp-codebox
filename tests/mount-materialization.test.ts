@@ -16,7 +16,7 @@ try {
 
   const result = await materializePlaygroundStagedInputs({
     playground: {
-      async run() { return { text: JSON.stringify({ created: 1, skipped: 0 }) } },
+      async run() { return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: 1, skipped: 0 }) } },
       async writeFile(target: string, contents: string) { writes[target] = contents },
     },
   } as never, [{
@@ -48,7 +48,7 @@ try {
         for (const directory of payload.directories ?? []) {
           readableDirectories.add(directory)
         }
-        return { text: JSON.stringify({ created: payload.directories?.length ?? 0, skipped: 0 }) }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
       },
       async writeFile(target: string, contents: string) {
         if (!readableDirectories.has(dirname(target))) {
@@ -89,9 +89,9 @@ try {
         const payload = materializationPayload(code)
         if (code.includes("wp-codebox/host-mount-materialization/v1")) {
           fallbackFileBatches.push(payload.files?.length ?? 0)
-          return { text: JSON.stringify({ materialized: payload.files?.length ?? 0, skipped: 0 }) }
+          return { text: JSON.stringify({ schema: "wp-codebox/host-mount-materialization/v1", materialized: payload.files?.length ?? 0, skipped: 0 }) }
         }
-        return { text: JSON.stringify({ created: payload.directories?.length ?? 0, skipped: 0 }) }
+        return { text: JSON.stringify({ schema: "wp-codebox/host-mount-directory-materialization/v1", created: payload.directories?.length ?? 0, skipped: 0 }) }
       },
     },
   } as never, [{
@@ -121,6 +121,7 @@ try {
           const payload = materializationPayload(code)
           return {
             text: JSON.stringify({
+              schema: "wp-codebox/host-mount-directory-materialization/v1",
               created: payload.directories?.length ?? 0,
               skipped: 0,
               missing: ["/home/example/public_html/bin/tests/i18n-tools"],
@@ -141,6 +142,60 @@ try {
   )
 } finally {
   await rm(unreadableTargetSource, { recursive: true, force: true })
+}
+
+const failedVerificationSource = await mkdtemp(join(tmpdir(), "wp-codebox-failed-directory-verification-"))
+
+try {
+  await mkdir(join(failedVerificationSource, "bin", "tests", "i18n-tools"), { recursive: true })
+
+  await assert.rejects(
+    materializePlaygroundStagedInputs({
+      playground: {
+        async run() {
+          return { exitCode: 1, errors: "mkdir failed", text: "" }
+        },
+        async writeFile() {
+          throw new Error("files should not be written when directory verification exits non-zero")
+        },
+      },
+    } as never, [{
+      type: "directory",
+      source: failedVerificationSource,
+      target: "/home/example/public_html",
+      mode: "readwrite",
+    }]),
+    /playground-staged-input-mkdir failed with exit code 1/,
+  )
+} finally {
+  await rm(failedVerificationSource, { recursive: true, force: true })
+}
+
+const malformedVerificationSource = await mkdtemp(join(tmpdir(), "wp-codebox-malformed-directory-verification-"))
+
+try {
+  await mkdir(join(malformedVerificationSource, "bin", "tests", "i18n-tools"), { recursive: true })
+
+  await assert.rejects(
+    materializePlaygroundStagedInputs({
+      playground: {
+        async run() {
+          return { text: "" }
+        },
+        async writeFile() {
+          throw new Error("files should not be written when directory verification omits its schema")
+        },
+      },
+    } as never, [{
+      type: "directory",
+      source: malformedVerificationSource,
+      target: "/home/example/public_html",
+      mode: "readwrite",
+    }]),
+    /playground-staged-input-mkdir did not return wp-codebox\/host-mount-directory-materialization\/v1/,
+  )
+} finally {
+  await rm(malformedVerificationSource, { recursive: true, force: true })
 }
 
 function materializationPayload(code: string): { directories?: string[]; files?: Array<{ target: string; contentsBase64: string }> } {
