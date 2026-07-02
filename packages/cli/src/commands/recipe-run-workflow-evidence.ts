@@ -197,14 +197,17 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
   const steps = [...workflowStepsFromWorkloadPhase(workload.before, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.steps, workload, suite, fuzzCase), ...workflowStepsFromWorkloadPhase(workload.after, workload, suite, fuzzCase)]
   const executions: ExecutionResult[] = []
   for (const [index, step] of steps.entries()) {
-    const execution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index, step }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap)
+    const execution = step.command === "wordpress.collect-workload-result"
+      ? executeRecipeCollectWorkloadResult(step, executions, startedAt)
+      : await executeRecipeWorkflowStep(runtime, { phase: "steps", index, step }, recipeDirectory, sandboxWorkspace, undefined, undefined, inputMountPathMap)
     executions.push(execution)
     if (execution.exitCode !== 0 && !step.allowFailure && !step.advisory) {
       break
     }
   }
   const failed = executions.find((execution) => execution.exitCode !== 0)
-  const payload = { schema: "wp-codebox/wordpress-workload-run-result/v1", steps: executions.length, exitCode: failed?.exitCode ?? 0 }
+  const artifacts = recipeWorkloadExecutionArtifacts(executions)
+  const payload = stripUndefined({ schema: "wp-codebox/wordpress-workload-run-result/v1", steps: executions.length, exitCode: failed?.exitCode ?? 0, artifacts: Object.keys(artifacts).length > 0 ? artifacts : undefined })
   return {
     id: `wordpress-run-workload:${startedAt}`,
     command: "wordpress.run-workload",
@@ -215,8 +218,157 @@ async function executeWordPressRunWorkloadJsonRecipeCommand(runtime: Runtime, ar
     result: { schema: "wp-codebox/runtime-command-result/v1", status: failed ? "error" : "ok", json: payload },
     startedAt,
     finishedAt: executions.at(-1)?.finishedAt ?? new Date().toISOString(),
-    artifactRefs: executions.flatMap((execution) => execution.artifactRefs ?? []),
+    artifactRefs: executions.flatMap((execution) => [...(execution.artifactRefs ?? []), ...recipeWorkloadResultArtifactRefs(execution)]),
   }
+}
+
+function executeRecipeCollectWorkloadResult(step: WorkspaceRecipe["workflow"]["steps"][number], priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
+  const args = commandArgs(step.args ?? [])
+  const artifact = args.artifact ?? args.name ?? ""
+  const expectedSchema = args.schema
+  const command = args.command ?? ""
+  const status = args.status ?? ""
+  const matchedExecutions = priorExecutions.filter((execution) => {
+    if (command && execution.command !== command) return false
+    if (status && (execution.exitCode === 0 ? "passed" : "failed") !== status) return false
+    if (!artifact) return true
+    return recipeExecutionMatchesArtifact(execution, artifact)
+  })
+  const payloads = dedupeRecipeArtifactPayloads(matchedExecutions.flatMap((execution) => recipeWorkloadArtifactPayloads(execution, artifact, expectedSchema)))
+  const missing = artifact && (matchedExecutions.length === 0 || payloads.length === 0)
+  const ambiguous = payloads.length > 1
+  const diagnostic = missing
+    ? { severity: "error", code: "wp_codebox_workload_result_artifact_missing", message: "Requested workload result artifact was not found or had no typed payload.", metadata: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined, expectedSchema: expectedSchema || undefined }) }
+    : ambiguous
+      ? { severity: "error", code: "wp_codebox_workload_result_artifact_ambiguous", message: "Requested workload result artifact resolved multiple typed payloads; refine the collection query.", metadata: stripUndefined({ artifact: artifact || undefined, command: command || undefined, status: status || undefined, expectedSchema: expectedSchema || undefined, payloads: payloads.length }) }
+      : undefined
+  const payload = payloads[0]?.payload ?? {}
+  const artifactName = artifact || payloads[0]?.name || "workload-result"
+  return {
+    id: `wordpress-collect-workload-result-${artifactName}`,
+    command: "wordpress.collect-workload-result",
+    args: step.args ?? [],
+    exitCode: diagnostic ? 1 : 0,
+    stdout: `${JSON.stringify(payload)}\n`,
+    stderr: diagnostic?.message ?? "",
+    result: { schema: "wp-codebox/runtime-command-result/v1", status: diagnostic ? "error" : "ok", json: payload, diagnostics: diagnostic ? [diagnostic] : undefined },
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    artifactRefs: payloads[0] ? [{ kind: payloads[0].name, id: artifactName, artifactId: artifactName, path: `files/workload-results/${safeArtifactSegment(artifactName)}.json` }] : [],
+  }
+}
+
+function recipeExecutionMatchesArtifact(execution: ExecutionResult, artifact: string): boolean {
+  if ((execution.artifactRefs ?? []).some((ref) => recipeArtifactRefMatchesName(ref, artifact))) return true
+  return recipeWorkloadArtifactPayloads(execution, artifact).length > 0
+}
+
+function recipeArtifactRefMatchesName(ref: NonNullable<ExecutionResult["artifactRefs"]>[number], artifact: string): boolean {
+  const record = ref as unknown as Record<string, unknown>
+  return [record.name, record.artifact, record.artifactId, record.id, record.path].some((value) => typeof value === "string" && artifactNameMatches(value, artifact))
+}
+
+function recipeWorkloadArtifactPayloads(execution: ExecutionResult, artifact: string, expectedSchema?: string): Array<{ name: string; payload: Record<string, unknown> }> {
+  const payloads: Array<{ name: string; payload: Record<string, unknown> }> = []
+  const json = isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout)
+  for (const { profile } of recipeRestDbQueryProfilesFromJson(json)) {
+    if (artifactNameMatches(artifact, "rest-db-query-profile") && (!expectedSchema || profile.schema === expectedSchema)) {
+      payloads.push({ name: "rest-db-query-profile", payload: profile })
+    }
+  }
+  collectRecipeArtifactPayloadsFromContainer(json, artifact, expectedSchema, payloads)
+  for (const ref of execution.artifactRefs ?? []) {
+    const record = ref as unknown as Record<string, unknown>
+    const payload = isRecord(record.payload) ? record.payload : undefined
+    if (payload && recipeArtifactRefMatchesName(ref, artifact) && (!expectedSchema || payload.schema === expectedSchema)) {
+      payloads.push({ name: stringValue(record.name ?? record.artifact ?? record.artifactId ?? record.id) ?? artifact, payload })
+    }
+  }
+  return payloads
+}
+
+function collectRecipeArtifactPayloadsFromContainer(container: Record<string, unknown> | undefined, artifact: string, expectedSchema: string | undefined, out: Array<{ name: string; payload: Record<string, unknown> }>): void {
+  if (!container) return
+  const artifacts = isRecord(container.artifacts) ? container.artifacts : undefined
+  for (const [name, value] of Object.entries(artifacts ?? {})) {
+    if (!artifactNameMatches(name, artifact)) continue
+    const payload = isRecord(value) ? value : undefined
+    if (payload && (!expectedSchema || payload.schema === expectedSchema)) out.push({ name, payload })
+  }
+  for (const nestedStep of Array.isArray(container.steps) ? container.steps : []) {
+    if (isRecord(nestedStep)) collectRecipeArtifactPayloadsFromContainer(nestedStep, artifact, expectedSchema, out)
+  }
+}
+
+function recipeRestDbQueryProfilesFromJson(json: Record<string, unknown> | undefined): Array<{ profile: Record<string, unknown> }> {
+  const profiles: Array<{ profile: Record<string, unknown> }> = []
+  if (!json) return profiles
+  if (json.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile: json })
+  for (const step of Array.isArray(json.steps) ? json.steps : []) {
+    const stepRecord = isRecord(step) ? step : undefined
+    const artifacts = isRecord(stepRecord?.artifacts) ? stepRecord.artifacts : undefined
+    const profile = isRecord(artifacts?.["rest-db-query-profile"]) ? artifacts["rest-db-query-profile"] : undefined
+    if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile })
+  }
+  if (json.schema === "wp-codebox/recipe-run/v1") {
+    profiles.push(...recipeRestDbQueryProfilesFromJson(isRecord(json.benchResults) ? json.benchResults : undefined))
+  }
+  return profiles
+}
+
+function recipeWorkloadExecutionArtifacts(executions: ExecutionResult[]): Record<string, Record<string, unknown>> {
+  const artifacts: Record<string, Record<string, unknown>> = {}
+  let restDbQueryProfileIndex = 0
+  const seen = new Set<string>()
+  for (const execution of executions) {
+    const json = isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout)
+    for (const { profile } of recipeRestDbQueryProfilesFromJson(json)) {
+      const fingerprint = JSON.stringify(profile)
+      if (seen.has(fingerprint)) continue
+      seen.add(fingerprint)
+      const name = restDbQueryProfileIndex === 0 ? "rest-db-query-profile" : `rest-db-query-profile-${restDbQueryProfileIndex + 1}`
+      artifacts[name] = profile
+      restDbQueryProfileIndex += 1
+    }
+  }
+  return artifacts
+}
+
+function recipeWorkloadResultArtifactRefs(execution: ExecutionResult): NonNullable<ExecutionResult["artifactRefs"]> {
+  const json = isRecord(execution.result?.json) ? execution.result.json : parseJsonObject(execution.stdout)
+  if (!json) return []
+  return Object.entries(isRecord(json.artifacts) ? json.artifacts : {})
+    .filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]))
+    .map(([name, payload]) => ({ id: name, artifactId: name, kind: name, path: `files/workload-results/${safeArtifactSegment(name)}.json`, payload }))
+}
+
+function dedupeRecipeArtifactPayloads(payloads: Array<{ name: string; payload: Record<string, unknown> }>): Array<{ name: string; payload: Record<string, unknown> }> {
+  const seen = new Set<string>()
+  const out: Array<{ name: string; payload: Record<string, unknown> }> = []
+  for (const payload of payloads) {
+    const key = `${payload.name}:${JSON.stringify(payload.payload)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(payload)
+  }
+  return out
+}
+
+function commandArgs(args: string[]): Record<string, string> {
+  return Object.fromEntries(args.map((arg) => {
+    const index = arg.indexOf("=")
+    return index === -1 ? [arg, ""] : [arg.slice(0, index), arg.slice(index + 1)]
+  }))
+}
+
+function artifactNameMatches(candidate: string, artifact: string): boolean {
+  const normalizedCandidate = candidate.toLowerCase().replace(/[_-]/g, "")
+  const normalizedArtifact = artifact.toLowerCase().replace(/[_-]/g, "")
+  return candidate === artifact || candidate.replace(/_/g, "-") === artifact.replace(/_/g, "-") || normalizedCandidate.includes(normalizedArtifact)
+}
+
+function safeArtifactSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "artifact"
 }
 
 async function executeRunFuzzSuiteRecipeCommand(runtime: Runtime, args: string[], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<ExecutionResult> {
