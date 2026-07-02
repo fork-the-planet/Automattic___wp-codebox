@@ -858,7 +858,8 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
         const observation = performanceObservationFromExecution({ command: execution.command, args: execution.args }, execution)
         return observation ? [observation] : []
       })
-      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, phases: steps.slice(0, executions.length).map((step, index) => stripUndefined({ index, phase: step.phase, command: step.command })), exitCode: failed ? failed.exitCode : 0, observations: observations.length > 0 ? observations : undefined }
+      const artifacts = workloadExecutionArtifacts(executions)
+      const workloadResult = { schema: "wp-codebox/wordpress-workload-run-result/v1", caseId: fuzzCase.id, steps: executions.length, phases: steps.slice(0, executions.length).map((step, index) => stripUndefined({ index, phase: step.phase, command: step.command })), exitCode: failed ? failed.exitCode : 0, observations: observations.length > 0 ? observations : undefined, artifacts: Object.keys(artifacts).length > 0 ? artifacts : undefined }
       return {
         id: `wordpress-run-workload-${fuzzCase.id}`,
         command: "wordpress.run-workload",
@@ -873,6 +874,24 @@ export function createWordPressFuzzSuiteRuntimeWorkloadExecutor(episode: Pick<Ru
       }
     },
   }
+}
+
+function workloadExecutionArtifacts(executions: ExecutionResult[]): Record<string, Record<string, unknown>> {
+  const artifacts: Record<string, Record<string, unknown>> = {}
+  let restDbQueryProfileIndex = 0
+  const seen = new Set<string>()
+  for (const execution of executions) {
+    const json = recordValue(execution.result?.json) ?? parseJsonRecord(execution.stdout)
+    for (const { profile } of restDbQueryProfilesFromJson(json)) {
+      const fingerprint = JSON.stringify(profile)
+      if (seen.has(fingerprint)) continue
+      seen.add(fingerprint)
+      const name = restDbQueryProfileIndex === 0 ? "rest-db-query-profile" : `rest-db-query-profile-${restDbQueryProfileIndex + 1}`
+      artifacts[name] = profile
+      restDbQueryProfileIndex += 1
+    }
+  }
+  return artifacts
 }
 
 function collectWorkloadResultExecution(step: { command: string; args?: string[] }, priorExecutions: ExecutionResult[], startedAt: string): ExecutionResult {
@@ -1148,14 +1167,16 @@ async function resultWithWordPressHotspotsArtifact(result: FuzzSuiteResultEnvelo
   const observationContent = `${JSON.stringify(observationSet, null, 2)}\n`
   const hotspotContent = `${JSON.stringify(hotspotSet, null, 2)}\n`
   const queryObservations = queryObservationArtifactsFromFuzzResult(result)
+  const restDbQueryProfiles = restDbQueryProfileArtifactsFromFuzzResult(result)
   const durableBundle = options.artifactStorage
-    ? await writeFuzzArtifactBundle({ result, artifact, observationSet, hotspotSet, queryObservations, content, observationContent, hotspotContent, artifactStorage: options.artifactStorage })
+    ? await writeFuzzArtifactBundle({ result, artifact, observationSet, hotspotSet, queryObservations, restDbQueryProfiles, content, observationContent, hotspotContent, artifactStorage: options.artifactStorage })
     : undefined
   const artifactMetadata = {
     wordpressHotspots: durableBundle?.wordpressHotspots ?? inlineArtifactMetadata("wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, content),
     fuzzObservationSet: durableBundle?.fuzzObservationSet ?? inlineArtifactMetadata("fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", observationContent),
     fuzzHotspotSet: durableBundle?.fuzzHotspotSet ?? inlineArtifactMetadata("fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", hotspotContent),
     queryObservations: durableBundle?.queryObservations ?? inlineQueryObservationMetadata(queryObservations),
+    restDbQueryProfiles: durableBundle?.restDbQueryProfiles ?? inlineRestDbQueryProfileMetadata(restDbQueryProfiles),
     fuzzBundle: durableBundle?.contract,
   }
   const artifactRefs = dedupeFuzzSuiteArtifactRefs([...(result.artifactRefs ?? []), ...(durableBundle?.artifactRefs ?? [])])
@@ -1185,6 +1206,7 @@ async function writeFuzzArtifactBundle(input: {
   observationSet: unknown
   hotspotSet: unknown
   queryObservations: QueryObservationArtifact[]
+  restDbQueryProfiles: RestDbQueryProfileArtifact[]
   content: string
   observationContent: string
   hotspotContent: string
@@ -1203,6 +1225,7 @@ async function writeFuzzArtifactBundle(input: {
   const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
   const replayCaseRefs: FuzzReplayCaseRef[] = []
   const queryObservationArtifacts: Array<ReturnType<typeof queryObservationArtifactMetadata>> = []
+  const restDbQueryProfileArtifacts: Array<ReturnType<typeof restDbQueryProfileArtifactMetadata>> = []
 
   artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
 
@@ -1212,6 +1235,18 @@ async function writeFuzzArtifactBundle(input: {
     const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, "query-observation", QUERY_OBSERVATION_SCHEMA, content, observation)
     artifactRefs.push(written.ref)
     queryObservationArtifacts.push(queryObservationArtifactMetadata(observation, written.ref))
+  }
+
+  for (const [index, profile] of input.restDbQueryProfiles.entries()) {
+    const path = `files/workload-results/${safeArtifactSegment(profile.caseId ?? "case")}-rest-db-query-profile-${index + 1}.json`
+    const content = `${JSON.stringify(profile.payload, null, 2)}\n`
+    const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, path, "rest-db-query-profile", "wp-codebox/wordpress-rest-db-query-profile/v1", content, profile.payload)
+    artifactRefs.push(written.ref)
+    restDbQueryProfileArtifacts.push(restDbQueryProfileArtifactMetadata(profile, written.ref))
+    const fuzzCase = input.result.cases.find((candidate) => candidate.id === profile.caseId)
+    if (fuzzCase) {
+      fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs([...(fuzzCase.artifactRefs ?? []), written.ref])
+    }
   }
 
   for (const fuzzCase of input.result.cases) {
@@ -1288,6 +1323,13 @@ async function writeFuzzArtifactBundle(input: {
       metadata: { schema: QUERY_OBSERVATION_SCHEMA, source: "executeWordPressFuzzSuite", storage: "runtime-artifact-layout" },
       observations: queryObservationArtifacts,
     },
+    restDbQueryProfiles: {
+      kind: "rest-db-query-profile-set",
+      persisted: true,
+      count: restDbQueryProfileArtifacts.length,
+      metadata: { schema: "wp-codebox/wordpress-rest-db-query-profile/v1", source: "executeWordPressFuzzSuite", storage: "runtime-artifact-layout" },
+      profiles: restDbQueryProfileArtifacts,
+    },
     writeResult: async (content: string) => {
       const written = await writeFuzzJsonArtifact(writer, storage, bundlePath, resultPath, "fuzz-suite-result", input.result.schema, content, undefined)
       contract.resultRef = written.ref
@@ -1295,6 +1337,12 @@ async function writeFuzzArtifactBundle(input: {
       return written.metadata
     },
   }
+}
+
+interface RestDbQueryProfileArtifact {
+  caseId?: string
+  sourceId?: string
+  payload: Record<string, unknown>
 }
 
 async function writeFuzzJsonArtifact(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, path: string, kind: string, schema: string, content: string, value?: unknown, contentType = "application/json") {
@@ -1330,6 +1378,14 @@ function queryObservationArtifactsFromFuzzResult(result: FuzzSuiteResultEnvelope
     const target = fuzzCase.target?.id ?? fuzzCase.target?.entrypoint ?? stringValue(json?.path ?? json?.route ?? json?.url)
     const direct = queryObservationFromDatabaseRecord({ result, fuzzCase, command, target, database: recordValue(recordValue(json?.performance)?.database) ?? recordValue(json?.database) ?? recordValue(json?.metrics), source: "fuzz-case-execution" })
     return [direct, ...queryObservationsFromRestDbProfiles({ result, fuzzCase, command, target, json }), ...queryObservationsFromPerformanceObservations({ result, fuzzCase, json })].filter((item): item is QueryObservationArtifact => Boolean(item))
+  })
+}
+
+function restDbQueryProfileArtifactsFromFuzzResult(result: FuzzSuiteResultEnvelope): RestDbQueryProfileArtifact[] {
+  return result.cases.flatMap((fuzzCase) => {
+    const execution = recordValue(fuzzCase.metadata?.execution)
+    const json = recordValue(recordValue(execution?.result)?.json)
+    return restDbQueryProfilesFromJson(json).map(({ profile, sourceId }) => ({ caseId: fuzzCase.id, sourceId, payload: profile }))
   })
 }
 
@@ -1388,6 +1444,8 @@ function queryObservationsFromRestDbProfiles(input: { result: FuzzSuiteResultEnv
 
 function restDbQueryProfilesFromJson(json: Record<string, unknown> | undefined): Array<{ profile: Record<string, unknown>; sourceId?: string }> {
   const profiles: Array<{ profile: Record<string, unknown>; sourceId?: string }> = []
+  const directProfile = recordValue(recordValue(json?.artifacts)?.["rest-db-query-profile"])
+  if (directProfile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile: directProfile, sourceId: "rest-db-query-profile" })
   if (json?.schema === "wp-codebox/bench-results/v1") {
     for (const scenario of arrayValue(json.scenarios)) {
       const scenarioRecord = recordValue(scenario)
@@ -1498,6 +1556,20 @@ function inlineQueryObservationMetadata(observations: QueryObservationArtifact[]
     count: observations.length,
     metadata: { schema: QUERY_OBSERVATION_SCHEMA, source: "executeWordPressFuzzSuite", storage: "inline-metadata" },
     observations: observations.map((observation) => stripUndefined({ caseId: observation.caseId, actionId: observation.actionId, command: observation.command, target: observation.target, queryCount: observation.queryCount, totalTimeMs: observation.totalTimeMs })),
+  }
+}
+
+function restDbQueryProfileArtifactMetadata(profile: RestDbQueryProfileArtifact, ref: FuzzSuiteArtifactRef): Record<string, unknown> {
+  return stripUndefined({ caseId: profile.caseId, sourceId: profile.sourceId, ref })
+}
+
+function inlineRestDbQueryProfileMetadata(profiles: RestDbQueryProfileArtifact[]): Record<string, unknown> {
+  return {
+    kind: "rest-db-query-profile-set",
+    persisted: false,
+    count: profiles.length,
+    metadata: { schema: "wp-codebox/wordpress-rest-db-query-profile/v1", source: "executeWordPressFuzzSuite", storage: "inline-metadata" },
+    profiles: profiles.map((profile) => stripUndefined({ caseId: profile.caseId, sourceId: profile.sourceId })),
   }
 }
 

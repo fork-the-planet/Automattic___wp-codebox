@@ -193,13 +193,18 @@ try {
   const durableResult = await executeWordPressFuzzSuite(episode, fuzzSuiteContract({
     id: "runtime-backed-durable-suite",
     metadata: { disposableSandboxBoundary: { disposable: true, destructivePermission: true, teardown: "discard", hostAccess: "declared-mounts-only" } },
-    cases: [{ id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } }, { id: "durable-delete", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" }, mutation: { intent: "delete", destructive: true } }],
+    cases: [
+      { id: "durable-rest", target: { kind: "rest", id: "/wp/v2/types" }, input: { method: "GET" } },
+      { id: "durable-delete", target: { kind: "runtime-action" }, input: { type: "rest_request", method: "DELETE", path: "/wp/v2/posts/123" }, mutation: { intent: "delete", destructive: true } },
+      { id: "durable-profile-collection", target: { kind: "runtime", id: "wordpress.run-workload", entrypoint: "wordpress.run-workload" }, input: { schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=rest_db_query_profile"] }] } },
+    ],
   }), { artifactStorage: { root: artifactRoot }, requireCoverage: true })
   const durableArtifacts = durableResult.metadata?.artifacts as {
     fuzzBundle?: { schema?: string; resultRef?: { path?: string }; caseResultStreamRef?: { path?: string }; replayCaseRefs?: Array<{ caseId?: string; path?: string }>; hotspotRefs?: Array<{ path?: string }>; artifactRefs?: Array<{ path?: string; kind?: string }>; minimize?: { status?: string; inputKind?: string; operation?: string; reason?: string; metadata?: Record<string, unknown> } }
     fuzzResult?: { persisted?: boolean; path?: string }
     wordpressHotspots?: { persisted?: boolean; path?: string }
     queryObservations?: { persisted?: boolean; count?: number; observations?: Array<{ ref?: { path?: string }; caseId?: string; queryCount?: number }> }
+    restDbQueryProfiles?: { persisted?: boolean; count?: number; profiles?: Array<{ ref?: { path?: string; kind?: string }; caseId?: string }> }
   } | undefined
   assert.equal(durableArtifacts?.fuzzBundle?.schema, "wp-codebox/fuzz-artifact-bundle/v1")
   assert.equal(durableArtifacts?.fuzzBundle?.minimize?.status, "supported")
@@ -209,7 +214,10 @@ try {
   assert.equal(durableArtifacts?.fuzzResult?.persisted, true)
   assert.equal(durableArtifacts?.wordpressHotspots?.persisted, true)
   assert.equal(durableArtifacts?.queryObservations?.persisted, true)
-  assert.equal(durableArtifacts?.queryObservations?.count, 1)
+  assert.equal((durableArtifacts?.queryObservations?.count ?? 0) >= 2, true)
+  assert.equal(durableArtifacts?.restDbQueryProfiles?.persisted, true)
+  assert.equal(durableArtifacts?.restDbQueryProfiles?.count, 1)
+  assert.equal(durableArtifacts?.restDbQueryProfiles?.profiles?.[0]?.ref?.kind, "rest-db-query-profile")
   assert.equal(durableArtifacts?.fuzzBundle?.replayCaseRefs?.[0]?.caseId, "durable-rest")
 
   const resultArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.fuzzBundle?.resultRef?.path ?? ""), "utf8"))
@@ -220,6 +228,7 @@ try {
   assert.ok(durableWriteSetPath)
   const durableWriteSet = JSON.parse(await readFile(join(artifactRoot, durableWriteSetPath), "utf8"))
   const queryObservationArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.queryObservations?.observations?.[0]?.ref?.path ?? ""), "utf8"))
+  const restDbQueryProfileArtifact = JSON.parse(await readFile(join(artifactRoot, durableArtifacts?.restDbQueryProfiles?.profiles?.[0]?.ref?.path ?? ""), "utf8"))
   assert.equal(resultArtifact.schema, "wp-codebox/fuzz-suite-result/v1")
   assert.equal(replayArtifact.schema, "wp-codebox/fuzz-replay-case-input/v1")
   assert.equal(replayArtifact.case.id, "durable-rest")
@@ -232,6 +241,10 @@ try {
   assert.equal(queryObservationArtifact.queryCount, 3)
   assert.equal(queryObservationArtifact.duplicateGroups[0]?.count, 2)
   assert.equal(queryObservationArtifact.tables.some((table: { name?: string }) => table.name === "wp_posts"), true)
+  assert.equal(restDbQueryProfileArtifact.schema, "wp-codebox/wordpress-rest-db-query-profile/v1")
+  assert.equal(restDbQueryProfileArtifact.cases[0].case_id, "products")
+  assert.equal(durableResult.cases[2]?.artifactRefs?.some((ref) => ref.kind === "rest-db-query-profile"), true)
+  assert.equal(resultArtifact.artifactRefs.some((ref: { kind?: string }) => ref.kind === "rest-db-query-profile"), true)
 } finally {
   await rm(artifactRoot, { recursive: true, force: true })
 }
