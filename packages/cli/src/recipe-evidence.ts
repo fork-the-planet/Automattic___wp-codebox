@@ -1131,18 +1131,18 @@ export function recipeAgentResultFailure(agentResult: RecipeArtifactEvidenceResu
  * change until its verification gates are green.
  */
 export function recipeVerifyStepFailure(
-  executions: ReadonlyArray<{ exitCode: number; recipePhase?: string; recipeCommand?: string; command?: string }>,
+  executions: ReadonlyArray<{ exitCode: number; recipePhase?: string; recipeCommand?: string; command?: string; recipeAdvisory?: boolean }>,
 ): { name: string; code: string; message: string } | undefined {
-  const failed = executions.find((execution) => execution.recipePhase === "after" && execution.exitCode !== 0)
+  const failed = executions.find((execution) => execution.exitCode !== 0 && execution.recipeAdvisory !== true)
   if (!failed) {
     return undefined
   }
 
-  const stepName = failed.recipeCommand || failed.command || "verify"
+  const stepName = failed.recipeCommand || failed.command || "recipe"
   return {
     name: "RecipeVerifyError",
     code: "verify-step-failed",
-    message: `Verification step ${stepName} failed with exit code ${failed.exitCode}.`,
+    message: `Recipe step ${stepName} failed with exit code ${failed.exitCode}.`,
   }
 }
 
