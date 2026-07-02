@@ -922,6 +922,7 @@ export interface ArtifactProvenance {
 export interface ArtifactPackageProvenance {
   schema: "wp-codebox/package-provenance/v1"
   wpCodebox?: ArtifactPackageIdentity
+  cli?: ArtifactPackageIdentity
   runtimeCore?: ArtifactPackageIdentity
   runtimePlayground?: ArtifactPackageIdentity
   playground?: {
