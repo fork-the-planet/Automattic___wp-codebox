@@ -228,7 +228,7 @@ executed.length = 0
 const directDbInventoryCollectWorkload: WorkspaceRecipe = {
   schema: "wp-codebox/workspace-recipe/v1",
   workflow: {
-    steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({ schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "db-inventory", "include-columns": true, "include-indexes": true }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=db_inventory"] }] })}`] }],
+    steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({ schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "db-inventory", "include-columns": true, "include-indexes": true }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=options_transients_coverage"] }], metadata: { source_entry: "options-transients-coverage", workload: "db-inventory" } })}`] }],
   },
 }
 assertWorkspaceRecipeJsonSchema(directDbInventoryCollectWorkload, { recipeCommandIds: ["wordpress.run-workload", "wordpress.bench", "wordpress.collect-workload-result"] })
@@ -239,6 +239,7 @@ assert.equal(directDbInventoryCollectResult.schema, "wp-codebox/wordpress-worklo
 assert.equal(directDbInventoryCollectResult.steps, 2)
 assert.equal(directDbInventoryCollectResult.artifacts["db-inventory"].schema, "wp-codebox/wordpress-db-inventory/v1")
 assert.equal(directDbInventoryCollectResult.artifacts["db-inventory"].inventory.totals.tableCount, 12)
+assert.equal(directDbInventoryCollectResult.artifacts["options-transients-coverage"].schema, "wp-codebox/wordpress-db-inventory/v1")
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
 
 executed.length = 0
