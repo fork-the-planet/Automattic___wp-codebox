@@ -48,6 +48,23 @@ const runtime = {
         result: { schema: "wp-codebox/runtime-command-result/v1", status: "ok", json: payload },
       }
     }
+    if (spec.command === "wordpress.bench" && (spec.args ?? []).some((arg) => arg.includes("rest-db-query-profiler"))) {
+      const payload = {
+        schema: "wp-codebox/bench-results/v1",
+        scenarios: [{ id: "recipe-profile", artifacts: { "rest-db-query-profile": { schema: "wp-codebox/wordpress-rest-db-query-profile/v1", summary: { case_count: 1, query_count: 7 } } } }],
+      }
+      return {
+        id: `exec-${executed.length}`,
+        command: spec.command,
+        args: spec.args ?? [],
+        exitCode: 0,
+        stdout: `${JSON.stringify(payload)}\n`,
+        stderr: "",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:01.000Z",
+        result: { schema: "wp-codebox/runtime-command-result/v1", status: "ok", json: payload },
+      }
+    }
     return {
       id: `exec-${executed.length}`,
       command: spec.command,
@@ -172,6 +189,23 @@ assert.equal(directJsonCollectResult.schema, "wp-codebox/wordpress-workload-run-
 assert.equal(directJsonCollectResult.steps, 2)
 assert.equal(directJsonCollectResult.artifacts["rest-db-query-profile"].schema, "wp-codebox/wordpress-rest-db-query-profile/v1")
 assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.run-php"])
+
+executed.length = 0
+const directTypedJsonCollectWorkload: WorkspaceRecipe = {
+  schema: "wp-codebox/workspace-recipe/v1",
+  workflow: {
+    steps: [{ command: "wordpress.run-workload", args: [`workload-json=${JSON.stringify({ schema: "wp-codebox/wordpress-workload-run/v1", steps: [{ type: "rest-db-query-profiler", rest_request_cases: [{ id: "products", method: "GET", path: "/wc/store/v1/products" }] }], after: [{ command: "wordpress.collect-workload-result", args: ["artifact=rest_db_query_profile"] }] })}`] }],
+  },
+}
+assertWorkspaceRecipeJsonSchema(directTypedJsonCollectWorkload, { recipeCommandIds: ["wordpress.run-workload", "wordpress.bench", "wordpress.collect-workload-result"] })
+const directTypedJsonCollectExecution = await executeRecipeWorkflowStep(runtime, { phase: "steps", index: 0, step: directTypedJsonCollectWorkload.workflow.steps[0]! }, process.cwd())
+const directTypedJsonCollectResult = JSON.parse(directTypedJsonCollectExecution.stdout)
+assert.equal(directTypedJsonCollectExecution.exitCode, 0)
+assert.equal(directTypedJsonCollectResult.schema, "wp-codebox/wordpress-workload-run-result/v1")
+assert.equal(directTypedJsonCollectResult.steps, 2)
+assert.equal(directTypedJsonCollectResult.artifacts["rest-db-query-profile"].schema, "wp-codebox/wordpress-rest-db-query-profile/v1")
+assert.equal(directTypedJsonCollectResult.artifacts["rest-db-query-profile"].summary.query_count, 7)
+assert.deepEqual(executed.map((spec) => spec.command), ["wordpress.bench"])
 
 executed.length = 0
 const nestedJsonWorkloadSuite = fuzzSuiteContract({

@@ -304,6 +304,14 @@ function recipeRestDbQueryProfilesFromJson(json: Record<string, unknown> | undef
   const profiles: Array<{ profile: Record<string, unknown> }> = []
   if (!json) return profiles
   if (json.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile: json })
+  if (json.schema === "wp-codebox/bench-results/v1") {
+    for (const scenario of Array.isArray(json.scenarios) ? json.scenarios : []) {
+      const scenarioRecord = isRecord(scenario) ? scenario : undefined
+      const artifacts = isRecord(scenarioRecord?.artifacts) ? scenarioRecord.artifacts : undefined
+      const profile = isRecord(artifacts?.["rest-db-query-profile"]) ? artifacts["rest-db-query-profile"] : undefined
+      if (profile?.schema === "wp-codebox/wordpress-rest-db-query-profile/v1") profiles.push({ profile })
+    }
+  }
   for (const step of Array.isArray(json.steps) ? json.steps : []) {
     const stepRecord = isRecord(step) ? step : undefined
     const artifacts = isRecord(stepRecord?.artifacts) ? stepRecord.artifacts : undefined
