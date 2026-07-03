@@ -18,6 +18,7 @@ export interface RecipeRunSummary {
   commands: RecipeRunCommandSummary[]
   runtime_access?: RuntimeAccess
   preview?: RecipeRunPreviewSummary
+  provenance?: Record<string, unknown>
   refs: {
     startup_logs: AgentTaskRunArtifactRef[]
     probe_json: AgentTaskRunArtifactRef[]
@@ -97,6 +98,7 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
     commands,
     runtime_access: runtimeAccess,
     preview,
+    provenance: objectOrUndefined(result.provenance),
     metadata: stripUndefined({
       run_id: stringValue(objectValue(result.run).runId) || stringValue(objectValue(result.run_metadata).run_id) || stringValue(agentTask.metadata.run_id),
       run_status: stringValue(objectValue(result.run).status) || stringValue(objectValue(result.run_metadata).run_status) || stringValue(agentTask.metadata.run_status),
@@ -106,8 +108,14 @@ export function normalizeRecipeRunSummary(raw: unknown, options: RecipeRunSummar
       failure_phase: failedPhase,
       artifact_directory: stringValue(objectValue(result.artifacts).directory) || stringValue(result.artifacts),
       recipe_path: stringValue(result.recipePath),
+      package_provenance: objectOrUndefined(objectValue(result.provenance).packages),
     }),
   }) as RecipeRunSummary
+}
+
+function objectOrUndefined(value: unknown): Record<string, unknown> | undefined {
+  const object = objectValue(value)
+  return Object.keys(object).length > 0 ? object : undefined
 }
 
 function recipeRunStatus(result: Record<string, unknown>, success: boolean): RecipeRunSummaryStatus {

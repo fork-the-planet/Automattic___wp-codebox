@@ -1,4 +1,4 @@
-import type { AgentTerminalResult, ArtifactBundle, BenchResults, ExecutionResult, PreviewLease, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import type { AgentTerminalResult, ArtifactBundle, ArtifactPackageProvenance, BenchResults, ExecutionResult, PreviewLease, RecipeRunSummary, RuntimeInfo, RuntimeRunRecord, TypedArtifactRef, WorkspaceRecipe, WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import type { RecipeDryRunOutput, RecipeDryRunSiteSeed, RecipeDryRunStagedFile } from "../recipe-dry-run.js"
 import type { AgentSandboxResultSummary, AgentTaskSingleResult, RecipeReplayStatusSummary, SandboxCompletionOutcome } from "../recipe-evidence.js"
 import type { RecipeExternalServiceBoundaryHostCorrelation } from "../recipe-external-services.js"
@@ -75,12 +75,24 @@ export interface RecipeRunOutput {
   completionOutcome?: SandboxCompletionOutcome
   replayStatus?: RecipeReplayStatusSummary
   fuzzRun?: RecipeFuzzRunResult
+  provenance?: RecipeRunProvenance
   result?: RecipeRunSummary
   artifacts?: ArtifactBundle
   run?: RuntimeRunRecord
   interruption?: RecipeInterruptionMetadata
   logs?: string[]
   error?: RunOutput["error"]
+}
+
+export interface RecipeRunProvenance {
+  schema: "wp-codebox/recipe-run-provenance/v1"
+  packages: ArtifactPackageProvenance
+  recipe?: {
+    path?: string
+    sha256?: string
+    effectiveSha256?: string
+    effectiveRecipeRef?: RecipeDiagnosticArtifactRef
+  }
 }
 
 export type RecipeRunCommandOutput = RecipeRunOutput | RecipeDryRunOutput
@@ -105,13 +117,19 @@ export type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
   recipeCommand?: string
-  recipeOriginalArgs?: string[]
-  recipeResolvedArgs?: string[]
+  recipeArgs?: RecipeWorkflowArgsEvidence
   recipeAdvisory?: boolean
   fuzzCaseId?: string
   fuzzCaseIndex?: number
   fuzzPhase?: WorkspaceRecipeFuzzCasePhase
   fuzzStepIndex?: number
+}
+
+export interface RecipeWorkflowArgsEvidence {
+  schema: "wp-codebox/recipe-workflow-args/v1"
+  original: string[]
+  effective: string[]
+  rewritten: boolean
 }
 
 export type RecipeFuzzCaseStatus = "passed" | "failed" | "skipped"
@@ -221,6 +239,14 @@ export interface RecipeArtifactPointerState {
   browserEvidence?: RecipeBrowserEvidence[]
   diagnosticArtifacts?: RecipeDiagnosticArtifactRef[]
   result?: RecipeRunSummary
+}
+
+export interface RecipeEffectiveRecipeArtifact {
+  schema: "wp-codebox/recipe-run-effective-recipe/v1"
+  createdAt: string
+  recipePath: string
+  recipe: WorkspaceRecipe
+  sha256: string
 }
 
 export interface RecipeDiagnosticArtifactRef {

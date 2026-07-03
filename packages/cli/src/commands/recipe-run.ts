@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { createRequire } from "node:module"
 import { basename, dirname, join, resolve } from "node:path"
-import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
+import { DEFAULT_WORDPRESS_VERSION, createRuntime, normalizeRecipeRunSummary, normalizeRuntimeEnvRecord, parseCommandOptions, type ArtifactBundle, type ArtifactPackageIdentity, type ArtifactPackageProvenance, type Runtime, type RuntimeAssetSpec, type RuntimePreviewSpec, type RuntimeRunRegistry, type WorkspaceRecipe, type WorkspaceRecipeComponentManifest, type WorkspaceRecipeExtraPlugin, type WorkspaceRecipeFixtureDatabase, type WorkspaceRecipeFuzzCasePhase } from "@automattic/wp-codebox-core"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { recipeExecutionSpec, sandboxWorkspaceContract } from "../agent-sandbox.js"
 import { captureStdout, printRecipeHumanOutput, printRecipeValidateHumanOutput, serializeError } from "../output.js"
@@ -26,12 +28,13 @@ import { bestEffortTimeout, exitAfterPlaygroundCliBootFailure, exitAfterRecipeRu
 import { RecipePhaseError } from "./recipe-run-phases.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
-import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile } from "./recipe-runtime-setup.js"
-import { distributionStartupProbeFailure, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
+import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
+const packageRequire = createRequire(import.meta.url)
 export async function runRecipeRunCommand(args: string[]): Promise<number> {
   const options = parseRecipeRunOptions(args)
   if (options.previewLeaseRequested && !options.previewLeaseChild) {
@@ -101,6 +104,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   const context = await createRecipeRunContext(options)
   const { recipePath, recipeDirectory, recipe, configuredArtifactsDirectory, runRegistry, artifactPointer, startedAtMs } = context
   let { runRecord } = context
+  runRecord = await runRegistry.update(runRecord.runId, { metadata: { provenance: recipeRunProvenance(recipe, recipePath) } })
   await artifactPointer.update({ commandStatus: "queued" })
   const issues = await validateWorkspaceRecipe(recipe, recipePath)
   if (issues.length > 0) {
@@ -118,6 +122,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       failure,
       componentContracts: componentContractResults(recipe, [], [], [], failure),
       validation: { issues },
+      provenance: recipeRunProvenance(recipe, recipePath),
     })
   }
 
@@ -267,7 +272,9 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       for (const workflowStep of workflowSteps) {
         const operation = `workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`
         try {
-          const execution = await awaitRecipe(operation, () => executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap))
+          const execution = await awaitRecipe(operation, async () => workflowStep.step.command === "wordpress.collect-workload-result"
+            ? withRecipeExecutionArgs(withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command), recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args))
+            : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap))
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
           interruption?.throwIfInterrupted()
         } catch (error) {
@@ -376,7 +383,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }),
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
       })
     }
 
@@ -395,7 +402,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }),
+      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
     })
   } catch (error) {
     await markPreviewLeaseFailed(options.previewLeaseFile, error)
@@ -403,6 +410,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     const failureDiagnostics = recipeFailureRuntimeEvidenceFile({
       recipe,
       recipePath,
+      inputMountPathMap,
       extraPlugins,
       dependencyOverlays,
       workspaceMounts,
@@ -443,10 +451,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           await materializeTypedRecipeDeclaredArtifacts(artifacts, declaredArtifacts)
           const evidenceFiles = await appendRecipeRuntimeEvidence(artifacts, [
             ...recipeRuntimeEvidenceFiles(fixtureDatabases, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts),
+            recipeEffectiveRecipeEvidenceFile(recipe, recipePath, inputMountPathMap),
             failureDiagnostics,
           ])
           diagnosticArtifacts = evidenceFiles
-            .filter((file) => file.kind === failureDiagnostics.kind)
+            .filter((file) => file.kind === failureDiagnostics.kind || file.kind === "recipe-run-effective-recipe")
             .map((file) => ({ path: join(basename(collectedArtifacts.directory), file.path), kind: file.kind, contentType: file.contentType, sha256: file.sha256 }))
         } catch {
           // Preserve the original recipe failure; failure recovery already kept the base artifact bundle.
@@ -468,8 +477,10 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     }
 
     if (diagnosticArtifacts.length === 0) {
-      const fallbackDiagnostic = await writeRecipeFailureDiagnosticArtifact(configuredArtifactsDirectory, failureDiagnostics.value)
-      diagnosticArtifacts = fallbackDiagnostic ? [fallbackDiagnostic] : []
+      diagnosticArtifacts = await writeRecipeFailureDiagnosticArtifacts(configuredArtifactsDirectory, [
+        recipeEffectiveRecipeEvidenceFile(recipe, recipePath, inputMountPathMap),
+        failureDiagnostics,
+      ])
     }
 
     cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
@@ -508,6 +519,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
         ...(fuzzRunResult ? { fuzzRun: fuzzRunResult } : {}),
         diagnostics: recipeRuntimeDiagnostics(recipe, executions, error),
+        provenance: recipeRunProvenance(recipe, recipePath, diagnosticArtifacts),
       },
     })
   } finally {
@@ -564,6 +576,10 @@ function watchRunCancellationRequests(runRegistry: RuntimeRunRegistry, runId: st
       clearInterval(timer)
     },
   }
+}
+
+function withRecipeExecutionArgs(execution: RecipeExecutionResult, argsEvidence: RecipeExecutionResult["recipeArgs"]): RecipeExecutionResult {
+  return argsEvidence ? { ...execution, recipeArgs: argsEvidence } : execution
 }
 
 function resolveRecipeRuntimeAssets(recipe: WorkspaceRecipe, recipeDirectory: string): RuntimeAssetSpec | undefined {
@@ -783,6 +799,7 @@ async function importRecipeFixtureDatabases(recipe: WorkspaceRecipe, recipeDirec
 function recipeFailureRuntimeEvidenceFile(args: {
   recipe: WorkspaceRecipe
   recipePath: string
+  inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>
   extraPlugins: PreparedExtraPlugin[]
   dependencyOverlays: PreparedDependencyOverlay[]
   workspaceMounts: PreparedWorkspaceMount[]
@@ -804,11 +821,15 @@ function recipeFailureRuntimeEvidenceFile(args: {
     value: stripUndefined({
       schema: "wp-codebox/recipe-run-failure-diagnostics/v1",
       createdAt: new Date().toISOString(),
+      provenance: recipeRunProvenance(args.recipe, args.recipePath),
       recipe: {
         path: args.recipePath,
         schema: args.recipe.schema,
+        sourceSha256: recipeDigest(args.recipe),
+        effectiveSha256: recipeDigest(effectiveRecipeForReplay(args.recipe, args.inputMountPathMap)),
+        effectiveJson: effectiveRecipeForReplay(args.recipe, args.inputMountPathMap),
         runtime: args.recipe.runtime ?? {},
-        workflow: recipeWorkflowMetadata(args.recipe),
+        workflow: effectiveRecipeWorkflowMetadata(args.recipe, args.inputMountPathMap),
         inputs: {
           extra_plugins: args.extraPlugins.map(recipeRunExtraPlugin),
           dependency_overlays: args.dependencyOverlays.map(recipeRunDependencyOverlay),
@@ -833,22 +854,36 @@ function recipeFailureRuntimeEvidenceFile(args: {
   }
 }
 
-async function writeRecipeFailureDiagnosticArtifact(artifactsDirectory: string | undefined, value: unknown): Promise<RecipeDiagnosticArtifactRef | undefined> {
+function recipeEffectiveRecipeEvidenceFile(recipe: WorkspaceRecipe, recipePath: string, inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): { filename: string; kind: string; value: RecipeEffectiveRecipeArtifact } {
+  const effectiveRecipe = effectiveRecipeForReplay(recipe, inputMountPathMap)
+  return {
+    filename: "recipe-run-effective-recipe.json",
+    kind: "recipe-run-effective-recipe",
+    value: {
+      schema: "wp-codebox/recipe-run-effective-recipe/v1",
+      createdAt: new Date().toISOString(),
+      recipePath,
+      recipe: effectiveRecipe,
+      sha256: recipeDigest(effectiveRecipe),
+    },
+  }
+}
+
+async function writeRecipeFailureDiagnosticArtifacts(artifactsDirectory: string | undefined, files: Array<{ filename: string; kind: string; value: unknown }>): Promise<RecipeDiagnosticArtifactRef[]> {
   if (!artifactsDirectory) {
-    return undefined
+    return []
   }
 
   const directory = resolve(artifactsDirectory)
-  const path = join(directory, "recipe-run-failure-diagnostics.json")
-  const contents = `${JSON.stringify(value, null, 2)}\n`
   await mkdir(directory, { recursive: true })
-  await writeFile(path, contents)
-  return {
-    path: "recipe-run-failure-diagnostics.json",
-    kind: "recipe-run-failure-diagnostics",
-    contentType: "application/json",
-    sha256: createHash("sha256").update(contents).digest("hex"),
+  const refs: RecipeDiagnosticArtifactRef[] = []
+  for (const file of files) {
+    const path = join(directory, file.filename)
+    const contents = `${JSON.stringify(file.value, null, 2)}\n`
+    await writeFile(path, contents)
+    refs.push({ path: file.filename, kind: file.kind, contentType: "application/json", sha256: createHash("sha256").update(contents).digest("hex") })
   }
+  return refs
 }
 
 function parseFixtureDatabaseImportResult(stdout: string): { counts: Record<string, number> } {
@@ -1153,6 +1188,115 @@ function recipeWorkflowMetadata(recipe: WorkspaceRecipe): { before?: Array<{ com
     steps: recipe.workflow.steps.map(recipeStepMetadata),
     ...(recipe.workflow.after ? { after: recipe.workflow.after.map(recipeStepMetadata) } : {}),
   }
+}
+
+function effectiveRecipeWorkflowMetadata(recipe: WorkspaceRecipe, inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): { before?: Array<Record<string, unknown>>; steps: Array<Record<string, unknown>>; after?: Array<Record<string, unknown>> } {
+  return {
+    ...(recipe.workflow.before ? { before: recipe.workflow.before.map((step) => effectiveRecipeStepMetadata(step, inputMountPathMap)) } : {}),
+    steps: recipe.workflow.steps.map((step) => effectiveRecipeStepMetadata(step, inputMountPathMap)),
+    ...(recipe.workflow.after ? { after: recipe.workflow.after.map((step) => effectiveRecipeStepMetadata(step, inputMountPathMap)) } : {}),
+  }
+}
+
+function effectiveRecipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number], inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): Record<string, unknown> {
+  const original = step.args ?? []
+  const effective = rewriteInputMountPathArgsForEvidence(original, inputMountPathMap)
+  return stripUndefined({ command: step.command, args: effective, originalArgs: original, effectiveArgs: effective, argsRewritten: JSON.stringify(original) !== JSON.stringify(effective) })
+}
+
+function effectiveRecipeForReplay(recipe: WorkspaceRecipe, inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): WorkspaceRecipe {
+  return {
+    ...recipe,
+    workflow: stripUndefined({
+      ...recipe.workflow,
+      ...(recipe.workflow.before ? { before: recipe.workflow.before.map((step) => effectiveRecipeStepForReplay(step, inputMountPathMap)) } : {}),
+      steps: recipe.workflow.steps.map((step) => effectiveRecipeStepForReplay(step, inputMountPathMap)),
+      ...(recipe.workflow.after ? { after: recipe.workflow.after.map((step) => effectiveRecipeStepForReplay(step, inputMountPathMap)) } : {}),
+    }) as WorkspaceRecipe["workflow"],
+  }
+}
+
+function effectiveRecipeStepForReplay(step: WorkspaceRecipe["workflow"]["steps"][number], inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): WorkspaceRecipe["workflow"]["steps"][number] {
+  return { ...step, args: rewriteInputMountPathArgsForEvidence(step.args ?? [], inputMountPathMap) }
+}
+
+function rewriteInputMountPathArgsForEvidence(args: readonly string[], inputMountPathMap: NonNullable<Awaited<ReturnType<typeof prepareRecipeRuntimeSetup>>["inputMountPathMap"]>): string[] {
+  return rewriteInputMountPathArgs([...args], inputMountPathMap)
+}
+
+function recipeDigest(recipe: WorkspaceRecipe): string {
+  return createHash("sha256").update(`${JSON.stringify(recipe, null, 2)}\n`).digest("hex")
+}
+
+function recipeRunProvenance(recipe: WorkspaceRecipe, recipePath: string, diagnosticArtifacts: RecipeDiagnosticArtifactRef[] = []): RecipeRunProvenance {
+  const effectiveRecipeRef = diagnosticArtifacts.find((artifact) => artifact.kind === "recipe-run-effective-recipe")
+  return stripUndefined({
+    schema: "wp-codebox/recipe-run-provenance/v1",
+    packages: packageProvenance(recipe),
+    recipe: stripUndefined({
+      path: recipePath,
+      sha256: recipeDigest(recipe),
+      effectiveSha256: effectiveRecipeRef?.sha256,
+      effectiveRecipeRef,
+    }),
+  }) as RecipeRunProvenance
+}
+
+function packageProvenance(recipe: WorkspaceRecipe): ArtifactPackageProvenance {
+  const rootPackage = readPackageIdentity("../../../../package.json", "wp-codebox")
+  const cliPackage = readPackageIdentity("../../package.json", "@automattic/wp-codebox-cli")
+  const corePackage = readPackageIdentity("../../../runtime-core/package.json", "@automattic/wp-codebox-core")
+  const playgroundPackage = readPackageIdentity("../../../runtime-playground/package.json", "@automattic/wp-codebox-playground")
+  const playgroundCliVersion = packageDependencyVersion(playgroundPackage.manifest, "@wp-playground/cli")
+  const wordpressBuildsVersion = packageDependencyVersion(playgroundPackage.manifest, "@wp-playground/wordpress-builds")
+
+  return stripUndefined({
+    schema: "wp-codebox/package-provenance/v1",
+    wpCodebox: rootPackage.identity,
+    runtimeCore: corePackage.identity,
+    runtimePlayground: playgroundPackage.identity,
+    cli: cliPackage.identity,
+    playground: stripUndefined({
+      cli: playgroundCliVersion ? { name: "@wp-playground/cli", version: playgroundCliVersion } : undefined,
+      wordpressBuilds: wordpressBuildsVersion ? { name: "@wp-playground/wordpress-builds", version: wordpressBuildsVersion } : undefined,
+    }),
+    environment: stripUndefined({
+      wordpressVersion: recipe.runtime?.wp,
+      phpVersion: recipe.runtime?.phpVersion,
+      nodeVersion: process.versions.node,
+    }),
+  }) as ArtifactPackageProvenance
+}
+
+function readPackageIdentity(packagePath: string, fallbackName: string): { identity: ArtifactPackageIdentity; manifest: Record<string, unknown> } {
+  try {
+    const contents = readPackageContents(packagePath)
+    const manifest = JSON.parse(contents) as Record<string, unknown>
+    return {
+      identity: stripUndefined({
+        name: stringValue(manifest.name) ?? fallbackName,
+        version: stringValue(manifest.version),
+        source: stripUndefined({
+          ref: stringValue(manifest.gitHeadRef) ?? process.env.WP_CODEBOX_SOURCE_REF ?? process.env.GITHUB_REF_NAME ?? process.env.GITHUB_REF,
+          sha: stringValue(manifest.gitHead) ?? process.env.WP_CODEBOX_SOURCE_SHA ?? process.env.GITHUB_SHA,
+          digest: { algorithm: "sha256" as const, value: createHash("sha256").update(contents).digest("hex") },
+        }),
+      }) as ArtifactPackageIdentity,
+      manifest,
+    }
+  } catch {
+    return { identity: { name: fallbackName }, manifest: {} }
+  }
+}
+
+function readPackageContents(packagePath: string): string {
+  return readFileSync(packageRequire.resolve(packagePath), "utf8")
+}
+
+function packageDependencyVersion(manifest: Record<string, unknown>, name: string): string | undefined {
+  return stringValue(recordValue(manifest.dependencies)?.[name])
+    ?? stringValue(recordValue(manifest.devDependencies)?.[name])
+    ?? stringValue(recordValue(manifest.peerDependencies)?.[name])
 }
 
 function recipeStepMetadata(step: WorkspaceRecipe["workflow"]["steps"][number]): { command: string; args: string[] } {

@@ -1,6 +1,6 @@
 {
   "name": "wp-codebox-workspace",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -171,6 +171,7 @@
     "test:recipe-validation-descriptors": "tsx tests/recipe-validation-descriptors.test.ts",
     "test:recipe-runtime-backend-normalization": "tsx tests/recipe-runtime-backend-normalization.test.ts",
     "test:recipe-runtime-setup-staged-materialization": "tsx tests/recipe-runtime-setup-staged-materialization.test.ts",
+    "test:recipe-run-provenance": "tsx tests/recipe-run-provenance.test.ts",
     "test:fuzz-run-recipe": "tsx tests/fuzz-run-recipe.test.ts",
     "test:fuzz-suite-runner": "tsx tests/fuzz-suite-runner.test.ts",
     "test:playground-fuzz-suite-public": "tsx tests/playground-fuzz-suite-public.test.ts",
