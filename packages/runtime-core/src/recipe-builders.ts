@@ -30,6 +30,7 @@ export interface WordPressPhpunitRecipeOptions {
   phpunitXml?: string
   dependencyMounts?: string[]
   bootstrapFiles?: string[]
+  preloadFiles?: string[]
   phpunitArgs?: string[]
   bootstrapMode?: "managed" | "project" | (string & {})
   projectBootstrap?: string
@@ -97,6 +98,7 @@ export function buildWordPressPhpunitRecipe(options: WordPressPhpunitRecipeOptio
           commandArg("phpunit-xml", options.phpunitXml ?? `${pluginTarget}/phpunit.xml.dist`),
           commandStringListArg("dependency-mounts", options.dependencyMounts ?? []),
           commandJsonArg("bootstrap-files-json", options.bootstrapFiles ?? []),
+          commandJsonArg("preload-files-json", options.preloadFiles ?? []),
           commandJsonArg("phpunit-args-json", options.phpunitArgs ?? []),
           commandArg("bootstrap-mode", options.bootstrapMode ?? "managed"),
           commandArg("project-bootstrap", options.projectBootstrap ?? ""),
