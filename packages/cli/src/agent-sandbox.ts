@@ -5,6 +5,7 @@ import { commandArgValue, commandDiagnosticsCaptureArgs, normalizeSandboxToolPol
 import { resolvePluginEntrypointContract, type ComponentLoadMode } from "@automattic/wp-codebox-core"
 import { SANDBOX_WORKSPACE_ROOT, stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { agentRuntimeProbeCode, agentSandboxRunCode, resolveSandboxTaskCode } from "./agent-code.js"
+import { assertResolvedInputMountPathArgs, rewriteInputMountPathArgs, rewriteInputMountPathJsonArgs, type InputMountPathMapping } from "./input-mount-paths.js"
 import type { AgentBundleSpec } from "./agent-code.js"
 import type { PreparedWorkspaceMount } from "./recipe-sources.js"
 import { defaultPolicy } from "./recipe-validation.js"
@@ -73,6 +74,13 @@ export type AgentRuntimeComponent = {
   kind: "component" | "provider-plugin"
 }
 
+export type ResolvedRecipeExecutionSpec = ExecutionSpec & {
+  args: string[]
+  originalCommand: string
+  originalArgs: string[]
+  resolvedArgs: string[]
+}
+
 const secretEnvPolicy: RuntimePolicy = {
   ...defaultPolicy,
   secrets: "connector-scoped",
@@ -107,21 +115,35 @@ export function agentRuntimeMounts(options: AgentRuntimeProbeOptions): AgentRunt
   ]
 }
 
-export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract): Promise<ExecutionSpec & { args: string[] }> {
-  if (step.command === "wordpress.run-workload") {
-    return await wordpressRunWorkloadExecutionSpec(step, recipeDirectory)
-  }
-
-  if (step.command === "wp-codebox.agent-runtime-probe") {
+export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, sandboxWorkspace?: SandboxWorkspaceContract, options: { inputMountPathMap?: readonly InputMountPathMapping[] } = {}): Promise<ResolvedRecipeExecutionSpec> {
+  const originalArgs = step.args ?? []
+  const resolvedStep = { ...step, args: rewriteRecipeExecutionArgs(step.command, originalArgs, options.inputMountPathMap) }
+  const finish = (spec: ExecutionSpec & { args?: string[] }): ResolvedRecipeExecutionSpec => {
+    const resolvedArgs = spec.args ?? []
+    assertResolvedInputMountPathArgs(resolvedArgs, options.inputMountPathMap, `Recipe command ${step.command}`)
     return {
-      command: "wordpress.run-php",
-      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(step.args ?? []), runtimeComponentContracts(step.args ?? []))}`, ...commandDiagnosticsCaptureArgs(step.diagnostics)],
-      diagnostics: step.diagnostics,
+      ...spec,
+      args: resolvedArgs,
+      originalCommand: step.command,
+      originalArgs: [...originalArgs],
+      resolvedArgs,
     }
   }
 
-  if (step.command === "wp-codebox.agent-sandbox-run") {
-    const args = step.args ?? []
+  if (resolvedStep.command === "wordpress.run-workload") {
+    return finish(await wordpressRunWorkloadExecutionSpec(resolvedStep, recipeDirectory))
+  }
+
+  if (resolvedStep.command === "wp-codebox.agent-runtime-probe") {
+    return finish({
+      command: "wordpress.run-php",
+      args: [`code=${agentRuntimeProbeCode(providerPluginContracts(resolvedStep.args ?? []), runtimeComponentContracts(resolvedStep.args ?? []))}`, ...commandDiagnosticsCaptureArgs(resolvedStep.diagnostics)],
+      diagnostics: resolvedStep.diagnostics,
+    })
+  }
+
+  if (resolvedStep.command === "wp-codebox.agent-sandbox-run") {
+    const args = resolvedStep.args ?? []
     const task = commandArgValue(args, "task")
     if (!task) {
       throw new Error("wp-codebox.agent-sandbox-run requires task=<task>")
@@ -148,18 +170,29 @@ export async function recipeExecutionSpec(step: WorkspaceRecipe["workflow"]["ste
       sandboxToolPolicy: parseSandboxToolPolicy(args),
     }))
 
-    return {
+    return finish({
       command: "wordpress.run-php",
       args: [
         `code=${agentSandboxRunCode(task, body, providerPluginContracts(args), runtimeComponentContracts(args))}`,
         "wp-cli-bridge=1",
-        ...commandDiagnosticsCaptureArgs(step.diagnostics),
+        ...commandDiagnosticsCaptureArgs(resolvedStep.diagnostics),
       ],
-      diagnostics: step.diagnostics,
-    }
+      diagnostics: resolvedStep.diagnostics,
+    })
   }
 
-  return { command: step.command, args: [...(step.args ?? []), ...commandDiagnosticsCaptureArgs(step.diagnostics)], diagnostics: step.diagnostics }
+  return finish({ command: resolvedStep.command, args: [...(resolvedStep.args ?? []), ...commandDiagnosticsCaptureArgs(resolvedStep.diagnostics)], diagnostics: resolvedStep.diagnostics })
+}
+
+function rewriteRecipeExecutionArgs(command: string, args: readonly string[], inputMountPathMap: readonly InputMountPathMapping[] = []): string[] {
+  const rewritten = rewriteInputMountPathArgs(args, inputMountPathMap)
+  if (command === "wordpress.run-workload") {
+    return rewriteInputMountPathJsonArgs(rewritten, ["workload-json"], inputMountPathMap)
+  }
+  if (command === "wp-codebox/run-fuzz-suite") {
+    return rewriteInputMountPathJsonArgs(rewritten, ["input-json", "suite-json"], inputMountPathMap)
+  }
+  return rewritten
 }
 
 async function wordpressRunWorkloadExecutionSpec(step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string): Promise<ExecutionSpec & { args: string[] }> {

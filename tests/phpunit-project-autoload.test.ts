@@ -4,6 +4,7 @@ import { buildWordPressPhpunitRecipe } from "../packages/runtime-core/src/recipe
 import { phpunitRunCode } from "../packages/runtime-playground/src/phpunit-command-handlers.js"
 import { recipePolicy } from "../packages/cli/src/recipe-validation.js"
 import { recipeExtraPluginSourceSubpath } from "../packages/cli/src/recipe-sources.js"
+import { recipeInputMountPathMap, rewriteInputMountPathArgs } from "../packages/cli/src/commands/recipe-runtime-setup.js"
 
 const woocommerceAutoload = "/wordpress/wp-content/plugins/woocommerce/vendor/autoload_packages.php"
 
@@ -23,7 +24,10 @@ const recipe = buildWordPressPhpunitRecipe({
   cwd: "/home/example/public_html",
   testRoot: "/home/example/public_html/bin/tests/phpunit",
   phpunitXml: "/home/example/public_html/bin/tests/phpunit/phpunit.xml.dist",
-  mounts: [{ source: "/workspace/project-tests", target: "/home/example/public_html/bin/tests", mode: "readonly" }],
+  mounts: [
+    { source: "/workspace/wp-codebox-vendor", target: "/wp-codebox-vendor", mode: "readonly" },
+    { source: "/workspace/project-tests", target: "/home/example/public_html/bin/tests", mode: "readonly" },
+  ],
 })
 
 assert.deepEqual(recipe.inputs.extra_plugins, [{
@@ -37,12 +41,17 @@ assert.deepEqual(recipe.inputs.extra_plugins, [{
 
 assert.equal(recipeExtraPluginSourceSubpath(recipe.inputs.extra_plugins[0], "/tmp"), "plugins/woocommerce")
 assert.equal(recipePolicy(recipe).commands.includes("wordpress.run-php"), true)
-assert.deepEqual(recipe.inputs.mounts?.filter((mount) => mount.target === "/home/example/public_html/bin/tests"), [
+assert.deepEqual(recipe.inputs.mounts?.filter((mount) => mount.target === "/wp-codebox-vendor" || mount.target === "/home/example/public_html/bin/tests"), [
+  { source: "/workspace/wp-codebox-vendor", target: "/wp-codebox-vendor", mode: "readonly" },
   { source: "/workspace/project-tests", target: "/home/example/public_html/bin/tests", mode: "readonly" },
 ])
 
 assert.deepEqual(recipe.workflow.steps[0].args.filter((arg) => arg.includes("autoload-file=")), [
   "autoload-file=/wp-codebox-vendor/autoload.php",
+  `project-autoload-file=${woocommerceAutoload}`,
+])
+assert.deepEqual(rewriteInputMountPathArgs(recipe.workflow.steps[0].args, recipeInputMountPathMap(recipe)).filter((arg) => arg.includes("autoload-file=")), [
+  "autoload-file=/tmp/wp-codebox-inputs/0-wp-codebox-vendor-73845ca47d2f/autoload.php",
   `project-autoload-file=${woocommerceAutoload}`,
 ])
 assert.ok(recipe.workflow.steps[0].args.includes("cwd=/home/example/public_html"))
@@ -74,11 +83,15 @@ const projectAutoloadIndex = projectModeCode.indexOf("pg_run_project_autoload_st
 assert.ok(bootIndex > 0)
 assert.ok(projectBootstrapIndex > bootIndex)
 assert.ok(projectAutoloadIndex > projectBootstrapIndex)
-assert.ok(projectModeCode.includes("'autoload_required' => $bootstrap_mode !== 'project'"))
+assert.ok(projectModeCode.includes("'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== ''"))
 assert.ok(projectModeCode.includes("$legacy_project_autoload_file = $autoload_file"))
-assert.ok(projectModeCode.includes("NOTICE:project bootstrap mode continuing without readable PHPUnit harness autoload"))
+assert.ok(projectModeCode.includes("configured PHPUnit harness autoload file is not readable"))
+assert.ok(projectModeCode.includes("NOTICE:project bootstrap mode continuing without configured PHPUnit harness autoload"))
 assert.ok(projectModeCode.includes("$test_root = \"/home/example/public_html/bin/tests/phpunit\";"))
 assert.ok(projectModeCode.includes("pg_resolve_test_root"))
+assert.ok(projectModeCode.includes("function pg_project_bootstrap_real_path"))
+assert.ok(projectModeCode.includes("$base_dir = dirname($xml_real);"))
+assert.ok(projectModeCode.includes("$bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);"))
 
 const managedModeCode = phpunitRunCode({
   pluginSlug: "demo-plugin",

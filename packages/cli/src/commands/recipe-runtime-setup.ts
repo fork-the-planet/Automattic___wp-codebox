@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import { cp, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, posix, resolve } from "node:path"
@@ -8,8 +7,11 @@ import { pluginRuntimeHealthProbeStep, type RecipeWorkflowPhase } from "../recip
 import { pluginRuntimeHealthProbeStepIndex, pluginRuntimeSetupStepIndex } from "../recipe-dry-run.js"
 import { prepareRecipeRuntimeBackendPackage, type PreparedRuntimeBackendPackage } from "../recipe-backend-package.js"
 import { recipeExecutionSpec } from "../agent-sandbox.js"
+import { recipeInputMountPathMap, type InputMountPathMapping } from "../input-mount-paths.js"
 import type { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import type { RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence } from "./recipe-run-types.js"
+
+export { assertResolvedInputMountPathArgs, recipeInputMountPathMap, rewriteInputMountPath, rewriteInputMountPathArgs, type InputMountPathMapping } from "../input-mount-paths.js"
 
 export interface PreparedRecipeRuntimeSetup {
   workspaceMounts: PreparedWorkspaceMount[]
@@ -20,11 +22,6 @@ export interface PreparedRecipeRuntimeSetup {
   inputMountBaselinePaths: string[]
   inputMountPathMap: InputMountPathMapping[]
   backendPackage?: PreparedRuntimeBackendPackage
-}
-
-export interface InputMountPathMapping {
-  originalTarget: string
-  canonicalTarget: string
 }
 
 export interface RecipeRuntimeSetupResult {
@@ -231,12 +228,12 @@ export async function applyRecipeRuntimeSetup(args: {
   }
 
   for (const [index, setupStep] of (recipe.inputs?.pluginRuntime?.setup ?? []).entries()) {
-    executions.push(await awaitRecipe(`plugin-runtime.setup[${index}]`, executeRecipePluginRuntimeStep(runtime, setupStep, recipeDirectory, "setup", index)))
+    executions.push(await awaitRecipe(`plugin-runtime.setup[${index}]`, executeRecipePluginRuntimeStep(runtime, setupStep, recipeDirectory, "setup", index, inputMountPathMap)))
     interruption?.throwIfInterrupted()
   }
 
   for (const [index, probe] of (recipe.inputs?.pluginRuntime?.healthProbes ?? []).entries()) {
-    executions.push(await awaitRecipe(`plugin-runtime.health:${probe.name}`, executeRecipePluginRuntimeHealthProbe(runtime, probe, recipeDirectory, index)))
+    executions.push(await awaitRecipe(`plugin-runtime.health:${probe.name}`, executeRecipePluginRuntimeHealthProbe(runtime, probe, recipeDirectory, index, inputMountPathMap)))
     interruption?.throwIfInterrupted()
   }
 
@@ -287,61 +284,9 @@ export function recipeRunExtraPlugin(plugin: PreparedExtraPlugin): Record<string
   }
 }
 
-export function recipeInputMountPathMap(recipe: WorkspaceRecipe): InputMountPathMapping[] {
-  return (recipe.inputs?.mounts ?? []).map((mount, index) => ({
-    originalTarget: normalizeSandboxPath(mount.target),
-    canonicalTarget: canonicalInputMountTarget(mount.target, index),
-  }))
-}
-
-export function rewriteInputMountPathArgs(args: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {
-  if (mappings.length === 0) {
-    return [...args]
-  }
-  return args.map((arg) => {
-    const separator = arg.indexOf("=")
-    if (separator <= 0) {
-      return arg
-    }
-    const value = arg.slice(separator + 1)
-    if (!value.startsWith("/")) {
-      return arg
-    }
-    const rewritten = rewriteInputMountPath(value, mappings)
-    return rewritten === value ? arg : `${arg.slice(0, separator + 1)}${rewritten}`
-  })
-}
-
-export function rewriteInputMountPath(path: string, mappings: readonly InputMountPathMapping[] = []): string {
-  const normalized = normalizeSandboxPath(path)
-  const match = [...mappings]
-    .sort((a, b) => b.originalTarget.length - a.originalTarget.length)
-    .find((mapping) => pathHasMappedPrefix(normalized, mapping.originalTarget))
-  if (!match) {
-    return path
-  }
-  const suffix = normalized.slice(match.originalTarget.length)
-  return `${match.canonicalTarget}${suffix}`
-}
-
-function canonicalInputMountTarget(target: string, index: number): string {
-  const normalized = normalizeSandboxPath(target)
-  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 12)
-  const name = safeInputMountTargetName(posix.basename(normalized)) || "mount"
-  return `/tmp/wp-codebox-inputs/${index}-${name}-${hash}`
-}
-
-function safeInputMountTargetName(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)
-}
-
 function normalizeSandboxPath(path: string): string {
   const normalized = posix.normalize(path.trim().replace(/\\+/g, "/"))
   return normalized === "/" ? normalized : normalized.replace(/\/+$/g, "")
-}
-
-function pathHasMappedPrefix(path: string, prefix: string): boolean {
-  return path === prefix || path.startsWith(`${prefix}/`)
 }
 
 async function prepareRecipeRuntimeOverlaysForRun(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedRuntimeOverlay[]> {
@@ -362,9 +307,9 @@ function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: Recip
   }
 }
 
-async function executeRecipePluginRuntimeStep(runtime: Runtime, step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, phase: "setup", index: number): Promise<RecipeExecutionResult> {
+async function executeRecipePluginRuntimeStep(runtime: Runtime, step: WorkspaceRecipe["workflow"]["steps"][number], recipeDirectory: string, phase: "setup", index: number, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<RecipeExecutionResult> {
   try {
-    const execution = await runtime.execute(await recipeExecutionSpec(step, recipeDirectory))
+    const execution = await runtime.execute(await recipeExecutionSpec(step, recipeDirectory, undefined, { inputMountPathMap }))
     return withRecipeExecutionPhase(execution, phase, pluginRuntimeSetupStepIndex(index), `plugin-runtime.setup:${index}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -372,9 +317,9 @@ async function executeRecipePluginRuntimeStep(runtime: Runtime, step: WorkspaceR
   }
 }
 
-async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: WorkspaceRecipePluginRuntimeHealthProbe, recipeDirectory: string, index: number): Promise<RecipeExecutionResult> {
+async function executeRecipePluginRuntimeHealthProbe(runtime: Runtime, probe: WorkspaceRecipePluginRuntimeHealthProbe, recipeDirectory: string, index: number, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<RecipeExecutionResult> {
   try {
-    const execution = await runtime.execute(await recipeExecutionSpec(pluginRuntimeHealthProbeStep(probe), recipeDirectory))
+    const execution = await runtime.execute(await recipeExecutionSpec(pluginRuntimeHealthProbeStep(probe), recipeDirectory, undefined, { inputMountPathMap }))
     return withRecipeExecutionPhase(execution, "setup", pluginRuntimeHealthProbeStepIndex(index), `plugin-runtime.health:${probe.name}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

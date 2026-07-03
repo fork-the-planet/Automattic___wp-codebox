@@ -1,0 +1,124 @@
+import { createHash } from "node:crypto"
+import { posix } from "node:path"
+
+import type { WorkspaceRecipe } from "@automattic/wp-codebox-core"
+
+export interface InputMountPathMapping {
+  originalTarget: string
+  canonicalTarget: string
+}
+
+export function recipeInputMountPathMap(recipe: WorkspaceRecipe): InputMountPathMapping[] {
+  return (recipe.inputs?.mounts ?? []).map((mount, index) => ({
+    originalTarget: normalizeSandboxPath(mount.target),
+    canonicalTarget: canonicalInputMountTarget(mount.target, index),
+  }))
+}
+
+export function rewriteInputMountPathArgs(args: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {
+  if (mappings.length === 0) {
+    return [...args]
+  }
+  return args.map((arg) => {
+    const separator = arg.indexOf("=")
+    if (separator <= 0) {
+      return arg
+    }
+    const value = arg.slice(separator + 1)
+    if (!value.startsWith("/")) {
+      return arg
+    }
+    const rewritten = rewriteInputMountPath(value, mappings)
+    return rewritten === value ? arg : `${arg.slice(0, separator + 1)}${rewritten}`
+  })
+}
+
+export function rewriteInputMountPathJsonArgs(args: readonly string[] = [], names: readonly string[] = [], mappings: readonly InputMountPathMapping[] = []): string[] {
+  if (mappings.length === 0 || names.length === 0) {
+    return [...args]
+  }
+  const nameSet = new Set(names)
+  return args.map((arg) => {
+    const separator = arg.indexOf("=")
+    if (separator <= 0 || !nameSet.has(arg.slice(0, separator))) {
+      return arg
+    }
+    const value = arg.slice(separator + 1)
+    try {
+      return `${arg.slice(0, separator + 1)}${JSON.stringify(rewriteInputMountPathsInJsonValue(JSON.parse(value), mappings))}`
+    } catch {
+      return arg
+    }
+  })
+}
+
+export function rewriteInputMountPath(path: string, mappings: readonly InputMountPathMapping[] = []): string {
+  const normalized = normalizeSandboxPath(path)
+  const match = [...mappings]
+    .sort((a, b) => b.originalTarget.length - a.originalTarget.length)
+    .find((mapping) => pathHasMappedPrefix(normalized, mapping.originalTarget))
+  if (!match) {
+    return path
+  }
+  const suffix = normalized.slice(match.originalTarget.length)
+  return `${match.canonicalTarget}${suffix}`
+}
+
+export function assertResolvedInputMountPathArgs(args: readonly string[] = [], mappings: readonly InputMountPathMapping[] = [], context = "execution spec"): void {
+  const stale = args.flatMap((arg, index) => staleInputMountPathReferences(arg, mappings).map((mapping) => ({ index, arg, mapping })))
+  if (stale.length === 0) {
+    return
+  }
+  const details = stale.map((entry) => `arg[${entry.index}] references ${entry.mapping.originalTarget} after canonicalization to ${entry.mapping.canonicalTarget}: ${entry.arg}`).join("\n")
+  throw new Error(`${context} still references original input mount target after path canonicalization.\n${details}\nresolvedArgs=${JSON.stringify(args)}`)
+}
+
+function staleInputMountPathReferences(arg: string, mappings: readonly InputMountPathMapping[]): InputMountPathMapping[] {
+  return mappings
+    .filter((mapping) => mapping.originalTarget !== mapping.canonicalTarget)
+    .filter((mapping) => originalPathReferencePattern(mapping.originalTarget).test(arg))
+}
+
+function rewriteInputMountPathsInJsonValue(value: unknown, mappings: readonly InputMountPathMapping[]): unknown {
+  if (typeof value === "string") {
+    if (value.startsWith("/")) {
+      return rewriteInputMountPath(value, mappings)
+    }
+    return rewriteInputMountPathArgs([value], mappings)[0]
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => rewriteInputMountPathsInJsonValue(entry, mappings))
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, rewriteInputMountPathsInJsonValue(entry, mappings)]))
+  }
+  return value
+}
+
+function originalPathReferencePattern(path: string): RegExp {
+  return new RegExp(`${escapeRegExp(path)}(?=$|[\\/\\s'"\\]\\}\\),:;])`)
+}
+
+function canonicalInputMountTarget(target: string, index: number): string {
+  const normalized = normalizeSandboxPath(target)
+  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 12)
+  const name = safeInputMountTargetName(posix.basename(normalized)) || "mount"
+  return `/tmp/wp-codebox-inputs/${index}-${name}-${hash}`
+}
+
+function safeInputMountTargetName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)
+}
+
+function normalizeSandboxPath(path: string): string {
+  const normalized = posix.normalize(path.trim().replace(/\\+/g, "/"))
+  return normalized === "/" ? normalized : normalized.replace(/\/+$/g, "")
+}
+
+function pathHasMappedPrefix(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}

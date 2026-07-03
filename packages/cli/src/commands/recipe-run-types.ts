@@ -105,6 +105,8 @@ export type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
   recipeCommand?: string
+  recipeOriginalArgs?: string[]
+  recipeResolvedArgs?: string[]
   recipeAdvisory?: boolean
   fuzzCaseId?: string
   fuzzCaseIndex?: number

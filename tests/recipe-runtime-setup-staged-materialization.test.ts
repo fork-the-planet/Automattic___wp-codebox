@@ -3,9 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { applyRecipeRuntimeSetup, recipeInputMountPathMap, rewriteInputMountPathArgs, type PreparedRecipeRuntimeSetup } from "../packages/cli/src/commands/recipe-runtime-setup.js"
+import { applyRecipeRuntimeSetup, assertResolvedInputMountPathArgs, recipeInputMountPathMap, rewriteInputMountPathArgs, type PreparedRecipeRuntimeSetup } from "../packages/cli/src/commands/recipe-runtime-setup.js"
 import { executeRecipeWorkflowStep } from "../packages/cli/src/commands/recipe-run-workflow-evidence.js"
-import type { Runtime, WorkspaceRecipe } from "../packages/runtime-core/src/public.js"
+import type { ExecutionSpec, Runtime, WorkspaceRecipe } from "../packages/runtime-core/src/public.js"
 
 const calls: string[] = []
 const inputMountSource = await mkdtemp(join(tmpdir(), "wp-codebox-input-mount-test-"))
@@ -112,10 +112,12 @@ assert.ok(materializeOperationIndex > mountIndex, "materialization is scheduled 
 assert.ok(materializeIndex > materializeOperationIndex, "materialization runs inside the setup phase before commands")
 assert.equal(calls.some((call) => call.startsWith("execute:")), false)
 
+const executedWorkflowSpecs: ExecutionSpec[] = []
 const workflowRuntime = {
   async info() { return { id: "runtime", backend: "wordpress-playground", environment: { kind: "wordpress" }, createdAt: new Date().toISOString(), status: "running" } },
   async mount() { throw new Error("unused") },
   async execute(spec) {
+    executedWorkflowSpecs.push(spec)
     return {
       id: "workflow-step",
       command: spec.command,
@@ -142,7 +144,6 @@ const workflowExecution = await executeRecipeWorkflowStep(workflowRuntime, {
       "cwd=/home/example/public_html/bin/tests/foo",
       "test-root=/home/example/public_html/bin/tests/foo",
       "phpunit-xml=/home/example/public_html/bin/tests/foo/phpunit.xml",
-      "note=this mentions /home/example/public_html/bin/tests/foo but is not a path value",
     ],
   },
 }, process.cwd(), undefined, undefined, undefined, prepared.inputMountPathMap)
@@ -151,12 +152,92 @@ assert.deepEqual(workflowExecution.args, [
   `cwd=${prepared.inputMountPathMap[0].canonicalTarget}/bin/tests/foo`,
   `test-root=${prepared.inputMountPathMap[0].canonicalTarget}/bin/tests/foo`,
   `phpunit-xml=${prepared.inputMountPathMap[0].canonicalTarget}/bin/tests/foo/phpunit.xml`,
-  "note=this mentions /home/example/public_html/bin/tests/foo but is not a path value",
 ])
 
 assert.deepEqual(rewriteInputMountPathArgs(["cwd=/home/example/public_html/bin/tests/foo"], [
   { originalTarget: "/home/example/public_html", canonicalTarget: "/tmp/wp-codebox-inputs/root" },
   { originalTarget: "/home/example/public_html/bin/tests", canonicalTarget: "/tmp/wp-codebox-inputs/tests" },
 ]), ["cwd=/tmp/wp-codebox-inputs/tests/foo"])
+
+const wpcomPathMap = recipeInputMountPathMap({
+  schema: "wp-codebox/workspace-recipe/v1",
+  inputs: {
+    mounts: [
+      { source: "/workspace/wpcom", target: "/home/wpcom/public_html", mode: "readwrite" },
+      { source: "/workspace/vendor", target: "/wp-codebox-vendor", mode: "readonly" },
+    ],
+  },
+  workflow: { steps: [] },
+})
+const wpcomPhpunitExecution = await executeRecipeWorkflowStep(workflowRuntime, {
+  phase: "steps",
+  index: 0,
+  step: {
+    command: "wordpress.phpunit",
+    args: [
+      "autoload-file=/wp-codebox-vendor/autoload.php",
+      "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+      "cwd=/home/wpcom/public_html/bin/tests/i18n-tools",
+      "test-root=/home/wpcom/public_html/bin/tests/i18n-tools",
+      "phpunit-xml=/home/wpcom/public_html/bin/tests/i18n-tools/phpunit.xml",
+    ],
+  },
+}, process.cwd(), undefined, undefined, undefined, wpcomPathMap)
+
+assert.deepEqual(wpcomPhpunitExecution.args, [
+  `autoload-file=${wpcomPathMap[1].canonicalTarget}/autoload.php`,
+  `tests-dir=${wpcomPathMap[1].canonicalTarget}/wp-phpunit/wp-phpunit`,
+  `cwd=${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools`,
+  `test-root=${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools`,
+  `phpunit-xml=${wpcomPathMap[0].canonicalTarget}/bin/tests/i18n-tools/phpunit.xml`,
+])
+assert.deepEqual(executedWorkflowSpecs.at(-1)?.args, wpcomPhpunitExecution.args)
+assert.ok(wpcomPhpunitExecution.args.every((arg) => arg.includes("=/tmp/wp-codebox-inputs/") || !arg.includes("/")), "WPCOM phpunit executable path args use canonical input mount paths")
+assert.equal(wpcomPhpunitExecution.args.some((arg) => arg.includes("/wp-codebox-vendor") || arg.includes("/home/wpcom/public_html")), false)
+
+assert.throws(
+  () => assertResolvedInputMountPathArgs(["cwd=/home/wpcom/public_html/bin/tests/i18n-tools"], wpcomPathMap),
+  /still references original input mount target.*\/home\/wpcom\/public_html/s,
+)
+
+await assert.rejects(
+  () => executeRecipeWorkflowStep(workflowRuntime, {
+    phase: "steps",
+    index: 1,
+    step: {
+      command: "wordpress.run-php",
+      args: ["code=require '/home/wpcom/public_html/bin/tests/i18n-tools/bootstrap.php';"],
+    },
+  }, process.cwd(), undefined, undefined, undefined, wpcomPathMap),
+  /still references original input mount target.*\/home\/wpcom\/public_html/s,
+)
+
+executedWorkflowSpecs.length = 0
+const nestedWorkloadExecution = await executeRecipeWorkflowStep(workflowRuntime, {
+  phase: "steps",
+  index: 0,
+  step: {
+    command: "wordpress.run-workload",
+    args: [`workload-json=${JSON.stringify({
+      schema: "wp-codebox/wordpress-workload-run/v1",
+      steps: [{
+        command: "wordpress.phpunit",
+        args: [
+          "autoload-file=/wp-codebox-vendor/autoload.php",
+          "tests-dir=/wp-codebox-vendor/wp-phpunit/wp-phpunit",
+          "cwd=/home/wpcom/public_html/bin/tests/i18n-tools",
+          "test-root=/home/wpcom/public_html/bin/tests/i18n-tools",
+          "phpunit-xml=/home/wpcom/public_html/bin/tests/i18n-tools/phpunit.xml",
+        ],
+      }],
+    })}`],
+  },
+}, process.cwd(), undefined, undefined, undefined, wpcomPathMap)
+
+assert.equal(nestedWorkloadExecution.command, "wordpress.run-workload")
+assert.equal(nestedWorkloadExecution.exitCode, 0)
+assert.deepEqual(executedWorkflowSpecs.map((spec) => spec.command), ["wordpress.phpunit"])
+assert.deepEqual(executedWorkflowSpecs[0]?.args, wpcomPhpunitExecution.args)
+assert.equal(executedWorkflowSpecs[0]?.args?.some((arg) => arg.includes("/wp-codebox-vendor") || arg.includes("/home/wpcom/public_html")), false)
 
 console.log("recipe runtime setup staged materialization ok")
