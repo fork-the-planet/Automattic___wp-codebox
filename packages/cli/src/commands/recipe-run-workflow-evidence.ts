@@ -9,16 +9,17 @@ import { executeAgentFanoutFromArgs } from "../agent-fanout.js"
 import { recipeWorkflowSteps, type RecipeWorkflowPhase } from "../recipe-validation.js"
 import { artifactManifestFilesByPath } from "./recipe-run-benchmark-artifacts.js"
 import { assertResolvedInputMountPathArgs, rewriteInputMountPathArgs, rewriteInputMountPathJsonArgs, type InputMountPathMapping } from "../input-mount-paths.js"
-import { serializeRecipeRunError } from "./recipe-run-output.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe, RecipeWorkflowArgsEvidence } from "./recipe-run-types.js"
+import { RecipeRunTimeoutError, serializeRecipeRunError } from "./recipe-run-output.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeBrowserEvidenceFileRef, RecipeExecutionResult, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunOptions, RecipeRunProbe, RecipeStepFailure, RecipeWorkflowArgsEvidence } from "./recipe-run-types.js"
 
-export function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string, recipeArgs?: RecipeWorkflowArgsEvidence): RecipeExecutionResult {
+export function withRecipeExecutionPhase(execution: ExecutionResult, recipePhase: RecipeWorkflowPhase, recipeStepIndex: number, recipeCommand?: string, recipeArgs?: RecipeWorkflowArgsEvidence, recipeStepMetadata?: Record<string, unknown>): RecipeExecutionResult {
   return {
     ...execution,
     recipePhase,
     recipeStepIndex,
     recipeCommand,
     ...(recipeArgs ? { recipeArgs } : {}),
+    ...(recipeStepMetadata ? { recipeStepMetadata } : {}),
   }
 }
 
@@ -50,6 +51,29 @@ export function recipeAdvisoryFailure(workflowStep: ReturnType<typeof recipeWork
     status: "failed",
     error: serializeRecipeRunError(error),
   }
+}
+
+export function recipeStepFailure(workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], error: unknown, startedAtMs: number, finishedAtMs = Date.now()): RecipeStepFailure {
+  const timeoutError = recipeTimeoutError(error)
+  return stripUndefined({
+    schema: "wp-codebox/recipe-step-failure/v1",
+    phase: workflowStep.phase,
+    index: workflowStep.index,
+    command: workflowStep.step.command,
+    metadata: workflowStep.step.metadata,
+    startedAt: new Date(startedAtMs).toISOString(),
+    finishedAt: new Date(finishedAtMs).toISOString(),
+    durationMs: Math.max(0, finishedAtMs - startedAtMs),
+    classification: timeoutError ? "timeout" as const : "error" as const,
+    timeoutMs: timeoutError?.timeoutMs,
+    error: serializeRecipeRunError(error),
+  }) as RecipeStepFailure
+}
+
+function recipeTimeoutError(error: unknown): RecipeRunTimeoutError | undefined {
+  if (error instanceof RecipeRunTimeoutError) return error
+  if (error instanceof Error && error.cause instanceof RecipeRunTimeoutError) return error.cause
+  return undefined
 }
 
 export async function recipeBrowserEvidence(artifacts: ArtifactBundle, executions: RecipeExecutionResult[], recipe?: WorkspaceRecipe): Promise<RecipeBrowserEvidence[]> {
@@ -96,6 +120,7 @@ function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResu
     phase: execution.recipePhase,
     index: execution.recipeStepIndex,
     command,
+    metadata: execution.recipeStepMetadata,
     status: execution.exitCode === 0 ? "completed" : "failed",
     requestedUrl: stringValue(parsed.requestedUrl),
     finalUrl: stringValue(parsed.finalUrl ?? summaryObject?.finalUrl),
@@ -154,7 +179,7 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
   const step = { ...workflowStep.step, args: resolvedArgs }
   const argsEvidence = recipeWorkflowArgsEvidence(originalArgs, resolvedArgs)
   const mappedWorkflowStep = { ...workflowStep, step }
-  const phase = (execution: ExecutionResult, command = step.command, evidence = argsEvidence) => withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, command, evidence)
+  const phase = (execution: ExecutionResult, command = step.command, evidence = argsEvidence) => withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, command, evidence, step.metadata)
   try {
     if (step.command === "wp-codebox.agent-fanout") {
       const startedAt = new Date().toISOString()
@@ -197,7 +222,7 @@ export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: 
     const spec = await recipeExecutionSpec(workflowStep.step, recipeDirectory, sandboxWorkspace, { inputMountPathMap })
     const execution = await runtime.execute(spec)
     return {
-      ...withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, step.command, recipeWorkflowArgsEvidence(spec.originalArgs, spec.resolvedArgs)),
+      ...withRecipeExecutionPhase(execution, workflowStep.phase, workflowStep.index, step.command, recipeWorkflowArgsEvidence(spec.originalArgs, spec.resolvedArgs), step.metadata),
       ...(workflowStep.fuzzCaseId ? { fuzzCaseId: workflowStep.fuzzCaseId } : {}),
       ...(workflowStep.fuzzCaseIndex !== undefined ? { fuzzCaseIndex: workflowStep.fuzzCaseIndex } : {}),
       ...(workflowStep.fuzzPhase ? { fuzzPhase: workflowStep.fuzzPhase } : {}),

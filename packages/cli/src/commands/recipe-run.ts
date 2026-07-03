@@ -29,8 +29,8 @@ import { RecipePhaseError } from "./recipe-run-phases.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
-import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
+import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
 const DEFAULT_RECIPE_RUN_TIMEOUT_MS = 25 * 60 * 1000
 const SUCCESSFUL_RECIPE_RUNTIME_SNAPSHOT_TIMEOUT_MS = 120 * 1000
@@ -150,6 +150,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let distributionStartupProbes: RecipeRunDistributionStartupProbe[] = []
   let probes: RecipeRunProbe[] = []
   let declaredArtifacts: RecipeRunDeclaredArtifact[] = []
+  let stepFailures: RecipeStepFailure[] = []
   let advisoryFailures: RecipeAdvisoryFailure[] = []
   let browserEvidence: RecipeBrowserEvidence[] = []
   let artifacts: ArtifactBundle | undefined
@@ -271,13 +272,17 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     await phaseTracker.run("run_workloads", phaseWorkflowData(workflowSteps), async () => {
       for (const workflowStep of workflowSteps) {
         const operation = `workflow.${workflowStep.phase}[${workflowStep.index}]:${workflowStep.step.command}`
+        const stepStartedAtMs = Date.now()
         try {
           const execution = await awaitRecipe(operation, async () => workflowStep.step.command === "wordpress.collect-workload-result"
-            ? withRecipeExecutionArgs(withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command), recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args))
+            ? withRecipeExecutionPhase(executeRecipeCollectWorkloadResult(workflowStep.step, executions, new Date().toISOString()), workflowStep.phase, workflowStep.index, workflowStep.step.command, recipeWorkflowArgsEvidence(workflowStep.step.args, workflowStep.step.args), workflowStep.step.metadata)
             : executeRecipeWorkflowStep(runtime!, workflowStep, recipeDirectory, sandboxWorkspace, configuredArtifactsDirectory, options, inputMountPathMap))
           executions.push({ ...execution, ...(recipeWorkflowStepIsAdvisory(workflowStep.step) ? { recipeAdvisory: true } : {}) })
           interruption?.throwIfInterrupted()
         } catch (error) {
+          const failure = recipeStepFailure(workflowStep, error, stepStartedAtMs)
+          stepFailures.push(failure)
+          await artifactPointer.update({ command: operation, commandStatus: "failed", failure: failure.error, phases: phaseTracker.list(), stepFailures })
           if (!recipeWorkflowStepIsAdvisory(workflowStep.step)) {
             throw error
           }
@@ -383,7 +388,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         browserEvidence,
         replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
         failure: recipeFailure,
-        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
+        output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
       })
     }
 
@@ -402,7 +407,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       phaseEvidence: phaseTracker.list(),
       browserEvidence,
       replayStatus: evidence.replayStatus ? recipeReplayStatusOutput(evidence.replayStatus) : undefined,
-      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
+      output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
     })
   } catch (error) {
     await markPreviewLeaseFailed(options.previewLeaseFile, error)
@@ -422,6 +427,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       distributionStartupProbes,
       probes,
       declaredArtifacts,
+      stepFailures,
       phaseEvidence: phaseTracker.list(),
       diagnostics: recipeRuntimeDiagnostics(recipe, executions, error) ?? [],
       error: serializedError,
@@ -514,6 +520,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
         distributionStartupProbes,
         probes,
         declaredArtifacts,
+        ...(stepFailures.length > 0 ? { stepFailures } : {}),
         phaseEvidence: phaseTracker.list(),
         ...(advisoryFailures.length > 0 ? { advisoryFailures } : {}),
         ...(browserEvidence.length > 0 ? { browserEvidence } : {}),
@@ -811,6 +818,7 @@ function recipeFailureRuntimeEvidenceFile(args: {
   distributionStartupProbes: RecipeRunDistributionStartupProbe[]
   probes: RecipeRunProbe[]
   declaredArtifacts: RecipeRunDeclaredArtifact[]
+  stepFailures: RecipeStepFailure[]
   phaseEvidence: RecipePhaseEvidence[]
   diagnostics: RecipeRuntimeDiagnostic[]
   error: RunOutput["error"]
@@ -847,6 +855,7 @@ function recipeFailureRuntimeEvidenceFile(args: {
       distributionStartupProbes: args.distributionStartupProbes,
       probes: args.probes,
       declaredArtifacts: args.declaredArtifacts,
+      stepFailures: args.stepFailures,
       phaseEvidence: args.phaseEvidence,
       diagnostics: args.diagnostics,
       error: args.error,

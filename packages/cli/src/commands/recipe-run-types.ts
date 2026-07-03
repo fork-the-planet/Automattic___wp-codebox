@@ -60,6 +60,7 @@ export interface RecipeRunOutput {
   distributionStartupProbes?: RecipeRunDistributionStartupProbe[]
   probes?: RecipeRunProbe[]
   declaredArtifacts?: RecipeRunDeclaredArtifact[]
+  stepFailures?: RecipeStepFailure[]
   phaseEvidence?: RecipePhaseEvidence[]
   advisoryFailures?: RecipeAdvisoryFailure[]
   browserEvidence?: RecipeBrowserEvidence[]
@@ -117,6 +118,7 @@ export type RecipeExecutionResult = ExecutionResult & {
   recipePhase?: RecipeWorkflowPhase
   recipeStepIndex?: number
   recipeCommand?: string
+  recipeStepMetadata?: Record<string, unknown>
   recipeArgs?: RecipeWorkflowArgsEvidence
   recipeAdvisory?: boolean
   fuzzCaseId?: string
@@ -205,6 +207,20 @@ export interface RecipeAdvisoryFailure {
   error: RunOutput["error"]
 }
 
+export interface RecipeStepFailure {
+  schema: "wp-codebox/recipe-step-failure/v1"
+  phase: RecipeWorkflowPhase
+  index: number
+  command: string
+  metadata?: Record<string, unknown>
+  startedAt: string
+  finishedAt: string
+  durationMs: number
+  classification: "timeout" | "error"
+  timeoutMs?: number
+  error: RunOutput["error"]
+}
+
 export interface RecipeBrowserEvidenceFileRef {
   path: string
   kind?: string
@@ -217,6 +233,7 @@ export interface RecipeBrowserEvidence {
   phase?: RecipeWorkflowPhase
   index?: number
   command: string
+  metadata?: Record<string, unknown>
   status: "completed" | "failed"
   requestedUrl?: string
   finalUrl?: string
@@ -236,6 +253,7 @@ export interface RecipeArtifactPointerState {
   artifacts?: ArtifactBundle
   failure?: RunOutput["error"]
   phases?: RecipePhaseEvidence[]
+  stepFailures?: RecipeStepFailure[]
   browserEvidence?: RecipeBrowserEvidence[]
   diagnosticArtifacts?: RecipeDiagnosticArtifactRef[]
   result?: RecipeRunSummary

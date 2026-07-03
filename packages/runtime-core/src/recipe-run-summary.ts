@@ -43,6 +43,7 @@ export interface RecipeRunCommandSummary {
   duration_ms?: number
   recipe_phase?: string
   recipe_step_index?: number
+  recipe_step_metadata?: Record<string, unknown>
   stdout_tail?: string
   stderr_tail?: string
 }
@@ -233,6 +234,7 @@ function recipeRunCommandSummaries(result: Record<string, unknown>): RecipeRunCo
       duration_ms: numberValue(execution.durationMs),
       recipe_phase: stringValue(execution.recipePhase),
       recipe_step_index: numberValue(execution.recipeStepIndex),
+      recipe_step_metadata: objectOrUndefined(execution.recipeStepMetadata),
       stdout_tail: textTail(execution.stdout),
       stderr_tail: textTail(execution.stderr),
     }) as RecipeRunCommandSummary

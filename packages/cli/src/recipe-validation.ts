@@ -99,6 +99,10 @@ export function validateWorkspaceRecipeShape(recipe: WorkspaceRecipe, recipePath
       throw new Error(`Recipe workflow ${phase} diagnostics must be an object: ${recipePath}`)
     }
 
+    if (step.metadata !== undefined && (!step.metadata || typeof step.metadata !== "object" || Array.isArray(step.metadata))) {
+      throw new Error(`Recipe workflow ${phase} metadata must be an object: ${recipePath}`)
+    }
+
     if (step.allowFailure !== undefined && typeof step.allowFailure !== "boolean") {
       throw new Error(`Recipe workflow ${phase} allowFailure must be boolean: ${recipePath}`)
     }

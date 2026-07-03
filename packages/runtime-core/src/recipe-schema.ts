@@ -1109,6 +1109,7 @@ export function createWorkspaceRecipeJsonSchema(options: WorkspaceRecipeJsonSche
             items: { type: "string" },
           },
           diagnostics: { $ref: "#/$defs/commandDiagnosticsCapture" },
+          metadata: { $ref: "#/$defs/metadata" },
           allowFailure: { type: "boolean" },
           advisory: { type: "boolean" },
         },

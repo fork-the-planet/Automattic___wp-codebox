@@ -6,7 +6,7 @@ import { serializeError } from "../output.js"
 import { finalizeAgentSandboxEvidence, finalizeRecipeArtifactEvidence, recipeAgentResultOutput, recipeAgentTaskResultOutput, recipeCompletionOutcomeOutput, recipeReplayStatusOutput, recipeTerminalResultOutput } from "../recipe-evidence.js"
 import { recipeRunFailureStatus, serializeRecipeRunError } from "./recipe-run-output.js"
 import type { RecipeArtifactPointerTracker } from "./recipe-run-artifact-pointers.js"
-import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile } from "./recipe-run-types.js"
+import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeExecutionResult, RecipeInterruptionController, RecipePhaseEvidence, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunFixtureDatabase, RecipeRunOutput, RecipeRunProbe, RecipeRunSiteSeed, RecipeRunStagedFile, RecipeStepFailure } from "./recipe-run-types.js"
 import type { RunOutput } from "../runtime-command-wrappers.js"
 
 export interface RunResourceCleanupEvidence {
@@ -46,6 +46,7 @@ interface RecipeRunCommonOutputFields {
   distributionStartupProbes?: RecipeRunOutput["distributionStartupProbes"]
   probes?: RecipeRunProbe[]
   declaredArtifacts?: RecipeRunDeclaredArtifact[]
+  stepFailures?: RecipeStepFailure[]
   phaseEvidence?: RecipePhaseEvidence[]
   advisoryFailures?: RecipeAdvisoryFailure[]
   browserEvidence?: RecipeBrowserEvidence[]
@@ -105,6 +106,7 @@ export function completedRecipeOutputFields(args: {
   distributionStartupProbes: NonNullable<RecipeRunOutput["distributionStartupProbes"]>
   probes: RecipeRunProbe[]
   declaredArtifacts: RecipeRunDeclaredArtifact[]
+  stepFailures?: RecipeStepFailure[]
   phaseEvidence: RecipePhaseEvidence[]
   advisoryFailures: RecipeAdvisoryFailure[]
   browserEvidence: RecipeBrowserEvidence[]
@@ -122,6 +124,7 @@ export function completedRecipeOutputFields(args: {
     ...(args.distributionStartupProbes.length > 0 ? { distributionStartupProbes: args.distributionStartupProbes } : {}),
     probes: args.probes,
     declaredArtifacts: args.declaredArtifacts,
+    ...(args.stepFailures && args.stepFailures.length > 0 ? { stepFailures: args.stepFailures } : {}),
     phaseEvidence: args.phaseEvidence,
     ...(args.advisoryFailures.length > 0 ? { advisoryFailures: args.advisoryFailures } : {}),
     ...(args.browserEvidence.length > 0 ? { browserEvidence: args.browserEvidence } : {}),
@@ -184,7 +187,7 @@ export async function finalizeCompletedRecipeRun(args: FinalizeCompletedRecipeRu
   }) as RecipeRunOutput)
   runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
   output.run = runRecord
-  await args.artifactPointer.update({ commandStatus: args.success ? "completed" : "failed", runtime: args.runtime, artifacts: args.artifacts, failure: args.failure, phases: args.phaseEvidence, browserEvidence: args.browserEvidence, result: output.result })
+  await args.artifactPointer.update({ commandStatus: args.success ? "completed" : "failed", runtime: args.runtime, artifacts: args.artifacts, failure: args.failure, phases: args.phaseEvidence, stepFailures: args.output.stepFailures, browserEvidence: args.browserEvidence, result: output.result })
   return output
 }
 
@@ -210,7 +213,7 @@ export async function finalizeRecoveredRecipeFailure(args: FinalizeRecoveredReci
   }) as RecipeRunOutput)
   runRecord = await args.runRegistry.update(args.runRecord.runId, { result: runtimeRunResultFromRecipeSummary(output.result!) })
   output.run = runRecord
-  await args.artifactPointer.update({ commandStatus: "failed", ...(args.runtime ? { runtime: args.runtime } : {}), ...(args.artifacts ? { artifacts: args.artifacts } : {}), failure: args.serializedError, phases: args.phaseEvidence, browserEvidence: args.browserEvidence, diagnosticArtifacts: args.diagnosticArtifacts, result: output.result })
+  await args.artifactPointer.update({ commandStatus: "failed", ...(args.runtime ? { runtime: args.runtime } : {}), ...(args.artifacts ? { artifacts: args.artifacts } : {}), failure: args.serializedError, phases: args.phaseEvidence, stepFailures: args.output.stepFailures, browserEvidence: args.browserEvidence, diagnosticArtifacts: args.diagnosticArtifacts, result: output.result })
   return output
 }
 
