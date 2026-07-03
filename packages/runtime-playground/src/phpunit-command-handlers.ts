@@ -557,10 +557,10 @@ CONFIG;
         if ($harness_autoload !== '' && is_readable($harness_autoload)) {
             pg_preload_wp_cli_namespaced_functions($harness_autoload);
             require_once $harness_autoload;
-        } elseif ($autoload_required) {
-            throw new RuntimeException('configured PHPUnit harness autoload file is not readable: ' . $harness_autoload . '; mount the WP Codebox PHPUnit harness or use bootstrap-mode=project with a project bootstrap that loads PHPUnit.');
+        } elseif ($autoload_required || $harness_autoload !== '') {
+            throw new RuntimeException('configured PHPUnit harness autoload file is not readable: ' . $harness_autoload . '; mount the WP Codebox PHPUnit harness or clear autoload-file when using bootstrap-mode=project with a project bootstrap that loads PHPUnit.');
         } else {
-            pg_log('NOTICE:project bootstrap mode continuing without readable PHPUnit harness autoload: ' . $harness_autoload);
+            pg_log('NOTICE:project bootstrap mode continuing without configured PHPUnit harness autoload');
         }
         pg_stage_ok('boot');
         return $config_path;
@@ -683,6 +683,32 @@ function pg_project_bootstrap_from_config(string $xml_path): string {
     return trim((string) ($xml['bootstrap'] ?? ''));
 }
 
+function pg_project_bootstrap_real_path(string $bootstrap, string $xml_path, bool $from_config): ?string {
+    if ($from_config) {
+        $xml_real = realpath($xml_path);
+        if ($xml_real === false) {
+            return null;
+        }
+
+        $base_dir = dirname($xml_real);
+        $candidate = $bootstrap !== '' && $bootstrap[0] === '/' ? $bootstrap : $base_dir . '/' . $bootstrap;
+        $real = realpath($candidate);
+        $base_real = realpath($base_dir);
+        if ($real === false || $base_real === false || !is_file($real) || !is_readable($real)) {
+            return null;
+        }
+
+        $base_parent = dirname($base_real);
+        if ($real !== $base_parent && strpos($real, rtrim($base_parent, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) !== 0) {
+            return null;
+        }
+
+        return $real;
+    }
+
+    return pg_plugin_real_path($bootstrap, 'project bootstrap');
+}
+
 function pg_prepare_project_bootstrap_environment(string $config_path): void {
     global $tests_dir;
     $tests_dir = rtrim($tests_dir, '/');
@@ -709,10 +735,13 @@ function pg_run_project_bootstrap_stage(array $cfg): void {
     pg_stage_begin('project_bootstrap');
     try {
         $bootstrap = trim((string) ($cfg['project_bootstrap'] ?? ''));
+        $phpunit_xml = (string) ($cfg['phpunit_xml'] ?? '');
+        $from_config = false;
         if ($bootstrap === '') {
-            $bootstrap = pg_project_bootstrap_from_config((string) ($cfg['phpunit_xml'] ?? ''));
+            $bootstrap = pg_project_bootstrap_from_config($phpunit_xml);
+            $from_config = $bootstrap !== '';
         }
-        $bootstrap_real = pg_plugin_real_path($bootstrap, 'project bootstrap');
+        $bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);
         if ($bootstrap_real === null) {
             throw new RuntimeException('project bootstrap not found; pass project-bootstrap=<relative path> or declare phpunit bootstrap');
         }
@@ -938,7 +967,7 @@ if ($bootstrap_mode === 'project' && $project_autoload_file === '' && $autoload_
 }
 $harness_autoload_file = $legacy_project_autoload_file !== '' ? '/wp-codebox-vendor/autoload.php' : $autoload_file;
 
-$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project'));
+$config_path = pg_run_boot_stage(array('extra_defines' => $wp_config_defines, 'table_prefix' => $bootstrap_mode === 'project' ? 'wp_' : 'wptests_', 'autoload_file' => $harness_autoload_file, 'autoload_required' => $bootstrap_mode !== 'project' || $harness_autoload_file !== ''));
 if ($bootstrap_mode === 'project') {
     pg_prepare_project_bootstrap_environment($config_path);
     pg_skip_project_bootstrap_shell_install();
