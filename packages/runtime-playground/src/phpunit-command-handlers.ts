@@ -15,6 +15,7 @@ export interface PhpunitRunCodeOptions {
   wpConfigDefines: Record<string, unknown>
   dependencyMounts: string[]
   bootstrapFiles: string[]
+  preloadFiles?: string[]
   bootstrapMode: string
   projectBootstrap: string
   multisite: boolean
@@ -301,6 +302,7 @@ $bench_env = json_decode(${JSON.stringify(JSON.stringify(options.env))}, true);
 $wp_config_defines = json_decode(${JSON.stringify(JSON.stringify(options.wpConfigDefines))}, true);
 $dep_mounts = ${JSON.stringify(options.dependencyMounts.join("\\n"))};
 $bootstrap_files = json_decode(${JSON.stringify(JSON.stringify(options.bootstrapFiles))}, true);
+$preload_files = json_decode(${JSON.stringify(JSON.stringify(options.preloadFiles ?? []))}, true);
 $bootstrap_mode = ${JSON.stringify(options.bootstrapMode || "managed")};
 $project_bootstrap = ${JSON.stringify(options.projectBootstrap)};
 $multisite = ${JSON.stringify(options.multisite)};
@@ -1056,6 +1058,29 @@ try {
     pg_stage_ok('load_bootstrap_files');
 } catch (Throwable $e) {
     pg_stage_fail('load_bootstrap_files', $e);
+    exit(1);
+}
+
+pg_stage_begin('load_preload_files');
+try {
+    if (is_array($preload_files)) {
+        foreach ($preload_files as $preload_file) {
+            if (!is_string($preload_file) || $preload_file === '' || strpos($preload_file, '..') !== false || $preload_file[0] !== '/') {
+                pg_log('NOTICE:skipping invalid preload file entry: ' . var_export($preload_file, true));
+                continue;
+            }
+            $preload_real = realpath($preload_file);
+            if ($preload_real === false || strpos($preload_real, '/wordpress/') !== 0 || !is_file($preload_real)) {
+                pg_log('NOTICE:preload file not found under /wordpress: ' . $preload_file);
+                continue;
+            }
+            pg_log('PRELOAD_FILE:' . $preload_file);
+            require_once $preload_real;
+        }
+    }
+    pg_stage_ok('load_preload_files');
+} catch (Throwable $e) {
+    pg_stage_fail('load_preload_files', $e);
     exit(1);
 }
 }
