@@ -92,6 +92,10 @@ assert.ok(projectModeCode.includes("pg_resolve_test_root"))
 assert.ok(projectModeCode.includes("function pg_project_bootstrap_real_path"))
 assert.ok(projectModeCode.includes("$base_dir = dirname($xml_real);"))
 assert.ok(projectModeCode.includes("$bootstrap_real = pg_project_bootstrap_real_path($bootstrap, $phpunit_xml, $from_config);"))
+assert.ok(projectModeCode.includes("foreach ($xml->xpath('//testsuite/file') ?: array() as $file)"))
+assert.ok(projectModeCode.includes("list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config"))
+assert.ok(projectModeCode.includes("$test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);"))
+assert.ok(projectModeCode.includes("' files=' . count($configured_files)"))
 
 const managedModeCode = phpunitRunCode({
   pluginSlug: "demo-plugin",
