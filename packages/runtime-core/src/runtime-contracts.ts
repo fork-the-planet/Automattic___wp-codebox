@@ -254,6 +254,7 @@ export interface WorkspaceRecipeStep {
   command: string
   args?: string[]
   diagnostics?: RuntimeCommandDiagnosticsCaptureSpec
+  metadata?: Record<string, unknown>
   allowFailure?: boolean
   advisory?: boolean
 }
