@@ -87,8 +87,8 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
             continue;
         }`
   const returnValues = options.uniqueReturnValues
-    ? "array(array_values(array_unique($directories)), array_values(array_unique($suffixes)), array_values(array_unique($prefixes)), $excludes)"
-    : "array($directories, $suffixes, $prefixes, $excludes)"
+    ? "array(array_values(array_unique($directories)), array_values(array_unique($suffixes)), array_values(array_unique($prefixes)), $excludes, array_values(array_unique($files)))"
+    : "array($directories, $suffixes, $prefixes, $excludes, $files)"
   const parseFailureLog = options.includeParseFailureDetail
     ? `${options.logFunction}('${options.parseFailureMessage}' . $first . '); using defaults');`
     : `${options.logFunction}('${options.parseFailureMessage}');`
@@ -99,7 +99,8 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
     $directories = array($test_dir_default);
     $suffixes = array('Test.php');
     $prefixes = array('test-');
-    $excludes = array();${fallbackXmlDist}
+    $excludes = array();
+    $files = array();${fallbackXmlDist}
     if (!is_readable($xml_path)) {
         ${options.logFunction}('${options.missingConfigMessage}' . $xml_path . '; using defaults');
         return array($directories, $suffixes, $prefixes, $excludes);
@@ -140,6 +141,12 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
             $excludes[] = $raw[0] === '/' ? rtrim($raw, '/') : rtrim($base . '/' . $raw, '/');
         }
     }
+    foreach ($xml->xpath('//testsuite/file') ?: array() as $file) {
+        $raw = trim((string) $file);
+        if ($raw !== '') {
+            $files[] = $raw[0] === '/' ? $raw : $base . '/' . $raw;
+        }
+    }
     if (!empty($config_dirs)) {
         $directories = $config_dirs;
         ${options.logFunction}('${options.loadedConfigMessage}' . $xml_path);
@@ -155,8 +162,23 @@ function phpunitConfigDiscoveryPhp(options: PhpunitConfigDiscoveryPhpOptions): s
 }
 
 function phpunitDiscoveryPhp(functionName: string, logFunction: string): string {
-  return `function ${functionName}(array $directories, array $suffixes, array $prefixes, array $excludes) {
+  return `function ${functionName}(array $directories, array $suffixes, array $prefixes, array $excludes, array $files = array()) {
     $found = array();
+    foreach ($files as $file) {
+        if (!is_string($file) || $file === '') {
+            continue;
+        }
+        if (!is_file($file) || pathinfo($file, PATHINFO_EXTENSION) !== 'php') {
+            ${logFunction}('NOTICE:test file does not exist: ' . $file);
+            continue;
+        }
+        foreach ($excludes as $exclude) {
+            if (strpos($file, $exclude) === 0) {
+                continue 2;
+            }
+        }
+        $found[] = $file;
+    }
     foreach ($directories as $dir) {
         if (!is_dir($dir)) {
             ${logFunction}('NOTICE:test directory does not exist: ' . $dir);
@@ -1110,8 +1132,8 @@ try {
         pg_stage_ok('discover_tests');
         exit(1);
     }
-    list($directories, $suffixes, $prefixes, $excludes) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
-    $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes);
+    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = wp_codebox_phpunit_parse_config(${JSON.stringify(options.phpunitXml)}, $test_dir);
+    $test_files = wp_codebox_phpunit_discover($directories, $suffixes, $prefixes, $excludes, $configured_files);
     $test_files = pg_filter_changed_test_files($test_files, $changed_test_files_raw, $test_dir);
     if ($selected_test_file !== '') {
         $selected_abs = $selected_test_file[0] === '/' ? $selected_test_file : $test_dir . '/' . ltrim($selected_test_file, '/');
@@ -1129,7 +1151,7 @@ try {
         }
         $test_files = array($selected_abs);
     }
-    pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
+    pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' files=' . count($configured_files) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
     if (empty($test_files)) {
         pg_log('NO_TEST_FILES');
         pg_stage_ok('discover_tests');
@@ -1443,8 +1465,8 @@ try {
 
 core_pg_stage_begin('discover_tests');
 try {
-    list($directories, $suffixes, $prefixes, $excludes) = core_pg_parse_phpunit_config($phpunit_xml, $tests_dir . '/tests');
-    $test_files = core_pg_discover_tests($directories, $suffixes, $prefixes, $excludes);
+    list($directories, $suffixes, $prefixes, $excludes, $configured_files) = core_pg_parse_phpunit_config($phpunit_xml, $tests_dir . '/tests');
+    $test_files = core_pg_discover_tests($directories, $suffixes, $prefixes, $excludes, $configured_files);
     $test_files = core_pg_filter_changed_test_files($test_files, $changed_test_files_raw, $core_root);
     if ($selected_test_file !== '') {
         $selected_abs = $selected_test_file[0] === '/' ? $selected_test_file : $core_root . '/' . ltrim($selected_test_file, '/');
@@ -1456,7 +1478,7 @@ try {
         }
         $test_files = array($selected_abs);
     }
-    core_pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
+    core_pg_log('DISCOVERY: dirs=' . implode(',', $directories) . ' files=' . count($configured_files) . ' suffixes=' . implode(',', $suffixes) . ' prefixes=' . implode(',', $prefixes) . ' excludes=' . count($excludes) . ' found=' . count($test_files));
     if (empty($test_files)) {
         core_pg_log('NO_TEST_FILES');
         core_pg_stage_ok('discover_tests');
