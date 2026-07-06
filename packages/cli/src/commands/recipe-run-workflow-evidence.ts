@@ -88,6 +88,10 @@ function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, man
   }
 
   const parsed = parseJsonObject(execution.stdout)
+  if (!parsed && command === "wordpress.editor-validate-blocks") {
+    const evidence = recipeBrowserEvidenceFromEditorValidateBlocksExecution(execution, manifestFiles)
+    return evidence ? [evidence] : []
+  }
   if (!parsed) {
     return []
   }
@@ -99,8 +103,37 @@ function recipeBrowserEvidenceForExecution(execution: RecipeExecutionResult, man
     })
   }
 
-  const evidence = recipeBrowserEvidenceFromParsedExecution(execution, command, parsed, manifestFiles, recipe)
+  const evidence = command === "wordpress.editor-validate-blocks"
+    ? recipeBrowserEvidenceFromEditorValidateBlocksExecution(execution, manifestFiles, parsed)
+    : recipeBrowserEvidenceFromParsedExecution(execution, command, parsed, manifestFiles, recipe)
   return evidence ? [evidence] : []
+}
+
+function recipeBrowserEvidenceFromEditorValidateBlocksExecution(execution: RecipeExecutionResult, manifestFiles: Map<string, ArtifactManifestFile>, parsed?: Record<string, unknown>): RecipeBrowserEvidence | undefined {
+  const files = recipeBrowserEvidenceFiles({
+    validateBlocks: "files/browser/editor-validate-blocks.json",
+    summary: "files/browser/editor-validate-blocks-summary.json",
+  }, manifestFiles)
+  const summaryFile = browserEvidenceFileRef("files/browser/editor-validate-blocks-summary.json", manifestFiles)
+  if (Object.keys(files).length === 0 && !summaryFile) {
+    return undefined
+  }
+
+  const validation = parsed ?? (typeof execution.result?.stdout === "string" ? parseJsonObject(execution.result.stdout) : undefined)
+  const summary = stripUndefined({
+    editorValidateBlocks: validation,
+  })
+  return stripUndefined({
+    schema: "wp-codebox/recipe-browser-evidence/v1",
+    phase: execution.recipePhase,
+    index: execution.recipeStepIndex,
+    command: "wordpress.editor-validate-blocks",
+    metadata: execution.recipeStepMetadata,
+    status: execution.exitCode === 0 ? "completed" : "failed",
+    summaryFile,
+    files,
+    summary: Object.keys(summary).length > 0 ? summary : undefined,
+  }) as RecipeBrowserEvidence
 }
 
 function recipeBrowserEvidenceFromParsedExecution(execution: RecipeExecutionResult, command: string, parsed: Record<string, unknown>, manifestFiles: Map<string, ArtifactManifestFile>, recipe: WorkspaceRecipe | undefined): RecipeBrowserEvidence | undefined {
@@ -169,7 +202,7 @@ function browserEvidenceFileRef(path: string | undefined, manifestFiles: Map<str
 }
 
 function recipeCommandProducesBrowserEvidence(command: string): boolean {
-  return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.html-capture" || command === "wordpress.visual-compare"
+  return command.startsWith("wordpress.browser-") || command === "wordpress.editor-canvas-probe" || command === "wordpress.editor-validate-blocks" || command === "wordpress.html-capture" || command === "wordpress.visual-compare"
 }
 
 export async function executeRecipeWorkflowStep(runtime: Runtime, workflowStep: ReturnType<typeof recipeWorkflowSteps>[number], recipeDirectory: string, sandboxWorkspace?: ReturnType<typeof sandboxWorkspaceContract>, artifactRoot?: string, options?: RecipeRunOptions, inputMountPathMap: readonly InputMountPathMapping[] = []): Promise<RecipeExecutionResult> {
