@@ -3,7 +3,7 @@ import { now, sha256 } from "@automattic/wp-codebox-core/internals"
 import { durationStringMs } from "./browser-actions.js"
 import { BrowserArtifactSession } from "./browser-artifact-session.js"
 import { BrowserCommandArtifactError } from "./browser-command-artifact-error.js"
-import type { BrowserArtifact, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
+import type { BrowserArtifact, BrowserArtifactFiles, BrowserArtifactSummary, BrowserEditorCanvasProbeDiagnostic, BrowserEditorCanvasProbeSummary, BrowserEditorCanvasSelectorGroupSummary, BrowserEditorCanvasSelectorSummary, BrowserEditorReadinessSummary, BrowserEditorSaveSummary, BrowserEditorValidateBlocksSummary, BrowserEditorValiditySummary, BrowserProbeAuthSummary, BrowserProbeErrorRecord, BrowserProbeViewport, BrowserStepRecord } from "./browser-artifacts.js"
 import { attachBrowserCaptureListeners, launchChromiumBrowser } from "./browser-capture-session.js"
 import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
@@ -522,7 +522,8 @@ export async function runEditorOpenCommand({
   const topology = browserPreviewTopology(args, runtimeSpec, server.serverUrl)
   const { preview, networkPolicy } = topology
   const targetUrl = topology.resolveUrl(target.url)
-  const artifactSession = new BrowserArtifactSession(artifactRoot, "files/browser", { source: "wordpress.editor-open", operation: "editor-open" })
+  const artifactPathPrefix = editorOpenArtifactPathPrefixFromArgs(args)
+  const artifactSession = new BrowserArtifactSession(artifactRoot, artifactPathPrefix, { source: "wordpress.editor-open", operation: "editor-open" })
 
   const stepRecords: BrowserStepRecord[] = []
   const consoleMessages: Record<string, unknown>[] = []
@@ -637,16 +638,7 @@ export async function runEditorOpenCommand({
       ...(server.previewProxyDiagnostics ? { previewProxy: server.previewProxyDiagnostics } : {}),
       ...(browserPreviewNetworkPolicyIsActive(networkPolicy) ? { networkPolicy: browserPreviewNetworkPolicySummary(networkPolicy) } : {}),
       ...topology.origins,
-      files: {
-        ...(capture.has("steps") ? { steps: "files/browser/editor-steps.jsonl" } : {}),
-        ...(capture.has("console") ? { console: "files/browser/editor-console.jsonl" } : {}),
-        ...(capture.has("editor-state") ? { editorState: "files/browser/editor-state.json" } : {}),
-        ...(capture.has("editor-validity") ? { editorValidity: "files/browser/editor-validity.json" } : {}),
-        ...(capture.has("errors") ? { errors: "files/browser/editor-errors.jsonl" } : {}),
-        ...(capture.has("html") ? { html: "files/browser/editor-snapshot.html" } : {}),
-        ...(capture.has("screenshot") ? { screenshot: "files/browser/editor-screenshot.png" } : {}),
-        summary: "files/browser/editor-summary.json",
-      },
+      files: editorOpenArtifactFilesForCapture(capture, artifactPathPrefix),
       summary: {
         steps: stepRecords.length,
         consoleMessages: consoleMessages.length,
@@ -706,6 +698,32 @@ export async function runEditorOpenCommand({
       summary: artifact.summary,
       steps: stepRecords,
     }, null, 2)}\n`,
+  }
+}
+
+export function editorOpenArtifactPathPrefixFromArgs(args: string[]): string {
+  const rawPrefix = argValue(args, "artifact-prefix")?.trim()
+  if (!rawPrefix) {
+    return "files/browser"
+  }
+
+  const prefix = rawPrefix.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "")
+  if (!prefix || prefix.startsWith("/") || prefix.split("/").includes("..")) {
+    throw new Error(`wordpress.editor-open artifact-prefix must be a relative artifact directory without traversal: ${rawPrefix}`)
+  }
+  return prefix
+}
+
+export function editorOpenArtifactFilesForCapture(capture: ReadonlySet<string>, artifactPathPrefix = "files/browser"): BrowserArtifactFiles & { summary: string } {
+  return {
+    ...(capture.has("steps") ? { steps: `${artifactPathPrefix}/editor-steps.jsonl` } : {}),
+    ...(capture.has("console") ? { console: `${artifactPathPrefix}/editor-console.jsonl` } : {}),
+    ...(capture.has("editor-state") ? { editorState: `${artifactPathPrefix}/editor-state.json` } : {}),
+    ...(capture.has("editor-validity") ? { editorValidity: `${artifactPathPrefix}/editor-validity.json` } : {}),
+    ...(capture.has("errors") ? { errors: `${artifactPathPrefix}/editor-errors.jsonl` } : {}),
+    ...(capture.has("html") ? { html: `${artifactPathPrefix}/editor-snapshot.html` } : {}),
+    ...(capture.has("screenshot") ? { screenshot: `${artifactPathPrefix}/editor-screenshot.png` } : {}),
+    summary: `${artifactPathPrefix}/editor-summary.json`,
   }
 }
 
