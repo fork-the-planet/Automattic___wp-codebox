@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { captureEditorValidity } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { captureEditorValidity, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs } from "../packages/runtime-playground/src/editor-command-runners.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
 const steps = await editorActionStepsFromArgs([
@@ -86,5 +86,32 @@ const passthrough = await resolveEditorOpenTarget(postTarget, {
   server: { serverUrl: "http://localhost" } as never,
 })
 assert.equal(passthrough.url, "/wp-admin/post.php?post=12&action=edit")
+
+// editor-open remains backward-compatible by default, but can namespace every
+// artifact path for per-fixture batch evidence.
+assert.equal(editorOpenArtifactPathPrefixFromArgs([]), "files/browser")
+assert.equal(
+  editorOpenArtifactPathPrefixFromArgs(["artifact-prefix=files/browser/editor-open/coffee-shop"]),
+  "files/browser/editor-open/coffee-shop",
+)
+assert.deepEqual(editorOpenArtifactFilesForCapture(new Set(["steps", "console", "errors", "html", "screenshot", "editor-state", "editor-validity"])), {
+  steps: "files/browser/editor-steps.jsonl",
+  console: "files/browser/editor-console.jsonl",
+  errors: "files/browser/editor-errors.jsonl",
+  html: "files/browser/editor-snapshot.html",
+  screenshot: "files/browser/editor-screenshot.png",
+  editorState: "files/browser/editor-state.json",
+  editorValidity: "files/browser/editor-validity.json",
+  summary: "files/browser/editor-summary.json",
+})
+assert.deepEqual(editorOpenArtifactFilesForCapture(new Set(["screenshot", "editor-state"]), "files/browser/editor-open/coffee-shop"), {
+  screenshot: "files/browser/editor-open/coffee-shop/editor-screenshot.png",
+  editorState: "files/browser/editor-open/coffee-shop/editor-state.json",
+  summary: "files/browser/editor-open/coffee-shop/editor-summary.json",
+})
+assert.throws(
+  () => editorOpenArtifactPathPrefixFromArgs(["artifact-prefix=files/browser/../escape"]),
+  /relative artifact directory/,
+)
 
 console.log("editor actions ok")
