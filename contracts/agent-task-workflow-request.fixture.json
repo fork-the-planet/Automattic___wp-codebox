@@ -1,6 +1,11 @@
 {
   "schema": "wp-codebox/agent-task-workflow-request/v1",
-  "agent_bundle": "bundles/example-agent",
+  "external_package_source": {
+    "repository": "automattic/example-agent-packages",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "path": "packages/example-agent.agent.json",
+    "digest": "sha256-bytes-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
   "workload": {
     "id": "example-maintenance",
     "label": "Run example maintenance",

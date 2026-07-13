@@ -7,7 +7,7 @@ jobs:
   run-agent-task:
     uses: Automattic/wp-codebox/.github/workflows/run-agent-task.yml@main
     with:
-      agent_bundle: bundles/example-agent
+      external_package_source: '{"repository":"OWNER/agent-packages","revision":"0123456789abcdef0123456789abcdef01234567","path":"agents/example.agent.json","digest":"sha256-bytes-v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
       target_repo: Automattic/example-target
       prompt: Refresh the configured surface from source evidence.
       writable_paths: README.md,docs/**
@@ -20,17 +20,20 @@ jobs:
       allowed_repos: '["Automattic/example-target"]'
       require_access_token: true
       output_projections: '{"pr_url":"outputs.artifact_result.result.outputs.runner_workspace_publication.pull_request.url"}'
-    secrets: inherit
+    secrets:
+      EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-The workflow checks out the target workspace, imports the selected native
-package, invokes it through the default native chat path, runs declared commands
+The workflow checks out the target workspace, fetches and imports the selected
+public native package, invokes the package-declared agent through the native chat path, runs declared commands
 in a credential-free verification environment, and returns actual runtime and
 publication data.
 
 ## Inputs
 
-- `agent_bundle`: selected agent bundle path in the target repository.
+- `external_package_source`: immutable descriptor with `repository`, full commit `revision`, one package-relative `.agent.json` `path`, and `digest`. Packages are supported only from publicly accessible GitHub repositories, fetched from canonical `https://github.com/OWNER/REPOSITORY.git` without credentials. `digest` is exactly `sha256-bytes-v1:<lowercase-sha256>` over the raw file bytes; filenames and JSON content are UTF-8-safe and are not normalized before hashing.
+- `EXTERNAL_PACKAGE_SOURCE_POLICY`: required reusable-workflow secret, supplied by the caller's operator-controlled secret configuration. Its strict version 1 JSON shape is `{"version":1,"repositories":{"owner/repository":["agents/example.agent.json"]}}`. Every entry is an exact standalone `.agent.json` path. The policy is validated in runner memory, is never part of task input, and is not uploaded.
 - `target_repo`: `OWNER/REPO` target repository.
 - `prompt`, `writable_paths`, provider/model, `max_turns`, `time_budget_ms`, callback data, and artifact declarations: native task inputs.
 - `runner_workspace`: JSON runner-workspace publication request owned by the package.
@@ -52,6 +55,44 @@ checkout does not persist credentials. Verification, dependency, and drift
 commands run with a clean environment that excludes provider and GitHub secrets.
 Known secret values are redacted before result or artifact persistence; captured
 stdout/stderr is capped at 32 KiB and workflow outputs at 8 KiB.
+
+`EXTERNAL_PACKAGE_SOURCE_POLICY` is treated as a secret even when it contains
+only repository and path metadata. It is redacted from runner output, excluded
+from task requests, runtime input, results, and upload artifacts, and is never
+passed to the agent. The selected descriptor is authorized against this policy
+both before persistence and immediately before host materialization.
+
+The source fetch receives no repository, publication, provider, or GitHub token.
+Public package bytes are verified against the immutable descriptor, encoded in
+the normal in-memory runtime recipe, and decoded inside Playground. The runtime
+re-hashes raw bytes, validates the canonical flat package contract
+(`schema_version: 1`, `bundle_slug`, and exactly one authoritative
+`agent.agent_slug`), canonically imports it, verifies
+that exact slug registered, and passes it explicitly as the `agent` input to
+`agents/chat`. The descriptor and caller cannot select a different identity.
+Only `{slug}` is carried in task metadata. The importer-only temporary
+`.agent.json` is removed in a `try/finally` before resolving agent tools. No
+package file is mounted into or visible from the agent workspace.
+
+## Runtime Coverage
+
+The repository's native-loop and PHP runtime-package tests execute generated
+PHP with narrow WordPress and native agent-registry
+shims. They prove digest-then-schema validation, canonical import, exact slug
+resolution, `agents/chat` selection, invocation order, and temporary-file
+cleanup. They are not a WordPress Playground end-to-end test: this repository
+does not provide a fixture that boots both the agent-registry plugin and a real
+provider-backed chat turn in Playground. The existing Playground CLI tests use
+injected CLI modules and do not exercise that plugin/provider path.
+
+To run the optional cross-repository package coverage, use a Docs Agent checkout
+pinned to commit `3da1b8076359db9bf9f4ee7dadcc3932c080ed71`, which contains
+`technical-docs-maintenance-agent.agent.json`:
+
+```sh
+DOCS_AGENT_DIR=/path/to/docs-agent npm run test:external-native-package-materialization
+DOCS_AGENT_DIR=/path/to/docs-agent npm run test:agent-no-data-machine-loop
+```
 
 When `success_requires_pr` is true, success requires the canonical
 `wp-codebox/runner-workspace-publication-result/v1` result with `success: true`,
@@ -96,7 +137,9 @@ input, secret, or output expectation.
 
 ## Compatibility
 
-This removes the previously exposed `runner_recipe`, `context_repositories`,
+This public-only v1 interface removes support for confidential or private package
+bytes and removes the previously exposed `external_package_allowed_repositories`,
+`external_package_allowed_paths`, `runner_recipe`, `context_repositories`,
 `workspace_contract_checks`, `actions_artifact_downloads`,
 `success_completion_outcomes`, `step_budget`, and `tool_results_key` inputs.
 They were serialized without a generic WP Codebox execution primitive, so

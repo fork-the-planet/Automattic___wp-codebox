@@ -3,8 +3,8 @@ name: Run Agent Task (reusable)
 'on':
   workflow_call:
     inputs:
-      agent_bundle:
-        description: Repository-relative path to the agent bundle selected by the caller.
+      external_package_source:
+        description: "JSON descriptor for exactly one standalone .agent.json file: repository, immutable revision, file path, and sha256-bytes-v1 digest."
         type: string
         required: true
       workload_id:
@@ -125,8 +125,11 @@ name: Run Agent Task (reusable)
       MODEL_PROVIDER_SECRET_5:
         required: false
       ACCESS_TOKEN:
-        description: GitHub token with access to every repository in access_token_repos.
+        description: GitHub token for target-repository publication only; it is never used to fetch external packages.
         required: false
+      EXTERNAL_PACKAGE_SOURCE_POLICY:
+        description: Trusted versioned JSON policy authorizing external native package repositories and exact standalone .agent.json paths.
+        required: true
     outputs:
       job_status:
         value: ${{ jobs.run-agent-task.outputs.job_status }}
@@ -203,7 +206,8 @@ jobs:
       - name: Build Codebox task request
         id: plan
         env:
-          AGENT_BUNDLE: ${{ inputs.agent_bundle }}
+          EXTERNAL_PACKAGE_SOURCE: ${{ inputs.external_package_source }}
+          EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
           WORKLOAD_ID: ${{ inputs.workload_id }}
           WORKLOAD_LABEL: ${{ inputs.workload_label }}
           COMPONENT_ID: ${{ inputs.component_id }}
@@ -252,6 +256,7 @@ jobs:
           # environment variable. It is never written to task inputs or artifacts.
           GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
           ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
+          EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
 
       - name: Prepare Codebox task uploads
@@ -268,6 +273,7 @@ jobs:
           MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
           MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
           GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
+          EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
 
       - name: Upload Codebox task request
         if: always()

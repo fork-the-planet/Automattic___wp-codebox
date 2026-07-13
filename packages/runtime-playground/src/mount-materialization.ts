@@ -200,7 +200,6 @@ async function materializeHostMountToVfs(server: PlaygroundCliServer, mount: Mou
   }
   await flushDirectories()
   await flushFileBatch()
-
   return { materialized, created, skipped }
 }
 
@@ -467,6 +466,7 @@ foreach (($payload['directories'] ?? array()) as $directory) {
     }
     $skipped++;
 }
+
 foreach (($payload['directories'] ?? array()) as $directory) {
     $directory = (string) $directory;
     if ('' === $directory || str_contains($directory, "\0")) {
