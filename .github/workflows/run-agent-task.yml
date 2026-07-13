@@ -3,10 +3,6 @@ name: Run Agent Task (reusable)
 'on':
   workflow_call:
     inputs:
-      runner_recipe:
-        description: Optional temporary Codebox runner recipe descriptor, such as OWNER/REPO@ref:path.
-        type: string
-        required: false
       agent_bundle:
         description: Repository-relative path to the agent bundle selected by the caller.
         type: string
@@ -48,13 +44,9 @@ name: Run Agent Task (reusable)
         type: string
         default: '{}'
       validation_dependencies:
-        description: Optional validation dependency install command or descriptor.
+        description: Optional validation dependency install command.
         type: string
         default: ""
-      context_repositories:
-        description: JSON array of additional repository context descriptors.
-        type: string
-        default: '[]'
       verification_commands:
         description: JSON array of verification commands to run after agent changes.
         type: string
@@ -63,22 +55,10 @@ name: Run Agent Task (reusable)
         description: JSON array of drift checks for generated outputs.
         type: string
         default: '[]'
-      workspace_contract_checks:
-        description: JSON object describing workspace contract checks.
-        type: string
-        default: '{}'
-      actions_artifact_downloads:
-        description: JSON array of workflow artifacts to preload into the run.
-        type: string
-        default: '[]'
       success_requires_pr:
         description: Whether success requires a published pull request.
         type: boolean
         default: false
-      success_completion_outcomes:
-        description: JSON array of accepted non-PR completion outcomes.
-        type: string
-        default: '[]'
       access_token_repos:
         description: Comma-separated repositories for access-token scoping.
         type: string
@@ -95,18 +75,10 @@ name: Run Agent Task (reusable)
         description: Maximum agent turns for the run.
         type: number
         default: 12
-      step_budget:
-        description: Maximum tool/action steps for the run.
-        type: number
-        default: 16
       time_budget_ms:
         description: Run time budget in milliseconds.
         type: number
         default: 600000
-      tool_results_key:
-        description: Metadata key for captured tool results.
-        type: string
-        default: tool_results
       output_projections:
         description: JSON object mapping workflow output names to result paths.
         type: string
@@ -128,7 +100,7 @@ name: Run Agent Task (reusable)
         type: string
         default: '[]'
       callback_data:
-        description: JSON object passed through to the selected runner recipe.
+        description: JSON object passed through to the native task.
         type: string
         default: '{}'
       run_agent:
@@ -152,6 +124,9 @@ name: Run Agent Task (reusable)
         required: false
       MODEL_PROVIDER_SECRET_5:
         required: false
+      ACCESS_TOKEN:
+        description: GitHub token with access to every repository in access_token_repos.
+        required: false
     outputs:
       job_status:
         value: ${{ jobs.run-agent-task.outputs.job_status }}
@@ -161,6 +136,8 @@ name: Run Agent Task (reusable)
         value: ${{ jobs.run-agent-task.outputs.transcript_summary }}
       engine_data_json:
         value: ${{ jobs.run-agent-task.outputs.engine_data_json }}
+      projected_outputs_json:
+        value: ${{ jobs.run-agent-task.outputs.projected_outputs_json }}
       credential_mode:
         value: ${{ jobs.run-agent-task.outputs.credential_mode }}
       declared_artifacts_json:
@@ -169,25 +146,29 @@ name: Run Agent Task (reusable)
 jobs:
   run-agent-task:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
-      job_status: ${{ steps.plan.outputs.job_status }}
-      transcript_json: ${{ steps.plan.outputs.transcript_json }}
-      transcript_summary: ${{ steps.plan.outputs.transcript_summary }}
-      engine_data_json: ${{ steps.plan.outputs.engine_data_json }}
-      credential_mode: ${{ steps.plan.outputs.credential_mode }}
-      declared_artifacts_json: ${{ steps.plan.outputs.declared_artifacts_json }}
+      job_status: ${{ steps.execute.outputs.job_status }}
+      transcript_json: ${{ steps.execute.outputs.transcript_json }}
+      transcript_summary: ${{ steps.execute.outputs.transcript_summary }}
+      engine_data_json: ${{ steps.execute.outputs.engine_data_json }}
+      projected_outputs_json: ${{ steps.execute.outputs.projected_outputs_json }}
+      credential_mode: ${{ steps.execute.outputs.credential_mode }}
+      declared_artifacts_json: ${{ steps.execute.outputs.declared_artifacts_json }}
     steps:
       - name: Resolve WP Codebox workflow ref
         id: workflow-ref
         env:
-          # `github.job_workflow_sha` is the commit SHA of THIS reusable workflow
+          # `github.workflow_sha` is the commit SHA of THIS reusable workflow
           # file, so the checked-out helper scripts always match the version of
           # run-agent-task.yml that is executing. `github.workflow_ref` must not be
           # used here: inside a reusable workflow it resolves to the caller's
           # top-level workflow ref, so its branch name (e.g. `trunk` for a caller
           # whose default branch is not `main`) gets used to check out
           # Automattic/wp-codebox and fails when that ref does not exist here.
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          JOB_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           ref="${JOB_WORKFLOW_SHA}"
           if [ -z "${ref}" ]; then
@@ -202,10 +183,26 @@ jobs:
           ref: ${{ steps.workflow-ref.outputs.ref }}
           path: .wp-codebox-workflow
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install WP Codebox runtime
+        working-directory: .wp-codebox-workflow
+        run: npm ci
+
+      - name: Checkout target workspace
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_repo }}
+          path: workspace
+          token: ${{ secrets.ACCESS_TOKEN || github.token }}
+          persist-credentials: false
+
       - name: Build Codebox task request
         id: plan
         env:
-          RUNNER_RECIPE: ${{ inputs.runner_recipe }}
           AGENT_BUNDLE: ${{ inputs.agent_bundle }}
           WORKLOAD_ID: ${{ inputs.workload_id }}
           WORKLOAD_LABEL: ${{ inputs.workload_label }}
@@ -221,20 +218,14 @@ jobs:
           # workspace path instead of this JSON config.
           RUNNER_WORKSPACE_CONFIG: ${{ inputs.runner_workspace }}
           VALIDATION_DEPENDENCIES: ${{ inputs.validation_dependencies }}
-          CONTEXT_REPOSITORIES: ${{ inputs.context_repositories }}
           VERIFICATION_COMMANDS: ${{ inputs.verification_commands }}
           DRIFT_CHECKS: ${{ inputs.drift_checks }}
-          WORKSPACE_CONTRACT_CHECKS: ${{ inputs.workspace_contract_checks }}
-          ACTIONS_ARTIFACT_DOWNLOADS: ${{ inputs.actions_artifact_downloads }}
           SUCCESS_REQUIRES_PR: ${{ inputs.success_requires_pr }}
-          SUCCESS_COMPLETION_OUTCOMES: ${{ inputs.success_completion_outcomes }}
           ACCESS_TOKEN_REPOS: ${{ inputs.access_token_repos }}
           REQUIRE_ACCESS_TOKEN: ${{ inputs.require_access_token }}
           ALLOWED_REPOS: ${{ inputs.allowed_repos }}
           MAX_TURNS: ${{ inputs.max_turns }}
-          STEP_BUDGET: ${{ inputs.step_budget }}
           TIME_BUDGET_MS: ${{ inputs.time_budget_ms }}
-          TOOL_RESULTS_KEY: ${{ inputs.tool_results_key }}
           OUTPUT_PROJECTIONS: ${{ inputs.output_projections }}
           TRANSCRIPT_ARTIFACT_NAME: ${{ inputs.transcript_artifact_name }}
           REPLAY_BUNDLE_ARTIFACT_NAME: ${{ inputs.replay_bundle_artifact_name }}
@@ -245,18 +236,55 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: node .wp-codebox-workflow/.github/scripts/run-agent-task/build-codebox-task-request.mjs
 
+      - name: Execute native agent task
+        id: execute
+        env:
+          AGENT_TASK_REQUEST_PATH: ${{ github.workspace }}/.codebox/agent-task-request.json
+          AGENT_TASK_WORKSPACE: ${{ github.workspace }}/workspace
+          WP_CODEBOX_WORKFLOW_ROOT: ${{ github.workspace }}/.wp-codebox-workflow
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_PROVIDER_SECRET_1: ${{ secrets.MODEL_PROVIDER_SECRET_1 }}
+          MODEL_PROVIDER_SECRET_2: ${{ secrets.MODEL_PROVIDER_SECRET_2 }}
+          MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
+          MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
+          MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
+          # Runner workspace tools resolve GitHub credentials from this standard
+          # environment variable. It is never written to task inputs or artifacts.
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
+          ACCESS_TOKEN_CONFIGURED: ${{ secrets.ACCESS_TOKEN != '' }}
+        run: node .wp-codebox-workflow/.github/scripts/run-agent-task/execute-native-agent-task.mjs
+
+      - name: Prepare Codebox task uploads
+        if: always()
+        run: node .wp-codebox-workflow/.github/scripts/run-agent-task/prepare-agent-task-upload.mjs
+        env:
+          AGENT_TASK_WORKSPACE: ${{ github.workspace }}/workspace
+          AGENT_TASK_REQUEST_PATH: ${{ github.workspace }}/.codebox/agent-task-request.json
+          AGENT_TASK_UPLOAD_PATH: ${{ github.workspace }}/workspace/.codebox/agent-task-upload
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MODEL_PROVIDER_SECRET_1: ${{ secrets.MODEL_PROVIDER_SECRET_1 }}
+          MODEL_PROVIDER_SECRET_2: ${{ secrets.MODEL_PROVIDER_SECRET_2 }}
+          MODEL_PROVIDER_SECRET_3: ${{ secrets.MODEL_PROVIDER_SECRET_3 }}
+          MODEL_PROVIDER_SECRET_4: ${{ secrets.MODEL_PROVIDER_SECRET_4 }}
+          MODEL_PROVIDER_SECRET_5: ${{ secrets.MODEL_PROVIDER_SECRET_5 }}
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN || github.token }}
+
       - name: Upload Codebox task request
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codebox-agent-task-request-${{ github.run_id }}
           path: |
-            .codebox/agent-task-request.json
-            .codebox/agent-task-workflow-result.json
+            workspace/.codebox/agent-task-upload/.codebox/agent-task-request.json
+            workspace/.codebox/agent-task-upload/.codebox/agent-task-workflow-result.json
+            workspace/.codebox/agent-task-upload/.codebox/native-agent-task-input.json
 
       - name: Upload Codebox task result
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codebox-agent-task-result-${{ github.run_id }}
-          path: .codebox/agent-task-workflow-result.json
+          path: |
+            workspace/.codebox/agent-task-upload/.codebox/agent-task-workflow-result.json
+            workspace/.codebox/agent-task-upload/.codebox/agent-task-artifacts
           if-no-files-found: ignore
