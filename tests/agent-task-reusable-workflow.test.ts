@@ -13,6 +13,7 @@ const publicWorkflowSurface = workflow.slice(0, workflow.indexOf("jobs:"))
 assert.match(workflow, /^name: Run Agent Task \(reusable\)$/m)
 assert.match(workflow, /workflow_call:/)
 assert.match(workflow, /runner_recipe:/)
+assert.match(workflow, /runner_recipe:\n\s+description:[^\n]*temporary[^\n]*\n\s+type: string\n\s+required: false/)
 assert.match(workflow, /agent_bundle:/)
 assert.match(workflow, /runner_workspace:/)
 assert.match(workflow, /artifact_declarations:/)
@@ -31,12 +32,14 @@ const docs = await readFile(new URL("../docs/agent-task-reusable-workflow.md", i
 assert.match(docs, /^# Agent Task Reusable Workflow/m)
 assert.match(docs, /Automattic\/wp-codebox\/.github\/workflows\/run-agent-task.yml@main/)
 assert.match(docs, /runner_recipe/)
+assert.match(docs, /temporary optional input/)
+assert.match(docs, /fails closed until the executable\s+\[wp-codebox#1751\]/)
 assert.match(docs, /agent_bundle/)
 assert.match(docs, /runner_workspace/)
 assert.match(docs, /access_token_repos/)
 assert.match(docs, /require_access_token/)
-assert.match(docs, /implementation-specific\s+runtime wiring, workspace adapters, plugins, and model setup stay behind the WP\s+Codebox boundary/)
-assert.doesNotMatch(docs, /docs-agent|wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
+assert.match(docs, /implementation-specific\s+runtime\s+wiring,\s+workspace\s+adapters,\s+plugins,\s+and\s+model\s+setup\s+stay\s+behind\s+the\s+WP\s+Codebox\s+boundary/)
+assert.doesNotMatch(docs, /wp-codebox\/docs-agent-runner-recipe\/v1|recipe_path|recipe_json|wp_codebox_ref|datamachine|data machine|data-machine|agents api|sandbox mounts|ability ids|provider internals|homeboy|require_app_token/i)
 
 const tmp = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-"))
 const outputPath = join(tmp, "github-output.txt")
@@ -60,7 +63,7 @@ await execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-co
     WRITABLE_PATHS: "README.md,docs/**",
     PROVIDER: "openai",
     MODEL: "gpt-5.5",
-    RUNNER_WORKSPACE: '{"enabled":true,"repo":"Automattic/example-target"}',
+    RUNNER_WORKSPACE_CONFIG: '{"enabled":true,"repo":"Automattic/example-target"}',
     VALIDATION_DEPENDENCIES: "",
     CONTEXT_REPOSITORIES: "[]",
     VERIFICATION_COMMANDS: '[{"command":"npm test","description":"Run checks"}]',
@@ -104,5 +107,58 @@ assert.match(outputs, /job_status<<__WP_CODEBOX_OUTPUT__\nskipped\n__WP_CODEBOX_
 assert.match(outputs, /credential_mode<<__WP_CODEBOX_OUTPUT__\napp-token\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /request_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-request\.json\n__WP_CODEBOX_OUTPUT__/)
 assert.match(outputs, /result_path<<__WP_CODEBOX_OUTPUT__\n\.codebox\/agent-task-workflow-result\.json\n__WP_CODEBOX_OUTPUT__/)
+
+async function runTaskRequest(runnerRecipe, runAgent, dryRun) {
+  const cwd = await mkdtemp(join(tmpdir(), "wp-codebox-agent-task-workflow-no-recipe-"))
+  const outputPath = join(cwd, "github-output.txt")
+  await writeFile(outputPath, "")
+
+  const run = execFileAsync("node", [new URL("../.github/scripts/run-agent-task/build-codebox-task-request.mjs", import.meta.url).pathname], {
+    cwd,
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: outputPath,
+      RUNNER_RECIPE: runnerRecipe,
+      AGENT_BUNDLE: "bundles/example-agent",
+      TARGET_REPO: "Automattic/example-target",
+      PROMPT: "Update the configured surface.",
+      MAX_TURNS: "12",
+      STEP_BUDGET: "16",
+      TIME_BUDGET_MS: "600000",
+      RUN_AGENT: String(runAgent),
+      DRY_RUN: String(dryRun),
+    },
+  })
+
+  return { cwd, outputPath, run }
+}
+
+for (const { runAgent, dryRun, status } of [
+  { runAgent: false, dryRun: false, status: "skipped" },
+  { runAgent: false, dryRun: true, status: "skipped" },
+  { runAgent: true, dryRun: true, status: "dry-run" },
+]) {
+  const omittedRecipe = await runTaskRequest("", runAgent, dryRun)
+  await omittedRecipe.run
+
+  const omittedRecipeRequest = JSON.parse(await readFile(join(omittedRecipe.cwd, ".codebox", "agent-task-request.json"), "utf8"))
+  const omittedRecipeResult = JSON.parse(await readFile(join(omittedRecipe.cwd, ".codebox", "agent-task-workflow-result.json"), "utf8"))
+  assert.equal(Object.hasOwn(omittedRecipeRequest, "runner_recipe"), false)
+  assert.equal(omittedRecipeResult.status, status)
+  assert.match(await readFile(omittedRecipe.outputPath, "utf8"), new RegExp(`job_status<<__WP_CODEBOX_OUTPUT__\\n${status}\\n__WP_CODEBOX_OUTPUT__`))
+}
+
+const recipeBackedLiveRun = await runTaskRequest("Automattic/example-runner@abc123:ci/runner-recipe.json", true, false)
+await recipeBackedLiveRun.run
+const recipeBackedLiveResult = JSON.parse(await readFile(join(recipeBackedLiveRun.cwd, ".codebox", "agent-task-workflow-result.json"), "utf8"))
+assert.equal(recipeBackedLiveResult.status, "planned")
+
+const omittedRecipeLiveRun = await runTaskRequest("", true, false)
+await assert.rejects(omittedRecipeLiveRun.run, (error: { stderr: string }) => {
+  assert.match(error.stderr, /RUNNER_RECIPE may be omitted only when RUN_AGENT=false or DRY_RUN=true/)
+  assert.match(error.stderr, /executable workflow in wp-codebox PR #1751 must land/)
+  return true
+})
+assert.equal(await readFile(omittedRecipeLiveRun.outputPath, "utf8"), "")
 
 console.log("agent task reusable workflow ok")
