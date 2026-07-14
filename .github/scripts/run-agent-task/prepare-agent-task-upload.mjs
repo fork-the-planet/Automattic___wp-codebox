@@ -1,5 +1,5 @@
 import { constants } from "node:fs"
-import { lstat, mkdir, open, readdir, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { isUtf8 } from "node:buffer"
 import { join, resolve } from "node:path"
 
@@ -8,12 +8,41 @@ const workspace = resolve(process.env.AGENT_TASK_WORKSPACE || process.cwd())
 const uploadPath = resolve(process.env.AGENT_TASK_UPLOAD_PATH || join(workspace, ".codebox", "agent-task-upload"))
 const requestPath = resolve(process.env.AGENT_TASK_REQUEST_PATH || join(workspace, ".codebox", "agent-task-request.json"))
 const secretValues = ["OPENAI_API_KEY", "MODEL_PROVIDER_SECRET_1", "MODEL_PROVIDER_SECRET_2", "MODEL_PROVIDER_SECRET_3", "MODEL_PROVIDER_SECRET_4", "MODEL_PROVIDER_SECRET_5", "GITHUB_TOKEN", "GH_TOKEN", "ACCESS_TOKEN", "EXTERNAL_PACKAGE_SOURCE_POLICY"].map((name) => process.env[name]).filter(Boolean)
+const runtimeSourceRoot = process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT ? resolve(process.env.WP_CODEBOX_RUNTIME_SOURCE_ROOT) : ""
 
 function redact(value) {
   return secretValues.reduce((output, secret) => output.split(secret).join("[REDACTED]"), value)
 }
 
+const PRIVATE_RUNTIME_PATH_FIELDS = new Set(["source", "path", "sourceRoot", "originalSource", "preparedPath", "requestedPath", "source_package_root", "artifacts_path", "runtime_input_path", "task_path", "result_path", "event_stream_path", "materialization_result_path"])
+
+function isPrivateRuntimePath(value) {
+  if (!runtimeSourceRoot || typeof value !== "string") return false
+  const path = resolve(value)
+  return path === runtimeSourceRoot || path.startsWith(`${runtimeSourceRoot}/`)
+}
+
+function omitPrivateRuntimeSourcePaths(value) {
+  if (Array.isArray(value)) return value.map(omitPrivateRuntimeSourcePaths)
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
+    if (PRIVATE_RUNTIME_PATH_FIELDS.has(key) && isPrivateRuntimePath(entry)) return []
+    return [[key, omitPrivateRuntimeSourcePaths(entry)]]
+  }))
+}
+
+function sanitizeText(text) {
+  try {
+    return `${JSON.stringify(omitPrivateRuntimeSourcePaths(JSON.parse(text)), null, 2)}\n`
+  } catch {
+    return text
+  }
+}
+
 async function stageFile(source, destination) {
+  if (isPrivateRuntimePath(source)) {
+    throw new Error("Runtime source files must never be staged for artifact upload.")
+  }
   const metadata = await lstat(source).catch(() => null)
   if (!metadata?.isFile() || metadata.size > MAX_UPLOAD_FILE_BYTES) return false
   const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => null)
@@ -23,7 +52,10 @@ async function stageFile(source, destination) {
   await handle.close()
   if (!contents || contents.includes(0) || !isUtf8(contents)) return false
   await mkdir(resolve(destination, ".."), { recursive: true })
-  await writeFile(destination, redact(contents.toString("utf8")))
+  let text = contents.toString("utf8")
+  text = sanitizeText(text)
+  if (runtimeSourceRoot && text.includes(runtimeSourceRoot)) throw new Error("Runtime source paths must never be persisted in artifact uploads.")
+  await writeFile(destination, redact(text))
   return true
 }
 
@@ -38,6 +70,17 @@ async function stageDirectory(source, destination) {
   }
 }
 
+async function assertNoPrivateRuntimePaths(directory) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) await assertNoPrivateRuntimePaths(path)
+    else if (entry.isFile()) {
+      const contents = await readFile(path, "utf8")
+      if (runtimeSourceRoot && contents.includes(runtimeSourceRoot)) throw new Error("Runtime source paths must never be persisted in artifact uploads.")
+    }
+  }
+}
+
 await rm(uploadPath, { recursive: true, force: true })
 await mkdir(uploadPath, { recursive: true })
 await stageFile(requestPath, join(uploadPath, ".codebox", "agent-task-request.json"))
@@ -45,3 +88,4 @@ for (const path of [".codebox/agent-task-workflow-result.json", ".codebox/native
   await stageFile(join(workspace, path), join(uploadPath, path))
 }
 await stageDirectory(join(workspace, ".codebox", "agent-task-artifacts"), join(uploadPath, ".codebox", "agent-task-artifacts"))
+await assertNoPrivateRuntimePaths(uploadPath)
