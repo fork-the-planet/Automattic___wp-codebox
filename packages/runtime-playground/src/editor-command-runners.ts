@@ -9,7 +9,7 @@ import { browserStepRecord } from "./browser-interactions.js"
 import { browserPreviewNetworkPolicyIsActive, browserPreviewNetworkPolicySummary, browserPreviewNeedsContextRouting, browserPreviewOrigins, browserPreviewReadinessError, browserPreviewRouting, browserPreviewSecureContextError, browserPreviewTopology, resolveBrowserPreviewUrl, routeBrowserPreviewContextNetwork } from "./browser-preview-routing.js"
 import { browserProbeReplayability, browserProbeViewport } from "./browser-probe.js"
 import { argValue, commaListArg, durationArg, jsonArrayArg } from "./commands.js"
-import { editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep } from "./editor-actions.js"
+import { DEFAULT_EDITOR_WAIT_SELECTOR, editorActionStepsFromArgs, editorOpenTargetFromArgs, editorValidateContentFromArgs, editorValidateProviderFromArgs, resolveEditorOpenTarget, type EditorActionStep } from "./editor-actions.js"
 import type { PlaygroundRunResponse } from "./playground-command-errors.js"
 import type { PlaygroundCliServer } from "./preview-server.js"
 import { serializeBrowserError } from "./browser-metrics.js"
@@ -538,6 +538,7 @@ export async function runEditorOpenCommand({
   let editorState: EditorStateSnapshot | undefined
   let editorValidity: EditorValidityArtifact | undefined
   let editorCanvasReadiness: BrowserEditorCanvasProbeSummary | undefined
+  let editorReadiness: BrowserEditorReadinessSummary | undefined
   let authSummary: BrowserProbeAuthSummary | undefined
   let pendingError: Error | undefined
   let artifact: BrowserArtifact | undefined
@@ -577,10 +578,12 @@ export async function runEditorOpenCommand({
       const waitStartedAt = now()
       const waitStartedAtMs = Date.now()
       try {
-        await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
-        editorCanvasReadiness = await waitForEditorOpenCanvasReadiness(page, target.waitSelector, waitTimeoutMs)
+        const readiness = await waitForEditorOpenReadiness(page, target.waitSelector, waitTimeoutMs)
+        editorReadiness = readiness.editorReadiness
+        editorCanvasReadiness = readiness.editorCanvasReadiness
         finalUrl = page.url()
-        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector ?? "wp.data core/block-editor.getBlocks" }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {
+          editorReadiness,
           ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
         } as never))
       } catch (error) {
@@ -606,7 +609,7 @@ export async function runEditorOpenCommand({
     }
     if (capture.has("screenshot")) {
       await artifactSession.writeGenerated("screenshot", "editor-screenshot.png", async (path) => {
-        if (editorCanvasReadiness?.ready) {
+        if (editorCanvasReadiness?.ready && target.waitSelector) {
           const frame = await resolveEditorCanvasFrame(page, target.waitSelector)
           if (frame) {
             await frame.locator(EDITOR_CANVAS_DEFAULT_LAYOUT_SELECTOR).first().screenshot({ path, timeout: waitTimeoutMs })
@@ -653,6 +656,7 @@ export async function runEditorOpenCommand({
         screenshot: capture.has("screenshot"),
         ...(editorSummary ? { editor: editorSummary } : {}),
         ...(editorValidity ? { editorValidity: editorValidity.summary } : {}),
+        ...(editorReadiness ? { editorReadiness } : {}),
         ...(editorCanvasReadiness ? { editorCanvas: editorCanvasReadiness } : {}),
         viewport,
       },
@@ -682,7 +686,7 @@ export async function runEditorOpenCommand({
   }
 
   if (pendingError) {
-    throw new Error(`wordpress.editor-open failed after ${stepRecords.length} step(s): ${pendingError.message}`)
+    throw editorOpenArtifactError(stepRecords.length, pendingError, artifact)
   }
 
   return {
@@ -727,9 +731,15 @@ export function editorOpenArtifactFilesForCapture(capture: ReadonlySet<string>, 
   }
 }
 
-async function waitForEditorOpenCanvasReadiness(page: import("playwright").Page, waitSelector: string, timeoutMs: number): Promise<BrowserEditorCanvasProbeSummary | undefined> {
+export async function waitForEditorOpenReadiness(page: import("playwright").Page, waitSelector: string | undefined, timeoutMs: number): Promise<{ editorReadiness: BrowserEditorReadinessSummary; editorCanvasReadiness?: BrowserEditorCanvasProbeSummary }> {
+  const editorReadiness = await waitForEditorSemanticReadiness(page, timeoutMs)
+  if (!waitSelector) {
+    return { editorReadiness }
+  }
+
+  await waitForAnyVisibleSelector(page, waitSelector, timeoutMs)
   if (!waitSelector.includes("editor-canvas")) {
-    return undefined
+    return { editorReadiness }
   }
 
   const probe = await waitForEditorCanvasProbe(page, {
@@ -744,7 +754,11 @@ async function waitForEditorOpenCanvasReadiness(page: import("playwright").Page,
     throw new Error(`Editor canvas was not ready: ${probe.summary.diagnostics.map((diagnostic) => diagnostic.code).join(", ") || "not-ready"}`)
   }
 
-  return probe.summary
+  return { editorReadiness, editorCanvasReadiness: probe.summary }
+}
+
+export function editorOpenArtifactError(stepCount: number, error: Error, artifact: BrowserArtifact): BrowserCommandArtifactError {
+  return new BrowserCommandArtifactError(`wordpress.editor-open failed after ${stepCount} step(s): ${error.message}`, artifact)
 }
 
 export async function runEditorActionsCommand({
@@ -768,6 +782,7 @@ export async function runEditorActionsCommand({
     server,
   })
   const actionSteps = await editorActionStepsFromArgs(args)
+  const editorWaitSelector = target.waitSelector ?? DEFAULT_EDITOR_WAIT_SELECTOR
   const capture = new Set(commaListArg(args, "capture"))
   if (capture.size === 0) {
     capture.add("steps")
@@ -845,13 +860,13 @@ export async function runEditorActionsCommand({
       const waitStartedAt = now()
       const waitStartedAtMs = Date.now()
       try {
-        await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
+        await waitForAnyVisibleSelector(page, editorWaitSelector, waitTimeoutMs)
         finalUrl = page.url()
-        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {}))
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: editorWaitSelector }, "ok", waitStartedAt, waitStartedAtMs, finalUrl, {}))
       } catch (error) {
         const serialized = serializeBrowserError("probe-error", error)
         errors.push(serialized)
-        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: target.waitSelector }, "failed", waitStartedAt, waitStartedAtMs, page.url(), { error: serialized }))
+        stepRecords.push(browserStepRecord(1, { kind: "waitFor", selector: editorWaitSelector }, "failed", waitStartedAt, waitStartedAtMs, page.url(), { error: serialized }))
         pendingError = error instanceof Error ? error : new Error(String(error))
       }
     }
@@ -1113,14 +1128,14 @@ async function waitForEditorReadiness(page: import("playwright").Page, timeoutMs
     const editor = select("core/editor")
     const blockEditor = select("core/block-editor")
     const editorDispatch = dispatch("core/editor")
-    if (!editor || !blockEditor || !editorDispatch) {
+    if (!editor || !blockEditor || !editorDispatch || typeof editorDispatch.savePost !== "function") {
       return false
     }
     return {
       schema: "wp-codebox/editor-readiness/v1",
       status: "ready",
       storesAvailable: true,
-      canSave: typeof editorDispatch.savePost === "function",
+      canSave: true,
       postId: typeof editor.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined,
       postType: typeof editor.getCurrentPostType === "function" ? editor.getCurrentPostType() : undefined,
     }
@@ -1128,6 +1143,49 @@ async function waitForEditorReadiness(page: import("playwright").Page, timeoutMs
     const readiness = await handle.jsonValue() as BrowserEditorReadinessSummary | false
     if (!readiness) {
       throw new Error("wp-codebox-editor-readiness-timeout: WordPress editor data stores did not become available")
+    }
+    return readiness
+  })
+}
+
+// Opening and validating an editor require the block-editor data store. Global
+// block APIs and save availability are stricter, separate capabilities.
+async function waitForEditorSemanticReadiness(page: import("playwright").Page, timeoutMs: number): Promise<BrowserEditorReadinessSummary> {
+  return page.waitForFunction(() => {
+    const win = window as unknown as {
+      wp?: {
+        blocks?: { parse?: unknown; getBlockTypes?: () => unknown[] }
+        data?: { select?: (store: string) => Record<string, unknown>; dispatch?: (store: string) => Record<string, unknown> }
+      }
+    }
+    const select = win.wp?.data?.select
+    if (typeof select !== "function") {
+      return false
+    }
+
+    const blockEditor = select("core/block-editor")
+    if (!blockEditor || typeof blockEditor.getBlocks !== "function") {
+      return false
+    }
+
+    const wpBlocks = win.wp?.blocks
+    const blockTypes = typeof wpBlocks?.getBlockTypes === "function" ? wpBlocks.getBlockTypes() : undefined
+    const dispatch = win.wp?.data?.dispatch
+    const editor = select("core/editor")
+    const editorDispatch = typeof dispatch === "function" ? dispatch("core/editor") : undefined
+    return {
+      schema: "wp-codebox/editor-readiness/v1",
+      status: "ready",
+      storesAvailable: Boolean(editor && blockEditor),
+      canSave: typeof editorDispatch?.savePost === "function",
+      ...(Array.isArray(blockTypes) ? { blockTypesRegistered: blockTypes.length } : {}),
+      postId: typeof editor?.getCurrentPostId === "function" ? editor.getCurrentPostId() : undefined,
+      postType: typeof editor?.getCurrentPostType === "function" ? editor.getCurrentPostType() : undefined,
+    }
+  }, undefined, { timeout: timeoutMs }).then(async (handle) => {
+    const readiness = await handle.jsonValue() as BrowserEditorReadinessSummary | false
+    if (!readiness) {
+      throw new Error("wp-codebox-editor-readiness-timeout: Gutenberg block runtime did not become available")
     }
     return readiness
   })
@@ -1601,6 +1659,7 @@ export async function runEditorValidateBlocksCommand({
     runtimeSpec,
     server,
   })
+  const editorWaitSelector = target.waitSelector ?? DEFAULT_EDITOR_WAIT_SELECTOR
   const content = await editorValidateContentFromArgs(args)
   const provider = editorValidateProviderFromArgs(args)
   const waitTimeoutMs = durationArg(args, "wait-timeout", EDITOR_VALIDATE_BLOCKS_READY_TIMEOUT_MS)
@@ -1639,7 +1698,7 @@ export async function runEditorValidateBlocksCommand({
 
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: waitTimeoutMs })
     finalUrl = page.url()
-    await waitForAnyVisibleSelector(page, target.waitSelector, waitTimeoutMs)
+    await waitForAnyVisibleSelector(page, editorWaitSelector, waitTimeoutMs)
     await waitForEditorBlocksRuntime(page, waitTimeoutMs)
     finalUrl = page.url()
     validation = await validateEditorBlocks(page, { content, provider })

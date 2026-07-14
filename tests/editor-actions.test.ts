@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { captureEditorState, captureEditorValidity, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { captureEditorState, captureEditorValidity, editorOpenArtifactError, editorOpenArtifactFilesForCapture, editorOpenArtifactPathPrefixFromArgs, waitForEditorOpenReadiness } from "../packages/runtime-playground/src/editor-command-runners.js"
+import { isBrowserCommandArtifactError } from "../packages/runtime-playground/src/browser-command-artifact-error.js"
 import { editorActionStepsFromArgs, editorOpenTargetFromArgs, resolveEditorOpenTarget } from "../packages/runtime-playground/src/editor-actions.js"
 
 const steps = await editorActionStepsFromArgs([
@@ -24,6 +25,7 @@ await assert.rejects(
 )
 
 const target = editorOpenTargetFromArgs(["target=post-new"])
+assert.equal(target.waitSelector, undefined)
 const unavailableEditorState = await captureEditorState({
   evaluate: async (callback: () => unknown) => {
     const globals = globalThis as typeof globalThis & { window?: unknown }
@@ -165,5 +167,59 @@ assert.throws(
   () => editorOpenArtifactPathPrefixFromArgs(["artifact-prefix=files/browser/../escape"]),
   /relative artifact directory/,
 )
+
+// Live fixture evidence established that the block-editor store can be usable
+// before global block APIs, core/editor, or savePost are available. Opening the
+// editor must accept that state; an explicit selector remains an additional
+// caller assertion.
+const readinessCalls: Array<string | undefined> = []
+const semanticReadyPage = {
+  waitForFunction: async (predicate: (selector?: string) => unknown, selector?: string) => {
+    readinessCalls.push(selector)
+    if (selector) {
+      throw new Error(`Timed out waiting for ${selector}`)
+    }
+    const globals = globalThis as typeof globalThis & { window?: unknown }
+    const previousWindow = globals.window
+    globals.window = {
+      wp: {
+        data: {
+          select: (store: string) => store === "core/block-editor"
+            ? { getBlocks: () => Array.from({ length: 118 }) }
+            : undefined,
+          dispatch: () => ({}),
+        },
+      },
+    }
+    try {
+      const readiness = predicate()
+      assert.ok(readiness)
+      return { jsonValue: async () => readiness }
+    } finally {
+      globals.window = previousWindow
+    }
+  },
+} as never
+const semanticReadiness = await waitForEditorOpenReadiness(semanticReadyPage, undefined, 1)
+assert.equal(semanticReadiness.editorReadiness.blockTypesRegistered, undefined)
+assert.equal(semanticReadiness.editorReadiness.storesAvailable, false)
+assert.equal(semanticReadiness.editorReadiness.canSave, false)
+await assert.rejects(
+  () => waitForEditorOpenReadiness(semanticReadyPage, ".legacy-editor-shell", 1),
+  /Timed out waiting for \.legacy-editor-shell/,
+)
+assert.deepEqual(readinessCalls, [undefined, undefined, ".legacy-editor-shell"])
+
+const retainedArtifact = {
+  artifactType: "editor-open",
+  requestedUrl: "http://example.test/wp-admin/post-new.php",
+  url: "http://example.test/wp-admin/post-new.php",
+  preview: { effectiveOrigin: "http://example.test" },
+  files: { screenshot: "files/browser/editor-screenshot.png", editorState: "files/browser/editor-state.json", console: "files/browser/editor-console.jsonl", summary: "files/browser/editor-summary.json" },
+  summary: { consoleMessages: 1, errors: 1, finalUrl: "http://example.test/wp-admin/post-new.php", htmlSnapshot: false, networkEvents: 0, replayability: "diagnostic-only", screenshot: true, viewport: null },
+} as never
+const readinessFailure = editorOpenArtifactError(2, new Error("editor readiness timed out"), retainedArtifact)
+assert.equal(isBrowserCommandArtifactError(readinessFailure), true)
+assert.strictEqual(readinessFailure.artifact, retainedArtifact)
 
 console.log("editor actions ok")
