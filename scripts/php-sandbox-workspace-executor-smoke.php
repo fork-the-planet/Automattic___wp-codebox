@@ -68,7 +68,12 @@ namespace {
 	$root_real = realpath( $root );
 	assert_true( is_string( $root_real ), 'working root realpath resolves' );
 
-	$context  = array( 'workspace_root' => $root_real );
+	$baseline = sys_get_temp_dir() . '/wp-codebox-sandbox-baseline-' . bin2hex( random_bytes( 6 ) );
+	mkdir( $baseline, 0755, true );
+	copy( $root_real . '/README.md', $baseline . '/README.md' );
+	mkdir( $baseline . '/src', 0755, true );
+	copy( $root_real . '/src/app.php', $baseline . '/src/app.php' );
+	$context  = array( 'workspace_root' => $root_real, 'workspace_baseline_root' => $baseline, 'writable_paths' => array( 'src/**', 'notes/**', 'patch-target.txt', 'created/**' ) );
 	$executor = new WP_Codebox_Sandbox_Workspace_Executor();
 
 	/**
@@ -140,6 +145,8 @@ namespace {
 
 	$edit_all = $call( 'workspace_edit', array( 'path' => 'src/app.php', 'old' => '//', 'new' => '#', 'replace_all' => true ) );
 	assert_true( 2 === $edit_all['result']['replacements'], 'edit replace_all counts every occurrence' );
+	$unwritable = $call( 'workspace_write', array( 'path' => 'README.md', 'content' => 'blocked' ) );
+	assert_true( false === $unwritable['success'] && 'writable_path_denied' === $unwritable['error_type'], 'write rejects paths outside writable policy' );
 
 	// --- apply-patch (modify) ---------------------------------------
 	file_put_contents( $root_real . '/patch-target.txt', "one\ntwo\nthree\n" );
@@ -154,6 +161,12 @@ namespace {
 	$created = $call( 'workspace_apply_patch', array( 'patch' => $create_patch ) );
 	assert_true( true === $created['success'], 'apply-patch creates new file' );
 	assert_true( "fresh\ncontent\n" === file_get_contents( $root_real . '/created/new.txt' ), 'apply-patch wrote new file content' );
+	$status = $call( 'workspace_git_status', array() );
+	assert_true( true === $status['success'] && $status['result']['changed'], 'status compares sandbox workspace to baseline without git' );
+	$diff = $call( 'workspace_git_diff', array() );
+	assert_true( true === $diff['success'] && str_contains( $diff['result']['diff'], 'patch-target.txt' ), 'diff returns baseline patch without git' );
+	$show = $call( 'workspace_show', array() );
+	assert_true( '/workspace' === $show['result']['root'], 'show redacts host workspace root' );
 
 	// --- apply-patch fails closed on context mismatch ----------------
 	$bad_patch = "--- a/patch-target.txt\n+++ b/patch-target.txt\n@@ -1,3 +1,3 @@\n one\n-WRONG\n+x\n three\n";
@@ -192,10 +205,6 @@ namespace {
 	$registered = WP_Codebox_Sandbox_Workspace_Executor::register();
 	assert_true( true === $registered, 'register returns true when substrate present' );
 
-	$targets = apply_filters( 'agents_api_executor_targets', array() );
-	assert_true( isset( $targets['wp-codebox/sandbox-workspace'] ), 'executor target registered under target_id' );
-	assert_true( 'sandbox-workspace' === $targets['wp-codebox/sandbox-workspace']['kind'], 'target metadata kind' );
-
 	$executors = apply_filters( 'agents_api_tool_executors', array() );
 	assert_true( isset( $executors['wp-codebox/sandbox-workspace'] ), 'executor adapter registered under target_id' );
 	assert_true( $executors['wp-codebox/sandbox-workspace'] instanceof AgentsAPI\AI\Tools\WP_Agent_Tool_Executor, 'executor satisfies the contract interface' );
@@ -208,13 +217,14 @@ namespace {
 	assert_true( true === $dispatched['success'], 'registered executor dispatches client/-prefixed tool name' );
 	assert_true( str_contains( $dispatched['result']['content'], 'Needle' ), 'registered executor returns file content' );
 
-	$sources = apply_filters( 'agents_api_tool_sources', array() );
-	assert_true( isset( $sources['client'] ), 'client tool source registered' );
-	$tools = $sources['client']();
-	foreach ( array( 'client/workspace_read', 'client/workspace_ls', 'client/workspace_grep', 'client/workspace_write', 'client/workspace_edit', 'client/workspace_apply_patch' ) as $tool_name ) {
-		assert_true( isset( $tools[ $tool_name ] ), "tool source declares {$tool_name}" );
-		assert_true( 'wp-codebox/sandbox-workspace' === $tools[ $tool_name ]['runtime']['executor_target'], "{$tool_name} routes to sandbox executor target" );
-		assert_true( 'client' === $tools[ $tool_name ]['executor'], "{$tool_name} is a client-executed tool" );
+	$tools = WP_Codebox_Sandbox_Workspace_Executor::tool_declarations_for_enabled_tools(
+		array( 'enabled_tools' => array( 'workspace_read', 'workspace_edit', 'workspace_worktree_add' ) )
+	);
+	assert_true( array( 'workspace_read', 'workspace_edit' ) === array_keys( $tools ), 'only enabled canonical workspace tools are declared' );
+	foreach ( $tools as $tool_name => $tool ) {
+		assert_true( $tool_name === $tool['name'], "{$tool_name} has a canonical name" );
+		assert_true( 'wp-codebox/sandbox-workspace' === $tool['runtime']['executor_target'], "{$tool_name} routes to sandbox executor target" );
+		assert_true( isset( $tool['parameters']['properties'] ), "{$tool_name} includes a parameter schema" );
 	}
 
 	// Cleanup.
@@ -229,6 +239,7 @@ namespace {
 		rmdir( $dir );
 	};
 	$rrmdir( $root_real );
+	$rrmdir( $baseline );
 
 	fwrite( STDOUT, "OK php-sandbox-workspace-executor-smoke\n" );
 }

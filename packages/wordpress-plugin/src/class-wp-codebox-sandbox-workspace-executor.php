@@ -196,6 +196,27 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 				),
 			),
 		),
+		'client/workspace_show'         => array(
+			'base'         => 'workspace_show',
+			'capability'   => 'workspace.files.read',
+			'description'  => 'Show bounded metadata for the sandbox workspace without exposing host paths.',
+			'side_effects' => array(),
+			'parameters'   => array( 'type' => 'object', 'properties' => array() ),
+		),
+		'client/workspace_git_status'   => array(
+			'base'         => 'workspace_git_status',
+			'capability'   => 'workspace.files.read',
+			'description'  => 'Compare the sandbox workspace to its captured baseline without invoking git or a shell.',
+			'side_effects' => array(),
+			'parameters'   => array( 'type' => 'object', 'properties' => array() ),
+		),
+		'client/workspace_git_diff'     => array(
+			'base'         => 'workspace_git_diff',
+			'capability'   => 'workspace.files.read',
+			'description'  => 'Return a bounded baseline-versus-current unified diff without invoking git or a shell.',
+			'side_effects' => array(),
+			'parameters'   => array( 'type' => 'object', 'properties' => array() ),
+		),
 	);
 
 	private static bool $registered = false;
@@ -212,9 +233,6 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 			return false;
 		}
 
-		add_filter( 'agents_api_tool_sources', array( self::class, 'register_tool_source' ), 20, 3 );
-		add_filter( 'agents_api_executor_targets', array( self::class, 'register_executor_target' ), 20, 2 );
-		add_filter( 'agents_api_execution_targets', array( self::class, 'register_executor_target' ), 20, 2 );
 		add_filter( 'agents_api_tool_executors', array( self::class, 'register_tool_executor' ), 20, 2 );
 
 		self::$registered = true;
@@ -230,50 +248,6 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	}
 
 	/**
-	 * Register this adapter as an Agents API tool source.
-	 *
-	 * @param array<string,callable> $sources Existing sources.
-	 * @param array<string,mixed>    $context Runtime context.
-	 * @param mixed                  $registry Source registry.
-	 * @return array<string,callable>
-	 */
-	public static function register_tool_source( array $sources, array $context = array(), $registry = null ): array {
-		unset( $context, $registry );
-
-		$existing                     = $sources[ self::SOURCE_SLUG ] ?? null;
-		$sources[ self::SOURCE_SLUG ] = static function ( array $source_context = array(), $source_registry = null ) use ( $existing ): array {
-			$tools = is_callable( $existing ) ? call_user_func( $existing, $source_context, $source_registry ) : array();
-			if ( ! is_array( $tools ) ) {
-				$tools = array();
-			}
-
-			foreach ( self::tool_declarations() as $tool_name => $tool_declaration ) {
-				if ( ! isset( $tools[ $tool_name ] ) ) {
-					$tools[ $tool_name ] = $tool_declaration;
-				}
-			}
-
-			return $tools;
-		};
-
-		return $sources;
-	}
-
-	/**
-	 * Register this adapter as an Agents API executor target.
-	 *
-	 * @param array<string,mixed> $targets Existing targets.
-	 * @param array<string,mixed> $context Runtime context.
-	 * @return array<string,mixed>
-	 */
-	public static function register_executor_target( array $targets, array $context = array() ): array {
-		unset( $context );
-
-		$targets[ self::TARGET_ID ] = self::target_metadata();
-		return $targets;
-	}
-
-	/**
 	 * Register the tool-call executor adapter for registry-based dispatch.
 	 *
 	 * @param array<string,mixed> $executors Existing executors.
@@ -281,35 +255,34 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	 * @return array<string,mixed>
 	 */
 	public static function register_tool_executor( array $executors, array $context = array() ): array {
-		unset( $context );
-
-		$executors[ self::TARGET_ID ] = new class( new self() ) implements \AgentsAPI\AI\Tools\WP_Agent_Tool_Executor {
-			public function __construct( private WP_Codebox_Sandbox_Workspace_Executor $adapter ) {}
-
-			/**
-			 * @param array<string,mixed> $tool_call Tool call.
-			 * @param array<string,mixed> $tool_definition Tool declaration.
-			 * @param array<string,mixed> $context Runtime context.
-			 * @return array<string,mixed>
-			 */
-			public function executeWP_Agent_Tool_Call( array $tool_call, array $tool_definition, array $context = array() ): array {
-				return $this->adapter->executeWP_Agent_Tool_Call( $tool_call, $tool_definition, $context );
-			}
-		};
+		$executors[ self::TARGET_ID ] = self::executor_for_context( $context );
 
 		return $executors;
 	}
 
+	/** @param array<string,mixed> $trusted_context */
+	public static function executor_for_context( array $trusted_context ): \AgentsAPI\AI\Tools\WP_Agent_Tool_Executor {
+		return new class( new self(), $trusted_context ) implements \AgentsAPI\AI\Tools\WP_Agent_Tool_Executor {
+			/** @param array<string,mixed> $trusted_context */
+			public function __construct( private WP_Codebox_Sandbox_Workspace_Executor $adapter, private array $trusted_context ) {}
+
+			/** @param array<string,mixed> $tool_call @param array<string,mixed> $tool_definition @param array<string,mixed> $context @return array<string,mixed> */
+			public function executeWP_Agent_Tool_Call( array $tool_call, array $tool_definition, array $context = array() ): array {
+				return $this->adapter->executeWP_Agent_Tool_Call( $tool_call, $tool_definition, array_replace( $context, $this->trusted_context ) );
+			}
+		};
+	}
+
 	/**
-	 * Agents API runtime tool declarations for the git-less sandbox surface.
+	 * Canonical Agents API runtime tool declarations for the git-less sandbox surface.
 	 *
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function tool_declarations(): array {
 		$tools = array();
-		foreach ( self::TOOL_MAP as $tool_name => $config ) {
-			$tools[ $tool_name ] = array(
-				'name'        => $tool_name,
+		foreach ( self::TOOL_MAP as $config ) {
+			$declaration = array(
+				'name'        => $config['base'],
 				'source'      => self::SOURCE_SLUG,
 				'description' => $config['description'],
 				'parameters'  => $config['parameters'],
@@ -322,6 +295,29 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 					'side_effect_boundary' => 'wp-codebox-sandbox',
 				),
 			);
+			$tools[ $config['base'] ] = $declaration;
+		}
+
+		return $tools;
+	}
+
+	/**
+	 * Return declarations only for canonical workspace tools enabled by the selected agent.
+	 *
+	 * @param array<string,mixed> $agent_config
+	 * @param array<string,mixed> $context Trusted invocation-local context.
+	 * @return array<string,array<string,mixed>>
+	 */
+	public static function tool_declarations_for_enabled_tools( array $agent_config, array $context = array() ): array {
+		unset( $context );
+		$enabled = is_array( $agent_config['enabled_tools'] ?? null ) ? $agent_config['enabled_tools'] : array();
+		$all     = self::tool_declarations();
+		$tools   = array();
+		foreach ( $enabled as $name ) {
+			$name = is_string( $name ) ? trim( $name ) : '';
+			if ( '' !== $name && isset( $all[ $name ] ) ) {
+				$tools[ $name ] = $all[ $name ];
+			}
 		}
 
 		return $tools;
@@ -376,6 +372,10 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 			return self::error_result( $tool_name, 'Sandbox working root is not configured or does not exist.', 'workspace_root_unavailable', $config, $started_at );
 		}
 
+		// Policy is supplied by the host's explicit workflow mapping, never inferred
+		// from arbitrary ambient tool arguments.
+		$parameters['_wp_codebox_writable_paths'] = self::writable_paths( $context );
+		$parameters['_wp_codebox_baseline_root']  = self::baseline_root( $context );
 		$result = self::dispatch( $config['base'], $root, $parameters );
 		if ( is_array( $result ) && false === ( $result['success'] ?? true ) ) {
 			return self::error_result(
@@ -436,6 +436,12 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 				return self::edit_file( $root, $parameters );
 			case 'workspace_apply_patch':
 				return self::apply_patch( $root, $parameters );
+			case 'workspace_show':
+				return self::workspace_show( $root, $parameters );
+			case 'workspace_git_status':
+				return self::workspace_status( $root, $parameters );
+			case 'workspace_git_diff':
+				return self::workspace_diff( $root, $parameters );
 		}
 
 		return self::tool_error( 'unsupported_tool', 'Unsupported sandbox workspace tool.' );
@@ -654,6 +660,13 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		if ( strlen( $content ) > self::MAX_WRITE_BYTES ) {
 			return self::tool_error( 'content_too_large', sprintf( 'Content is %d bytes, exceeding the %d byte limit.', strlen( $content ), self::MAX_WRITE_BYTES ) );
 		}
+		if ( self::looks_binary( $content ) ) {
+			return self::tool_error( 'binary_content', 'Sandbox workspace writes accept text content only.' );
+		}
+		$writable = self::writable_path( $relative, $parameters );
+		if ( is_array( $writable ) ) {
+			return $writable;
+		}
 
 		$path = self::contained_path( $root, $relative, false );
 		if ( is_array( $path ) ) {
@@ -690,6 +703,10 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		if ( is_array( $relative ) ) {
 			return $relative;
 		}
+		$writable = self::writable_path( $relative, $parameters );
+		if ( is_array( $writable ) ) {
+			return $writable;
+		}
 
 		$old = self::first_string( $parameters, array( 'old_string', 'search', 'old' ) );
 		$new = self::first_string( $parameters, array( 'new_string', 'replace', 'new' ) );
@@ -709,6 +726,9 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		if ( null === $content ) {
 			return self::tool_error( 'file_read_failed', 'Sandbox workspace file could not be read.' );
 		}
+		if ( self::looks_binary( $content ) ) {
+			return self::tool_error( 'binary_content', 'Sandbox workspace edits accept text files only.' );
+		}
 
 		$occurrences = substr_count( $content, $old );
 		if ( 0 === $occurrences ) {
@@ -725,6 +745,9 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 
 		if ( strlen( $updated ) > self::MAX_WRITE_BYTES ) {
 			return self::tool_error( 'content_too_large', 'Edited content exceeds the write size limit.' );
+		}
+		if ( self::looks_binary( $updated ) ) {
+			return self::tool_error( 'binary_content', 'Sandbox workspace edits accept text content only.' );
 		}
 		if ( false === self::write_raw( $path, $updated ) ) {
 			return self::tool_error( 'file_write_failed', 'Sandbox workspace file could not be written.' );
@@ -750,6 +773,9 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		if ( '' === trim( $patch ) ) {
 			return self::tool_error( 'patch_required', 'Apply-patch requires a unified diff.' );
 		}
+		if ( strlen( $patch ) > self::MAX_WRITE_BYTES || self::looks_binary( $patch ) ) {
+			return self::tool_error( 'invalid_patch', 'Patch must be bounded text content.' );
+		}
 
 		$files = self::parse_unified_diff( $patch );
 		if ( is_array( $files ) && isset( $files['error'] ) ) {
@@ -765,6 +791,10 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 			$relative = self::relative_param( $file['target'] === null ? $file['source'] : $file['target'] );
 			if ( is_array( $relative ) ) {
 				return $relative;
+			}
+			$writable = self::writable_path( $relative, $parameters );
+			if ( is_array( $writable ) ) {
+				return $writable;
 			}
 
 			// Containment is enforced here; existence is checked per-op below.
@@ -1004,6 +1034,70 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 		return array( 'content' => $content );
 	}
 
+	/** @param array<string,mixed> $parameters @return array<string,mixed> */
+	private static function workspace_show( string $root, array $parameters ): array {
+		$files = self::iterate_files( $root );
+		return array(
+			'success'        => true,
+			'root'           => '/workspace',
+			'file_count'     => count( $files ),
+			'writable_paths' => self::writable_paths_from_parameters( $parameters ),
+			'baseline'       => '' !== self::baseline_from_parameters( $parameters ) ? 'available' : 'unavailable',
+		);
+	}
+
+	/** @param array<string,mixed> $parameters @return array<string,mixed> */
+	private static function workspace_status( string $root, array $parameters ): array {
+		$baseline = self::baseline_from_parameters( $parameters );
+		if ( '' === $baseline ) {
+			return self::tool_error( 'baseline_unavailable', 'Sandbox workspace baseline is unavailable.' );
+		}
+		$current = self::workspace_file_map( $root );
+		$before  = self::workspace_file_map( $baseline );
+		$changed = array();
+		foreach ( array_unique( array_merge( array_keys( $before ), array_keys( $current ) ) ) as $path ) {
+			if ( ! isset( $before[ $path ] ) || ! isset( $current[ $path ] ) || ! hash_equals( $before[ $path ], $current[ $path ] ) ) {
+				$changed[] = $path;
+			}
+		}
+		sort( $changed );
+		return array( 'success' => true, 'changed' => ! empty( $changed ), 'files' => $changed, 'dirty' => count( $changed ), 'baseline' => 'filesystem' );
+	}
+
+	/** @param array<string,mixed> $parameters @return array<string,mixed> */
+	private static function workspace_diff( string $root, array $parameters ): array {
+		$status = self::workspace_status( $root, $parameters );
+		if ( empty( $status['success'] ) ) {
+			return $status;
+		}
+		$baseline = self::baseline_from_parameters( $parameters );
+		$patch = '';
+		foreach ( $status['files'] as $relative ) {
+			$before = is_file( $baseline . '/' . $relative ) ? self::read_raw( $baseline . '/' . $relative ) : '';
+			$after  = is_file( $root . '/' . $relative ) ? self::read_raw( $root . '/' . $relative ) : '';
+			if ( null === $before || null === $after || self::looks_binary( $before ) || self::looks_binary( $after ) ) {
+				return self::tool_error( 'binary_content', 'Workspace diff cannot represent binary content.' );
+			}
+			$from = is_file( $baseline . '/' . $relative ) ? 'a/' . $relative : '/dev/null';
+			$to   = is_file( $root . '/' . $relative ) ? 'b/' . $relative : '/dev/null';
+			$patch .= "--- {$from}\n+++ {$to}\n@@ -1," . substr_count( $before, "\n" ) . " +1," . substr_count( $after, "\n" ) . " @@\n";
+			foreach ( explode( "\n", rtrim( $before, "\n" ) ) as $line ) { if ( '' !== $line || '' !== $before ) { $patch .= '-' . $line . "\n"; } }
+			foreach ( explode( "\n", rtrim( $after, "\n" ) ) as $line ) { if ( '' !== $line || '' !== $after ) { $patch .= '+' . $line . "\n"; } }
+		}
+		return array( 'success' => true, 'changed' => ! empty( $status['files'] ), 'files' => $status['files'], 'diff' => $patch, 'baseline' => 'filesystem' );
+	}
+
+	/** @return array<string,string> */
+	private static function workspace_file_map( string $root ): array {
+		$map = array();
+		foreach ( self::iterate_files( $root ) as $file ) {
+			$relative = self::relative_to_root( $root, $file );
+			$content = self::read_raw( $file );
+			if ( null !== $content ) { $map[ $relative ] = hash( 'sha256', $content ); }
+		}
+		return $map;
+	}
+
 	// -----------------------------------------------------------------
 	// Workspace root + path containment.
 	// -----------------------------------------------------------------
@@ -1011,51 +1105,62 @@ final class WP_Codebox_Sandbox_Workspace_Executor {
 	/**
 	 * Resolve the bounded sandbox working root.
 	 *
-	 * Priority: explicit run context, tool parameter, filter, constant, cwd.
+	 * The host supplies this through the invocation-local executor context.
 	 *
 	 * @param array<string,mixed> $context Runtime context.
 	 * @param array<string,mixed> $parameters Tool parameters.
 	 * @return string Realpath of the working root, or '' when unavailable.
 	 */
 	private static function resolve_workspace_root( array $context, array $parameters ): string {
-		$candidates = array();
+		unset( $parameters );
+		$candidate = $context['workspace_root'] ?? '';
+		$real      = is_string( $candidate ) && '' !== trim( $candidate ) ? realpath( $candidate ) : false;
+		return false !== $real && is_dir( $real ) ? $real : '';
+	}
 
-		foreach ( array( 'workspace_root', 'sandbox_workspace_root' ) as $key ) {
-			if ( isset( $context[ $key ] ) && is_string( $context[ $key ] ) && '' !== trim( $context[ $key ] ) ) {
-				$candidates[] = trim( $context[ $key ] );
+	/** @return array<int,string> */
+	private static function writable_paths( array $context ): array {
+		$policy = is_array( $context['workflow_policy'] ?? null ) ? $context['workflow_policy'] : ( is_array( $context['runner_workspace_policy'] ?? null ) ? $context['runner_workspace_policy'] : array() );
+		$paths  = $policy['writable_paths'] ?? $context['writable_paths'] ?? array();
+		if ( is_string( $paths ) ) { $paths = preg_split( '/\s*,\s*/', trim( $paths ) ) ?: array(); }
+		$paths = array_values( array_filter( array_map( static fn( $path ): string => is_scalar( $path ) ? trim( (string) $path ) : '', is_array( $paths ) ? $paths : array() ) ) );
+		return is_array( $paths ) ? array_values( array_filter( array_map( static fn( $path ): string => is_scalar( $path ) ? trim( (string) $path ) : '', $paths ) ) ) : array();
+	}
+
+	private static function baseline_root( array $context ): string {
+		$candidate = $context['workspace_baseline_root'] ?? ( is_array( $context['workspace'] ?? null ) ? ( $context['workspace']['baseline_root'] ?? '' ) : '' );
+		$candidate = is_string( $candidate ) ? $candidate : '';
+		$real = '' !== $candidate ? realpath( $candidate ) : false;
+		return false !== $real && is_dir( $real ) ? $real : '';
+	}
+
+	/** @param array<string,mixed> $parameters @return array<int,string> */
+	private static function writable_paths_from_parameters( array $parameters ): array {
+		return is_array( $parameters['_wp_codebox_writable_paths'] ?? null ) ? $parameters['_wp_codebox_writable_paths'] : array();
+	}
+
+	/** @param array<string,mixed> $parameters */
+	private static function baseline_from_parameters( array $parameters ): string {
+		return is_string( $parameters['_wp_codebox_baseline_root'] ?? null ) ? $parameters['_wp_codebox_baseline_root'] : '';
+	}
+
+	/** @param array<string,mixed> $parameters @return true|array<string,mixed> */
+	private static function writable_path( string $relative, array $parameters ) {
+		$parts = explode( '/', $relative );
+		if ( in_array( '.git', $parts, true ) || in_array( '.codebox', $parts, true ) || str_starts_with( basename( $relative ), '.' ) ) {
+			return self::tool_error( 'control_path_denied', 'Sandbox workspace mutations cannot target control paths.' );
+		}
+		$patterns = self::writable_paths_from_parameters( $parameters );
+		if ( empty( $patterns ) ) {
+			return self::tool_error( 'writable_path_denied', 'No writable_paths policy permits this mutation.' );
+		}
+		foreach ( $patterns as $pattern ) {
+			$pattern = ltrim( str_replace( '\\', '/', $pattern ), '/' );
+			if ( $relative === $pattern || fnmatch( $pattern, $relative, FNM_PATHNAME ) || ( str_ends_with( $pattern, '/**' ) && str_starts_with( $relative . '/', substr( $pattern, 0, -2 ) ) ) ) {
+				return true;
 			}
 		}
-		if ( isset( $context['workspace'] ) && is_array( $context['workspace'] ) && isset( $context['workspace']['root'] ) && is_string( $context['workspace']['root'] ) ) {
-			$candidates[] = trim( $context['workspace']['root'] );
-		}
-		if ( isset( $parameters['workspace_root'] ) && is_string( $parameters['workspace_root'] ) && '' !== trim( $parameters['workspace_root'] ) ) {
-			$candidates[] = trim( $parameters['workspace_root'] );
-		}
-
-		if ( function_exists( 'apply_filters' ) ) {
-			$filtered = apply_filters( 'wp_codebox_sandbox_workspace_root', '', $context, $parameters );
-			if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
-				$candidates[] = trim( $filtered );
-			}
-		}
-
-		if ( defined( 'WP_CODEBOX_SANDBOX_WORKSPACE_ROOT' ) && is_string( constant( 'WP_CODEBOX_SANDBOX_WORKSPACE_ROOT' ) ) ) {
-			$candidates[] = (string) constant( 'WP_CODEBOX_SANDBOX_WORKSPACE_ROOT' );
-		}
-
-		$cwd = getcwd();
-		if ( is_string( $cwd ) && '' !== $cwd ) {
-			$candidates[] = $cwd;
-		}
-
-		foreach ( $candidates as $candidate ) {
-			$real = realpath( $candidate );
-			if ( false !== $real && is_dir( $real ) ) {
-				return $real;
-			}
-		}
-
-		return '';
+		return self::tool_error( 'writable_path_denied', 'Sandbox workspace mutation is outside workflow writable_paths.' );
 	}
 
 	/**
