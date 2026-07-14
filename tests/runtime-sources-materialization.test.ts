@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { access, chmod, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import { promisify } from "node:util"
@@ -164,6 +165,30 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "safe.json" } }] }))
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
   assert.match(await readFile(join(upload, ".codebox", "agent-task-artifacts", "safe.json"), "utf8"), /OpenAiProvider/)
+  await mkdir(join(artifacts, "files"), { recursive: true })
+  const transcriptSource = JSON.stringify({ schema: "wp-codebox/agent-transcript/v1", executions: [{ executionIndex: 0, command: "wp-codebox.agent-sandbox-run", exitCode: 1, stderr: "Repeated workspace error", parsed: { agent: { id: "fixture", provider: "openai" }, messages: [{ role: "assistant", content: "Target snippet: <?php final class Target_Plugin {}" }], tool_calls: [{ tool_id: "workspace.read", args: { path: "src/plugin.php" }, result: { content: "<?php final class Target_Plugin {}" }, error: "Repeated workspace error" }], token: "secret-transcript-value", private_path: `${privateRoot}/source.php`, host_path: "/Users/example/private-log.txt" } }] })
+  await writeFile(join(artifacts, "files", "transcript.json"), transcriptSource)
+  const transcriptDigest = createHash("sha256").update(transcriptSource).digest("hex")
+  await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ runtime_result: { agent_task_run_result: { refs: { transcripts: [{ kind: "codebox-transcript", path: "files/transcript.json", sha256: transcriptDigest }] } } }, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
+  await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot, OPENAI_API_KEY: "secret-transcript-value" } })
+  const transcript = await readFile(join(upload, ".codebox", "agent-task-artifacts", "transcript.json"), "utf8")
+  assert.doesNotMatch(transcript, /<\?php final class Target_Plugin/)
+  assert.match(transcript, /\[redacted-source-content\]/)
+  assert.match(transcript, /Repeated workspace error/)
+  assert.match(transcript, /workspace\/src\/plugin.php/)
+  assert.match(transcript, /"bytes": 34/)
+  assert.match(transcript, /"sha256": "[a-f0-9]{64}"/)
+  assert.doesNotMatch(transcript, /private-runtime-source|secret-transcript-value|\/Users\/example/)
+  const transcriptExclusions = await readFile(join(upload, ".codebox", "agent-task-artifacts", "exclusions.json"), "utf8")
+  assert.match(transcriptExclusions, /canonical_transcripts/)
+  assert.match(transcriptExclusions, /codebox-transcript/)
+  const outsideTranscript = join(directory, "outside-transcript.json")
+  await writeFile(outsideTranscript, JSON.stringify({ secret: "outside" }))
+  await rm(join(artifacts, "files", "transcript.json"))
+  await symlink(outsideTranscript, join(artifacts, "files", "transcript.json"))
+  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /must not traverse symlinks/, "Canonical transcript refs cannot follow symlinks outside artifacts")
+  await rm(join(artifacts, "files", "transcript.json"))
+  await writeFile(join(artifacts, "files", "transcript.json"), JSON.stringify({ tool_calls: [] }))
   await writeFile(join(artifacts, "leak.json"), `runtime log ${privateRoot}/source.php`)
   await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ status: "failed", success: false, typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "leak.json" } }] }))
   await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
@@ -179,8 +204,8 @@ await withTempDir("wp-codebox-runtime-source-upload-", async (directory) => {
   assert.match(exclusionManifest, /"category": "source-tree"/)
   assert.doesNotMatch(exclusionManifest, /prepared-plugins|agents-api|private-runtime-source/)
   await writeFile(join(workspace, ".codebox", "agent-task-workflow-result.json"), JSON.stringify({ typed_artifacts: [{ name: "reviewer-report", type: "report", artifact: { path: "prepared-plugins/agents-api/agents-api.php" } }] }))
-  await assert.rejects(execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } }), /Declared reviewer artifacts/)
-  assert.ok(await readFile(join(upload, ".codebox", "agent-task-workflow-result.json"), "utf8"), "Declared artifact rejection preserves the normalized control result")
+  await execFileAsync(process.execPath, [script.pathname], { env: { ...process.env, AGENT_TASK_WORKSPACE: workspace, AGENT_TASK_UPLOAD_PATH: upload, WP_CODEBOX_RUNTIME_SOURCE_ROOT: privateRoot } })
+  await assert.rejects(readFile(join(upload, ".codebox", "agent-task-artifacts", "prepared-plugins", "agents-api", "agents-api.php"), "utf8"), /ENOENT/, "Package-declared source aliases never reach the upload")
   await rm(join(artifacts, "prepared-plugins"), { recursive: true, force: true })
   for (const path of ["runtime-source-disguised.json", "runtime-source-disguised.txt"]) {
     await writeFile(join(artifacts, path), await readFile(new URL(`../fixtures/agent-task-upload/${path}`, import.meta.url), "utf8"))
