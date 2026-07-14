@@ -12,6 +12,8 @@ const MAX_PACKAGE_BYTES = 1024 * 1024
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const ROLE = /^(component|provider_plugin|bundled_library)$/
 const HTTPS_URL = /^https:\/\//i
+const PROVIDER_ID = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/
+const MODEL_ID = /^[A-Za-z0-9]+(?:[._:/-][A-Za-z0-9.]+)*$/
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 const MAX_ZIP_ENTRIES = 10_000
 const MAX_ZIP_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
@@ -159,6 +161,17 @@ export function normalizeRuntimeSources(value, policy = {}) {
   return sources
 }
 
+export function validateRuntimeSourceModel(model, sources) {
+  const provider = string(model?.provider).toLowerCase()
+  const name = string(model?.name)
+  if (!PROVIDER_ID.test(provider) || !MODEL_ID.test(name)) throw new Error("model.provider and model.name must be non-empty valid identifiers.")
+  const declaredProviders = new Set(sources
+    .filter((source) => source.role === "provider_plugin")
+    .flatMap((source) => source.metadata.providers ?? []))
+  if (declaredProviders.size > 0 && !declaredProviders.has(provider)) throw new Error(`Requested provider ${provider} is not declared by an authorized runtime provider plugin.`)
+  return { provider, name }
+}
+
 export function normalizeRuntimeSource(value, policy = {}, label = "runtime_source") {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {}
   if (source.version !== 1) throw new Error(`${label}.version must be 1.`)
@@ -229,7 +242,11 @@ function normalizeRuntimeMetadata(role, metadata, label) {
     if (slug && !SLUG.test(slug)) throw new Error(`${label}.metadata.slug must be a stable plugin slug.`)
     if (pluginFile && !normalizePath(pluginFile)) throw new Error(`${label}.metadata.pluginFile must be a safe relative path.`)
     if (activate !== undefined && typeof activate !== "boolean") throw new Error(`${label}.metadata.activate must be boolean when provided.`)
-    return { ...(slug ? { slug } : {}), ...(pluginFile ? { pluginFile } : {}), ...(activate === undefined ? { activate: true } : { activate }) }
+    const providers = metadata.providers
+    if (!Array.isArray(providers) || providers.length === 0 || providers.some((provider) => !PROVIDER_ID.test(string(provider)))) throw new Error(`${label}.metadata.providers must be a non-empty canonical list of provider ids.`)
+    const canonicalProviders = [...new Set(providers.map((provider) => string(provider).toLowerCase()))].sort()
+    if (canonicalProviders.length !== providers.length || providers.some((provider, index) => provider !== canonicalProviders[index])) throw new Error(`${label}.metadata.providers must be a sorted, lowercase, duplicate-free canonical allowlist.`)
+    return { ...(slug ? { slug } : {}), ...(pluginFile ? { pluginFile } : {}), ...(activate === undefined ? { activate: true } : { activate }), providers: canonicalProviders }
   }
   if (!SLUG.test(string(metadata.library)) || !SLUG.test(string(metadata.strategy))) throw new Error(`${label}.metadata must declare library and strategy for a bundled library.`)
   const target = string(metadata.target)
@@ -405,8 +422,9 @@ function pluginFileWithinSource(pluginFile, slug) {
 }
 
 export function runtimeSourceProvenance(descriptor) {
-  if (descriptor.source?.type === "https_zip") return { role: descriptor.role, source: { type: "https_zip", url: descriptor.source.url, sha256: descriptor.source.sha256, ...(descriptor.source.archive_root ? { archive_root: descriptor.source.archive_root } : {}) } }
-  return { role: descriptor.role, repository: descriptor.repository, revision: descriptor.revision, path: descriptor.path, ...(descriptor.digest ? { digest: descriptor.digest } : {}) }
+  const provider = descriptor.role === "provider_plugin" && descriptor.metadata.providers ? { providers: descriptor.metadata.providers } : {}
+  if (descriptor.source?.type === "https_zip") return { role: descriptor.role, source: { type: "https_zip", url: descriptor.source.url, sha256: descriptor.source.sha256, ...(descriptor.source.archive_root ? { archive_root: descriptor.source.archive_root } : {}) }, ...provider }
+  return { role: descriptor.role, repository: descriptor.repository, revision: descriptor.revision, path: descriptor.path, ...(descriptor.digest ? { digest: descriptor.digest } : {}), ...provider }
 }
 
 export function assertPrivateRuntimeRoot(root, forbiddenRoots = []) {
