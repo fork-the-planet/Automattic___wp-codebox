@@ -273,8 +273,44 @@ function ${options.relativeFunctionName}(string $path, string $${options.rootPar
 }
 
 function phpunitArgsPhp(functionName: string, logFunction: string): string {
-  return `function ${functionName}(array $argv) {
-    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'extensions' => array());
+  return `function ${functionName}_private_cache_result_file() {
+    $path = false;
+    try {
+        $candidate = '/tmp/wp-codebox-phpunit-' . bin2hex(random_bytes(24)) . '.cache';
+        $handle = @fopen($candidate, 'x');
+        if ($handle !== false) {
+            fclose($handle);
+            $path = $candidate;
+        }
+    } catch (Throwable $e) {
+        // tempnam() asks the operating system to allocate a unique file when
+        // cryptographic randomness is unavailable.
+    }
+    if ($path === false) {
+        $path = tempnam('/tmp', 'wp-codebox-phpunit-');
+    }
+    if ($path === false) {
+        throw new RuntimeException('Unable to allocate a private PHPUnit result cache file.');
+    }
+    if (!@chmod($path, 0600)) {
+        @unlink($path);
+        throw new RuntimeException('Unable to restrict the private PHPUnit result cache file permissions.');
+    }
+    // fileperms() is meaningful on the POSIX filesystems used by Playground.
+    // Fail closed rather than passing a cache file with broader permissions.
+    $mode = @fileperms($path);
+    if ($mode !== false && (($mode & 0777) !== 0600)) {
+        @unlink($path);
+        throw new RuntimeException('Private PHPUnit result cache file permissions are not 0600.');
+    }
+    register_shutdown_function(static function () use ($path): void {
+        @unlink($path);
+    });
+    return $path;
+}
+
+function ${functionName}(array $argv) {
+    $arguments = array('colors' => 'never', 'testdox' => true, 'verbose' => false, 'cacheResult' => false, 'cacheResultFile' => ${functionName}_private_cache_result_file(), 'extensions' => array());
     $args = array_slice($argv, 1);
     for ($i = 0; $i < count($args); $i++) {
         $arg = $args[$i];
