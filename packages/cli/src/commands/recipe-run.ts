@@ -20,7 +20,7 @@ import { previewSpec, releaseRuntime, runtimeMetadata, type RunOutput } from "..
 import { artifactManifestFilesByPath, parseBenchResults, writeBenchmarkArtifactEvidence } from "./recipe-run-benchmark-artifacts.js"
 import { createRecipeRunContext } from "./recipe-run-context.js"
 import { collectRecipeDeclaredArtifacts, materializeTypedRecipeDeclaredArtifacts, recipeDeclaredArtifactFailure, recipeProbeFailure, recipeRuntimeEvidenceFiles } from "./recipe-declared-artifacts.js"
-import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
+import { completedRecipeOutputFields, finalizeCompletedRecipeRun, finalizeRecipeValidationFailure, finalizeRecoveredRecipeFailure, runRecipeCleanup, RunResourceCleanupError, type RunResourceCleanupEvidence } from "./recipe-run-finalizer.js"
 import { RecipeRunPhaseExecutor } from "./recipe-run-phase-executor.js"
 import { RecipeArtifactsMountConflictError, recipeArtifactsMountConflict } from "./recipe-run-artifacts-mount-guard.js"
 import { createRecipeInterruptionController, interruptedRecipeOutput, markRecipeArtifactsFinalized, recipeInterruptionSerializedError } from "./recipe-run-interruption.js"
@@ -29,6 +29,7 @@ import { RecipePhaseError } from "./recipe-run-phases.js"
 import { markPreviewLeaseAvailable, markPreviewLeaseFailed, markPreviewLeaseReleased, startPreviewLeaseRecipeRun } from "./preview-lease.js"
 import { importRecipeSiteSeeds } from "./recipe-site-seeds.js"
 import { applyRecipeRuntimeSetup, cleanupInputMountBaselines, prepareRecipeRuntimeSetup, recipeRunDependencyOverlay, recipeRunExtraPlugin, recipeRunStagedFile, rewriteInputMountPathArgs } from "./recipe-runtime-setup.js"
+import { provisionRuntimeServices, provisionRuntimeServicesForRecipe, runtimeServiceEvidenceFromError, type RuntimeServiceEvidence } from "../runtime-services.js"
 import { distributionStartupProbeFailure, executeRecipeCollectWorkloadResult, executeRecipeWorkflowStep, recipeAdvisoryFailure, recipeBrowserEvidence, recipeStepFailure, recipeWorkflowArgsEvidence, recipeWorkflowStepIsAdvisory, runDistributionSetupArtifacts, runDistributionStartupProbes, runRecipeProbes, withRecipeExecutionPhase } from "./recipe-run-workflow-evidence.js"
 import type { RecipeAdvisoryFailure, RecipeBrowserEvidence, RecipeDiagnosticArtifactRef, RecipeEffectiveRecipeArtifact, RecipeExecutionResult, RecipeFuzzCaseCommandRef, RecipeFuzzCaseResult, RecipeFuzzCaseStatus, RecipeFuzzRunResult, RecipeInterruptionController, RecipePhaseEvidence, RecipePhaseName, RecipePhpWasmRuntimeDiagnostic, RecipeRunCommandOutput, RecipeRunComponentContract, RecipeRunDeclaredArtifact, RecipeRunDistributionSetupArtifact, RecipeRunDistributionStartupProbe, RecipeRunFixtureDatabase, RecipeRunOptions, RecipeRunOutput, RecipeRunProbe, RecipeRunProvenance, RecipeRunStagedFile, RecipeRuntimeDiagnostic, RecipeStepFailure, RecipeValidateOptions, RecipeValidateOutput } from "./recipe-run-types.js"
 
@@ -95,7 +96,7 @@ export async function runRecipeValidateCommand(args: string[]): Promise<number> 
   return output.success ? 0 : 1
 }
 
-async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
+export async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterruptionController): Promise<RecipeRunOutput> {
   const mountConflictFailure = await recipeArtifactsMountConflictFailure(options)
   if (mountConflictFailure) {
     return mountConflictFailure
@@ -160,6 +161,14 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
   let artifacts: ArtifactBundle | undefined
   let startupDurationMs: number | undefined
   let cleanupEvidence: RunResourceCleanupEvidence | undefined
+  let managedServices: Awaited<ReturnType<typeof provisionRuntimeServices>> | undefined
+  let managedServicesReleased = false
+  let serviceEvidence: RuntimeServiceEvidence[] = []
+  const releaseManagedServices = async (): Promise<void> => {
+    if (!managedServices || managedServicesReleased) return
+    await managedServices.release()
+    managedServicesReleased = true
+  }
   let runtimeDestroyed = false
   const destroyActiveRuntime = async (): Promise<void> => {
     if (!runtime || runtimeDestroyed) {
@@ -180,6 +189,13 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
     interruption?.throwIfInterrupted()
 
     runRecord = await runRegistry.update(runRecord.runId, { status: "booting" })
+    managedServices = await phaseTracker.run("provision_runtime_services", { services: recipe.inputs?.services?.map(({ id, kind }) => ({ id, kind })) ?? [] }, async () => await provisionRuntimeServicesForRecipe(
+      recipe.inputs?.services ?? [],
+      async (provisioning) => await awaitRecipe("runtime-services.provision", provisioning),
+      { signal: interruption?.signal, onEvidence: (evidence) => { serviceEvidence = evidence } },
+    ))
+    serviceEvidence = managedServices.evidence
+    Object.assign(runtimeEnv, managedServices.env)
     const runtimeEnvironment = {
       kind: "wordpress" as const,
       name: plan.runtime.name,
@@ -200,6 +216,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       metadata: {
         ...runtimeMetadata(configuredArtifactsDirectory, plan.runtime.wp),
         run: { runId: runRecord.runId, registryDirectory: runRegistry.directory },
+        ...(serviceEvidence.length > 0 ? { managedRuntimeServices: serviceEvidence } : {}),
         ...recipeRunMetadata(recipe, recipePath, workspaceMounts, extraPlugins, dependencyOverlays, stagedFiles, overlays, backendPackage, effectivePreview),
       },
       preview: previewSpec(effectivePreview.publicUrl, effectivePreview.port, effectivePreview.bind, effectivePreview.siteUrl, effectivePreview.lease),
@@ -346,7 +363,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       await markPreviewLeaseAvailable(options.previewLeaseFile, { runId: runRecord.runId, preview: artifacts.preview, holdSeconds: options.previewHoldSeconds })
     }
     const activeRuntime = runtime
-    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
+    cleanupEvidence = await runManagedServiceCleanup(runRegistry, runRecord, serviceEvidence, false, async () => {
       await awaitRecipe("runtime.release", async () => {
         try {
           await releaseRuntime(activeRuntime, successfulRecipe && options.previewHoldBlocking ? options.previewHoldSeconds : 0, async () => {
@@ -360,6 +377,7 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
           interruption.clear()
         }
       })
+      await releaseManagedServices()
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
@@ -414,6 +432,11 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       output: { ...completedRecipeOutputFields({ executions, componentContracts: componentContractResults(recipe, extraPlugins, phaseTracker.list(), executions), stagedFiles: stagedFiles.map(recipeRunStagedFile), fixtureDatabases, siteSeeds, distributionSetupArtifacts, distributionStartupProbes, probes, declaredArtifacts, stepFailures, phaseEvidence: phaseTracker.list(), advisoryFailures, browserEvidence, benchResultsList, fuzzRun: fuzzRunResult, evidence }), provenance: recipeRunProvenance(recipe, recipePath) },
     })
   } catch (error) {
+    const failedServiceEvidence = runtimeServiceEvidenceFromError(error)
+    if (failedServiceEvidence) {
+      serviceEvidence = failedServiceEvidence
+      await runRegistry.update(runRecord.runId, { metadata: { managedRuntimeServices: serviceEvidence } })
+    }
     await markPreviewLeaseFailed(options.previewLeaseFile, error)
     const serializedError = interruption?.metadata ? recipeInterruptionSerializedError(interruption.metadata) : serializeRecipeRunError(error)
     const failureDiagnostics = recipeFailureRuntimeEvidenceFile({
@@ -493,7 +516,8 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       ])
     }
 
-    cleanupEvidence = await runRecipeCleanup(runRegistry, runRecord, async () => {
+    cleanupEvidence = await runManagedServiceCleanup(runRegistry, runRecord, serviceEvidence, true, async () => {
+      await releaseManagedServices()
       await cleanupRecipePreparedSources(workspaceMounts, extraPlugins, stagedFiles, overlays, dependencyOverlays)
       await cleanupInputMountBaselines(inputMountBaselinePaths)
     })
@@ -534,7 +558,32 @@ async function runRecipe(options: RecipeRunOptions, interruption?: RecipeInterru
       },
     })
   } finally {
+    if (managedServices && !managedServicesReleased) {
+      await managedServices.release().catch(() => undefined)
+      await runRegistry.update(runRecord.runId, { metadata: { managedRuntimeServices: managedServices.evidence } }).catch(() => undefined)
+    }
     cancellationWatcher?.dispose()
+  }
+}
+
+export async function runManagedServiceCleanup(
+  runRegistry: RuntimeRunRegistry,
+  runRecord: Awaited<ReturnType<RuntimeRunRegistry["read"]>>,
+  serviceEvidence: RuntimeServiceEvidence[],
+  preservePrimaryFailure: boolean,
+  cleanup: () => Promise<void>,
+): Promise<RunResourceCleanupEvidence> {
+  try {
+    return await runRecipeCleanup(runRegistry, runRecord, cleanup)
+  } catch (error) {
+    if (preservePrimaryFailure && error instanceof RunResourceCleanupError) {
+      return error.evidence
+    }
+    throw error
+  } finally {
+    await runRegistry.update(runRecord.runId, {
+      metadata: { managedRuntimeServices: serviceEvidence },
+    })
   }
 }
 

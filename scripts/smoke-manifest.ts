@@ -129,6 +129,9 @@ export const smokeGroups = {
     description: "Package build contract smoke checks.",
     commands: [
       npmScript("build"),
+      npmScript("test:runtime-services"),
+      npmScript("test:runtime-services-lifecycle"),
+      npmScript("test:disposable-mysql-mysqli-e2e"),
     ],
   },
   agent: {
