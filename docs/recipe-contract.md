@@ -716,6 +716,15 @@ The runtime provides:
 - Structured diagnostics in the recipe artifact bundle, including the raw test
   result log collected from `/tmp/wp-codebox-phpunit-result.txt`.
 
+`dependencyMounts` is the canonical PHPUnit builder input for plugins that need
+the PHPUnit database during activation. Mount each dependency through
+`inputs.extra_plugins` with `activate: false`, then provide its sandbox plugin
+directory in `dependencyMounts`. In managed bootstrap mode, `wordpress.phpunit`
+loads and activates those dependencies after the PHPUnit install stage has
+created test tables and before test discovery and execution. Any dependency
+`plugins_loaded` callbacks registered during that load are invoked once after
+dependency activation.
+
 Use `recipe build phpunit` when generating recipes for plugin CI or offloaded lab
 runners:
 
