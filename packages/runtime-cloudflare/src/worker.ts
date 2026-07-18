@@ -84,7 +84,7 @@ async function runBootProbe(phase: string): Promise<Response> {
 
   if (phase === "seeded-wordpress") {
     const runtime = await bootWordPressRuntime(
-      "install-from-existing-files-if-needed",
+      "do-not-attempt-installing",
       true,
       true,
       new Uint8Array(wordpressInstallSeed),
