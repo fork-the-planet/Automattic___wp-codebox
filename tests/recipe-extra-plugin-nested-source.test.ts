@@ -70,6 +70,34 @@ await withTempDir("wp-codebox-nested-extra-plugin-source-path-", async (recipeDi
   assert.equal((await stat(join(plugin.source, "example.php"))).isFile(), true)
 })
 
+await withTempDir("wp-codebox-extra-plugin-root-source-path-", async (recipeDirectory) => {
+  const pluginRoot = join(recipeDirectory, "example-plugin")
+  await mkdir(pluginRoot, { recursive: true })
+  await writeFile(join(pluginRoot, "example-plugin.php"), "<?php\n/* Plugin Name: Example Plugin */\n")
+
+  const recipe: WorkspaceRecipe = {
+    schema: "wp-codebox/workspace-recipe/v1",
+    inputs: {
+      extra_plugins: [{
+        sourcePath: "example-plugin",
+        sourceSubpath: ".",
+        mountSlug: "example-plugin",
+        pluginFile: "example-plugin/example-plugin.php",
+      }],
+    },
+    workflow: { steps: [{ command: "inspect-mounted-inputs" }] },
+  }
+
+  assertWorkspaceRecipeJsonSchema(recipe)
+  assert.deepEqual(await validateWorkspaceRecipeSemantics(recipe, join(recipeDirectory, "recipe.json")), [])
+
+  const [plugin] = await prepareRecipeExtraPlugins(recipe, recipeDirectory)
+  assert.ok(plugin)
+  assert.equal(plugin.slug, "example-plugin")
+  assert.equal(plugin.metadata?.sourceSubpath, undefined)
+  assert.equal((await stat(join(plugin.source, "example-plugin.php"))).isFile(), true)
+})
+
 await withTempDir("wp-codebox-nested-extra-plugin-invalid-", async (recipeDirectory) => {
   const repo = join(recipeDirectory, "repo")
   await mkdir(join(repo, "plugins", "nested-plugin"), { recursive: true })
@@ -85,6 +113,11 @@ await withTempDir("wp-codebox-nested-extra-plugin-invalid-", async (recipeDirect
     {
       name: "path traversal sourceSubdir",
       plugin: { sourcePath: "repo", sourceSubdir: "../outside", mountSlug: "nested-plugin", pluginFile: "nested-plugin/nested-plugin.php" },
+      issue: "invalid-source-subdir",
+    },
+    {
+      name: "embedded current-directory sourceSubdir",
+      plugin: { sourcePath: "repo", sourceSubdir: "./plugins/nested-plugin", mountSlug: "nested-plugin", pluginFile: "nested-plugin/nested-plugin.php" },
       issue: "invalid-source-subdir",
     },
     {
