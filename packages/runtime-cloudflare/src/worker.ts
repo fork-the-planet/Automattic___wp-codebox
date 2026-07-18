@@ -1,5 +1,5 @@
 import { loadPHPRuntime, PHP } from "@php-wasm/universal"
-import { decodeRemoteZip } from "@php-wasm/stream-compression"
+import { decodeRemoteZip, decodeZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
 // @ts-expect-error The adjacent Wasm declaration covers the compiled binary import.
@@ -11,10 +11,15 @@ import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 const PHP_VERSION = "8.5.8"
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
+const MARKDOWN_DATABASE_INTEGRATION_REVISION = "af451895a9429895e3ad4d9b4e073bfd88873745"
+const MARKDOWN_DATABASE_INTEGRATION_ARCHIVE_URL = `https://codeload.github.com/Automattic/markdown-database-integration/zip/${MARKDOWN_DATABASE_INTEGRATION_REVISION}`
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
-const R2_DATABASE_POINTER_KEY = "sites/default/database/current.json"
-const R2_DATABASE_REVISION_PREFIX = "sites/default/database/revisions"
+const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
+const MARKDOWN_INDEX_PATH = "/tmp/markdown-index.sqlite"
+const R2_MARKDOWN_POINTER_KEY = "sites/default/markdown/current.json"
+const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
+const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
 let bootPromise: Promise<{ php: PHP; wordpressVersion: string }> | undefined
 
 interface Env {
@@ -53,10 +58,26 @@ export default {
   },
 }
 
-interface DatabasePointer {
+interface MarkdownPointer {
   revision: string
-  databaseKey: string
+  manifestKey: string
   persistedAt: string
+}
+
+interface MarkdownManifestFile {
+  path: string
+  objectKey: string
+  sha256: string
+  size: number
+}
+
+interface MarkdownManifest extends MarkdownPointer {
+  files: MarkdownManifestFile[]
+}
+
+interface RuntimeFile {
+  path: string
+  bytes: Uint8Array
 }
 
 export class WordPressStateCoordinator implements DurableObject {
@@ -68,7 +89,13 @@ export class WordPressStateCoordinator implements DurableObject {
   ) {}
 
   fetch(request: Request): Promise<Response> {
-    const response = this.tail.then(() => this.handleRequest(request))
+    const response = this.tail
+      .then(() => this.handleRequest(request))
+      .catch((error: unknown) => Response.json({
+        schema: "wp-codebox/cloudflare-wordpress-state-error/v1",
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }, { status: 500 }))
     this.tail = response.then(() => undefined, () => undefined)
     return response
   }
@@ -85,40 +112,21 @@ export class WordPressStateCoordinator implements DurableObject {
     if (request.method !== "POST") return new Response("Method not allowed.", { status: 405 })
 
     const pointer = await this.readPointer()
-    const persistedDatabase = pointer ? await this.env.WORDPRESS_STATE_BUCKET.get(pointer.databaseKey) : null
-    if (pointer && !persistedDatabase) {
-      throw new Error(`R2 database revision is missing: ${pointer.databaseKey}`)
-    }
-
-    const database = persistedDatabase
-      ? new Uint8Array(await persistedDatabase.arrayBuffer())
-      : new Uint8Array(wordpressInstallSeed)
-    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, database)
+    const markdownFiles = pointer ? await this.readMarkdownRevision(pointer) : initialMarkdownFiles()
+    const runtime = await bootMarkdownWordPressRuntime(markdownFiles)
     try {
       const mutationOutput = (await runtime.php.run({
-        code: "<?php require '/wordpress/wp-load.php'; $value = (int) get_option('wp_codebox_r2_revision', 0) + 1; update_option('wp_codebox_r2_revision', $value); echo json_encode(['revisionValue' => $value, 'wordpressVersion' => get_bloginfo('version')]);",
+        code: "<?php require '/wordpress/wp-load.php'; $current = (int) get_option('wp_codebox_mdi_revision', 0); $previous_found = 0 === $current || null !== get_page_by_path('cloudflare-r2-proof-' . $current, OBJECT, 'post'); $value = $current + 1; $post_id = wp_insert_post(['post_title' => 'Cloudflare R2 Proof ' . $value, 'post_name' => 'cloudflare-r2-proof-' . $value, 'post_content' => 'Persisted by MDI primary mode in R2 revision ' . $value . '.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } update_option('wp_codebox_mdi_revision', $value); echo json_encode(['revisionValue' => $value, 'previousPostFound' => $previous_found, 'postId' => $post_id, 'wordpressVersion' => get_bloginfo('version')]);",
       })).text.trim()
-      const mutation = JSON.parse(mutationOutput) as { revisionValue: number; wordpressVersion: string }
-      const revision = crypto.randomUUID()
-      const databaseKey = `${R2_DATABASE_REVISION_PREFIX}/${revision}.sqlite`
-      const persistedAt = new Date().toISOString()
-      const databaseBytes = runtime.php.readFileAsBuffer(DATABASE_PATH)
-      await this.env.WORDPRESS_STATE_BUCKET.put(databaseKey, databaseBytes, {
-        customMetadata: {
-          persistedAt,
-          revisionValue: String(mutation.revisionValue),
-          wordpressVersion: mutation.wordpressVersion,
-        },
-      })
-
-      const nextPointer: DatabasePointer = { revision, databaseKey, persistedAt }
-      await this.env.WORDPRESS_STATE_BUCKET.put(R2_DATABASE_POINTER_KEY, JSON.stringify(nextPointer), {
-        httpMetadata: { contentType: "application/json" },
-      })
+      const mutation = JSON.parse(mutationOutput) as { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string }
+      const canonicalFiles = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
+      const nextPointer = await this.persistMarkdownRevision(canonicalFiles)
       return Response.json({
         schema: "wp-codebox/cloudflare-wordpress-mutation/v1",
-        source: pointer ? "r2-revision" : "packaged-seed",
+        source: pointer ? "r2-markdown-revision" : "packaged-markdown-seed",
         ...mutation,
+        canonicalFiles: canonicalFiles.length,
+        sqlitePersisted: false,
         pointer: nextPointer,
       })
     } finally {
@@ -126,9 +134,47 @@ export class WordPressStateCoordinator implements DurableObject {
     }
   }
 
-  private async readPointer(): Promise<DatabasePointer | null> {
-    const object = await this.env.WORDPRESS_STATE_BUCKET.get(R2_DATABASE_POINTER_KEY)
-    return object ? object.json<DatabasePointer>() : null
+  private async readPointer(): Promise<MarkdownPointer | null> {
+    const object = await this.env.WORDPRESS_STATE_BUCKET.get(R2_MARKDOWN_POINTER_KEY)
+    return object ? object.json<MarkdownPointer>() : null
+  }
+
+  private async readMarkdownRevision(pointer: MarkdownPointer): Promise<RuntimeFile[]> {
+    const manifestObject = await this.env.WORDPRESS_STATE_BUCKET.get(pointer.manifestKey)
+    if (!manifestObject) throw new Error(`R2 Markdown manifest is missing: ${pointer.manifestKey}`)
+    const manifest = await manifestObject.json<MarkdownManifest>()
+    const files: RuntimeFile[] = []
+    for (const file of manifest.files) {
+      const object = await this.env.WORDPRESS_STATE_BUCKET.get(file.objectKey)
+      if (!object) throw new Error(`R2 Markdown object is missing: ${file.objectKey}`)
+      files.push({ path: file.path, bytes: new Uint8Array(await object.arrayBuffer()) })
+    }
+    return files
+  }
+
+  private async persistMarkdownRevision(files: RuntimeFile[]): Promise<MarkdownPointer> {
+    const manifestFiles: MarkdownManifestFile[] = []
+    for (const file of files) {
+      const sha256 = await sha256Hex(file.bytes)
+      const objectKey = `${R2_MARKDOWN_OBJECT_PREFIX}/${sha256}`
+      if (!await this.env.WORDPRESS_STATE_BUCKET.head(objectKey)) {
+        await this.env.WORDPRESS_STATE_BUCKET.put(objectKey, file.bytes)
+      }
+      manifestFiles.push({ path: file.path, objectKey, sha256, size: file.bytes.byteLength })
+    }
+
+    const revision = crypto.randomUUID()
+    const manifestKey = `${R2_MARKDOWN_REVISION_PREFIX}/${revision}.json`
+    const persistedAt = new Date().toISOString()
+    const pointer: MarkdownPointer = { revision, manifestKey, persistedAt }
+    const manifest: MarkdownManifest = { ...pointer, files: manifestFiles }
+    await this.env.WORDPRESS_STATE_BUCKET.put(manifestKey, JSON.stringify(manifest), {
+      httpMetadata: { contentType: "application/json" },
+    })
+    await this.env.WORDPRESS_STATE_BUCKET.put(R2_MARKDOWN_POINTER_KEY, JSON.stringify(pointer), {
+      httpMetadata: { contentType: "application/json" },
+    })
+    return pointer
   }
 }
 
@@ -178,6 +224,72 @@ async function runBootProbe(phase: string): Promise<Response> {
       return probeResponse(phase, { ...evidence, wordpressVersion })
     } finally {
       php.exit()
+    }
+  }
+
+  if (phase === "mdi-files") {
+    const php = new PHP(await createPhpRuntime())
+    try {
+      const wordpress = await materializeWordPressServerFiles(php)
+      await materializeMarkdownDatabaseIntegration(php)
+      materializeRuntimeFiles(php, MARKDOWN_ROOT, initialMarkdownFiles())
+      const evidence = (await php.run({
+        code: "<?php echo json_encode(['dropin' => file_exists('/wordpress/wp-content/db.php'), 'plugin' => file_exists('/wordpress/wp-content/plugins/markdown-database-integration/markdown-database-integration.php'), 'siteurl' => file_exists('/wordpress/wp-content/markdown/_options/siteurl.json')]);",
+      })).text.trim()
+      return probeResponse(phase, { ...wordpress, ...JSON.parse(evidence) as Record<string, string> })
+    } finally {
+      php.exit()
+    }
+  }
+
+  if (phase === "mdi-shortinit") {
+    const runtime = await bootMarkdownWordPressRuntime(initialMarkdownFiles())
+    try {
+      const evidence = (await runtime.php.run({
+        code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'markdownDropin' => defined('MARKDOWN_DB_DROPIN'), 'markdownMode' => defined('MARKDOWN_DB_MODE') ? MARKDOWN_DB_MODE : '']);",
+      })).text.trim()
+      return probeResponse(phase, JSON.parse(evidence) as Record<string, string>)
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
+  if (phase === "mdi-index-artifact") {
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles())
+    try {
+      await runtime.php.run({ code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php';" })
+      return new Response(Uint8Array.from(runtime.php.readFileAsBuffer(MARKDOWN_INDEX_PATH)).buffer, {
+        headers: { "Content-Type": "application/vnd.sqlite3" },
+      })
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
+  if (phase === "mdi-wordpress" || phase === "mdi-option" || phase === "mdi-insert") {
+    const runtime = await bootMarkdownWordPressRuntime(initialMarkdownFiles())
+    try {
+      const operation = phase === "mdi-option"
+        ? "$updated = update_option('wp_codebox_mdi_probe', 1); $result = ['updated' => $updated];"
+        : phase === "mdi-insert"
+          ? "$post_id = wp_insert_post(['post_title' => 'MDI Probe', 'post_name' => 'mdi-probe', 'post_content' => 'MDI probe body.', 'post_status' => 'publish', 'post_type' => 'post'], true); if (is_wp_error($post_id)) { throw new Exception($post_id->get_error_message()); } $result = ['postId' => $post_id];"
+          : "$result = [];"
+      const evidence = (await runtime.php.run({
+        code: `<?php require '/wordpress/wp-load.php'; ${operation} echo json_encode(array_merge(['wordpressVersion' => get_bloginfo('version')], $result));`,
+      })).text.trim()
+      return probeResponse(phase, JSON.parse(evidence) as Record<string, string>)
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
+  if (["mdi-includes", "mdi-embed", "mdi-textdomain", "mdi-ai-client", "mdi-plugin-constants", "mdi-muplugins", "mdi-plugins", "mdi-theme", "mdi-site-health-class", "mdi-site-health", "mdi-current-user", "mdi-init", "mdi-wp-loaded"].includes(phase)) {
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, initialMarkdownFiles())
+    try {
+      const evidence = (await runtime.php.run({ code: wordpressProbeCode(phase) })).text.trim()
+      return probeResponse(phase, JSON.parse(evidence) as Record<string, string>)
+    } finally {
+      runtime.php.exit()
     }
   }
 
@@ -234,6 +346,10 @@ function wordpressProbeCode(phase: string): string {
 
   const stops: Record<string, { needle: string; after?: boolean }> = {
     "seeded-includes": { needle: "/**\n * @since 3.3.0" },
+    "seeded-embed": { needle: "/**\n * WordPress Textdomain Registry object." },
+    "seeded-textdomain": { needle: "// WordPress AI Client initialization." },
+    "seeded-ai-client": { needle: "// Load multisite-specific files." },
+    "seeded-plugin-constants": { needle: "// Load must-use plugins." },
     "seeded-muplugins": { needle: "if ( is_multisite() ) {\n\tms_cookie_constants();" },
     "seeded-plugins": { needle: "// Define constants which affect functionality if not already defined." },
     "seeded-theme": { needle: "// Create an instance of WP_Site_Health so that Cron events may fire." },
@@ -243,7 +359,7 @@ function wordpressProbeCode(phase: string): string {
     "seeded-init": { needle: "// Check site status." },
     "seeded-wp-loaded": { needle: "do_action( 'wp_loaded' );", after: true },
   }
-  const stop = stops[phase]
+  const stop = stops[phase.replace(/^mdi-/, "seeded-")]
   if (!stop) throw new Error(`Unknown seeded WordPress probe phase: ${phase}`)
 
   return `<?php
@@ -264,17 +380,32 @@ async function bootWordPressRuntime(
   includeSqlite = true,
   streamWordPressFiles = false,
   databaseSeed?: Uint8Array,
+  markdownFiles?: RuntimeFile[],
+  markdownIndexSeed?: Uint8Array,
 ): Promise<{ php: PHP; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
     constants: {
       AUTOMATIC_UPDATER_DISABLED: true,
       DISABLE_WP_CRON: true,
+      ...(markdownFiles ? {
+        MARKDOWN_DB_CONTENT_DIR: MARKDOWN_ROOT,
+        MARKDOWN_DB_INDEX_PATH: MARKDOWN_INDEX_PATH,
+        MARKDOWN_DB_MODE: "primary",
+        MARKDOWN_DB_STATE_DIR: MARKDOWN_ROOT,
+      } : {}),
       WP_HTTP_BLOCK_EXTERNAL: true,
     },
     dataSqlPath: DATABASE_PATH,
-    hooks: streamWordPressFiles || databaseSeed ? {
-      beforeWordPressFiles: streamWordPressFiles ? materializeWordPressServerFiles : undefined,
+    hooks: streamWordPressFiles || databaseSeed || markdownFiles ? {
+      beforeWordPressFiles: streamWordPressFiles || markdownFiles ? async (php: PHP) => {
+        if (streamWordPressFiles) await materializeWordPressServerFiles(php)
+        if (markdownFiles) {
+          await materializeMarkdownDatabaseIntegration(php)
+          materializeRuntimeFiles(php, MARKDOWN_ROOT, markdownFiles)
+          if (markdownIndexSeed) php.writeFile(MARKDOWN_INDEX_PATH, markdownIndexSeed)
+        }
+      } : undefined,
       beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
         php.mkdir("/wordpress/wp-content/database")
         php.writeFile(DATABASE_PATH, databaseSeed)
@@ -291,6 +422,87 @@ async function bootWordPressRuntime(
   const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
   if (!wordpressVersion) throw new Error("WordPress boot completed without a detected version.")
   return { php, wordpressVersion }
+}
+
+async function bootMarkdownWordPressRuntime(markdownFiles: RuntimeFile[]): Promise<{ php: PHP; wordpressVersion: string }> {
+  const indexBuilder = await bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, markdownFiles)
+  let markdownIndex: Uint8Array
+  try {
+    await indexBuilder.php.run({
+      code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php';",
+    })
+    markdownIndex = Uint8Array.from(indexBuilder.php.readFileAsBuffer(MARKDOWN_INDEX_PATH))
+  } finally {
+    indexBuilder.php.exit()
+  }
+  return bootWordPressRuntime("do-not-attempt-installing", true, true, undefined, markdownFiles, markdownIndex)
+}
+
+function initialMarkdownFiles(): RuntimeFile[] {
+  const options = [
+    { option_id: 1, option_name: "siteurl", option_value: SITE_URL, autoload: "on" },
+    { option_id: 2, option_name: "home", option_value: SITE_URL, autoload: "on" },
+    { option_id: 3, option_name: "blogname", option_value: "WP Codebox Cloudflare Runtime", autoload: "on" },
+  ]
+  return options.map((option) => ({
+    path: `_options/${option.option_name}.json`,
+    bytes: new TextEncoder().encode(JSON.stringify(option, null, 2)),
+  }))
+}
+
+function materializeRuntimeFiles(php: PHP, root: string, files: RuntimeFile[]): void {
+  for (const file of files) {
+    const destination = `${root}/${file.path}`
+    php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
+    php.writeFile(destination, file.bytes)
+  }
+}
+
+function collectRuntimeFiles(php: PHP, root: string): RuntimeFile[] {
+  const files: RuntimeFile[] = []
+  const visit = (directory: string): void => {
+    for (const name of php.listFiles(directory)) {
+      if (name === "." || name === "..") continue
+      const path = `${directory}/${name}`
+      if (php.isDir(path)) {
+        visit(path)
+      } else if (!name.includes(".tmp.") && !name.startsWith("markdown-index.sqlite")) {
+        files.push({ path: path.slice(root.length + 1), bytes: php.readFileAsBuffer(path) })
+      }
+    }
+  }
+  visit(root)
+  return files.sort((left, right) => left.path.localeCompare(right.path))
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+async function materializeMarkdownDatabaseIntegration(php: PHP): Promise<void> {
+  const response = await fetch(MARKDOWN_DATABASE_INTEGRATION_ARCHIVE_URL)
+  if (!response.ok || !response.body) throw new Error(`Unable to fetch Markdown Database Integration: ${response.status}.`)
+  const stream = decodeZip(response.body)
+  const reader = stream.getReader()
+  while (true) {
+    const { done, value: entry } = await reader.read()
+    if (done) break
+    const relative = archiveRelativePath(entry.name)
+    if (relative !== "db.php"
+      && relative !== "markdown-database-integration.php"
+      && !(relative.startsWith("inc/") && relative.endsWith(".php"))) continue
+    const bytes = new Uint8Array(await entry.arrayBuffer())
+    const destination = `/wordpress/wp-content/plugins/markdown-database-integration/${relative}`
+    php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
+    php.writeFile(destination, bytes)
+    if (relative === "db.php") php.writeFile("/wordpress/wp-content/db.php", bytes)
+  }
+}
+
+function archiveRelativePath(path: string): string {
+  const separator = path.indexOf("/")
+  return separator === -1 ? "" : path.slice(separator + 1)
 }
 
 async function materializeWordPressServerFiles(php: PHP): Promise<{ materializedFiles: number; materializedBytes: number }> {
