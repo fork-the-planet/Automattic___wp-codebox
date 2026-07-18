@@ -4,6 +4,17 @@
   "compatibility_date": "2026-07-18",
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "cpu_ms": 300000 },
+	"r2_buckets": [
+		{ "binding": "WORDPRESS_STATE_BUCKET", "bucket_name": "wp-codebox-runtime-chubes" }
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "WORDPRESS_STATE", "class_name": "WordPressStateCoordinator" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["WordPressStateCoordinator"] }
+	],
 	"rules": [
 		{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
 		{ "type": "Data", "globs": ["**/*.sqlite"], "fallthrough": false }

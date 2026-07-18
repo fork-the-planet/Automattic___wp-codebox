@@ -30,9 +30,17 @@ test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", asyn
 })
 
 test("Cloudflare runtime packages the disposable WordPress install seed", async () => {
-  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as { rules?: Array<{ type?: string; globs?: string[] }> }
+  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as {
+    rules?: Array<{ type?: string; globs?: string[] }>
+    r2_buckets?: Array<{ binding?: string; bucket_name?: string }>
+    durable_objects?: { bindings?: Array<{ name?: string; class_name?: string }> }
+    migrations?: Array<{ new_sqlite_classes?: string[] }>
+  }
   const seed = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
 
   assert.equal(seed.subarray(0, 16).toString(), "SQLite format 3\0")
   assert.ok(config.rules?.some((rule) => rule.type === "Data" && rule.globs?.includes("**/*.sqlite")))
+  assert.deepEqual(config.r2_buckets, [{ binding: "WORDPRESS_STATE_BUCKET", bucket_name: "wp-codebox-runtime-chubes" }])
+  assert.deepEqual(config.durable_objects?.bindings, [{ name: "WORDPRESS_STATE", class_name: "WordPressStateCoordinator" }])
+  assert.ok(config.migrations?.some((migration) => migration.new_sqlite_classes?.includes("WordPressStateCoordinator")))
 })

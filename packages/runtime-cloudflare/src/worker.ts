@@ -13,11 +13,26 @@ const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
+const R2_DATABASE_POINTER_KEY = "sites/default/database/current.json"
+const R2_DATABASE_REVISION_PREFIX = "sites/default/database/revisions"
 let bootPromise: Promise<{ php: PHP; wordpressVersion: string }> | undefined
 
+interface Env {
+  WORDPRESS_STATE: DurableObjectNamespace
+  WORDPRESS_STATE_BUCKET: R2Bucket
+}
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const phase = new URL(request.url).searchParams.get("phase")
+    if (phase === "r2-state" || phase === "r2-mutate") {
+      const expectedMethod = phase === "r2-mutate" ? "POST" : "GET"
+      if (request.method !== expectedMethod) {
+        return new Response(`WordPress state ${phase === "r2-mutate" ? "mutation" : "read"} requires ${expectedMethod}.`, { status: 405 })
+      }
+      const coordinator = env.WORDPRESS_STATE.getByName("default")
+      return coordinator.fetch(request)
+    }
     if (phase) return runBootProbe(phase)
 
     const runtime = await (bootPromise ??= bootWordPressRuntime(
@@ -36,6 +51,85 @@ export default {
       evidence: { initialization: "completed", execution: "completed", initializationScope: "isolate" },
     })
   },
+}
+
+interface DatabasePointer {
+  revision: string
+  databaseKey: string
+  persistedAt: string
+}
+
+export class WordPressStateCoordinator implements DurableObject {
+  private tail: Promise<void> = Promise.resolve()
+
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env: Env,
+  ) {}
+
+  fetch(request: Request): Promise<Response> {
+    const response = this.tail.then(() => this.handleRequest(request))
+    this.tail = response.then(() => undefined, () => undefined)
+    return response
+  }
+
+  private async handleRequest(request: Request): Promise<Response> {
+    if (request.method === "GET") {
+      const pointer = await this.readPointer()
+      return Response.json({
+        schema: "wp-codebox/cloudflare-wordpress-state/v1",
+        durableObjectId: this.state.id.toString(),
+        pointer,
+      })
+    }
+    if (request.method !== "POST") return new Response("Method not allowed.", { status: 405 })
+
+    const pointer = await this.readPointer()
+    const persistedDatabase = pointer ? await this.env.WORDPRESS_STATE_BUCKET.get(pointer.databaseKey) : null
+    if (pointer && !persistedDatabase) {
+      throw new Error(`R2 database revision is missing: ${pointer.databaseKey}`)
+    }
+
+    const database = persistedDatabase
+      ? new Uint8Array(await persistedDatabase.arrayBuffer())
+      : new Uint8Array(wordpressInstallSeed)
+    const runtime = await bootWordPressRuntime("do-not-attempt-installing", true, true, database)
+    try {
+      const mutationOutput = (await runtime.php.run({
+        code: "<?php require '/wordpress/wp-load.php'; $value = (int) get_option('wp_codebox_r2_revision', 0) + 1; update_option('wp_codebox_r2_revision', $value); echo json_encode(['revisionValue' => $value, 'wordpressVersion' => get_bloginfo('version')]);",
+      })).text.trim()
+      const mutation = JSON.parse(mutationOutput) as { revisionValue: number; wordpressVersion: string }
+      const revision = crypto.randomUUID()
+      const databaseKey = `${R2_DATABASE_REVISION_PREFIX}/${revision}.sqlite`
+      const persistedAt = new Date().toISOString()
+      const databaseBytes = runtime.php.readFileAsBuffer(DATABASE_PATH)
+      await this.env.WORDPRESS_STATE_BUCKET.put(databaseKey, databaseBytes, {
+        customMetadata: {
+          persistedAt,
+          revisionValue: String(mutation.revisionValue),
+          wordpressVersion: mutation.wordpressVersion,
+        },
+      })
+
+      const nextPointer: DatabasePointer = { revision, databaseKey, persistedAt }
+      await this.env.WORDPRESS_STATE_BUCKET.put(R2_DATABASE_POINTER_KEY, JSON.stringify(nextPointer), {
+        httpMetadata: { contentType: "application/json" },
+      })
+      return Response.json({
+        schema: "wp-codebox/cloudflare-wordpress-mutation/v1",
+        source: pointer ? "r2-revision" : "packaged-seed",
+        ...mutation,
+        pointer: nextPointer,
+      })
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
+  private async readPointer(): Promise<DatabasePointer | null> {
+    const object = await this.env.WORDPRESS_STATE_BUCKET.get(R2_DATABASE_POINTER_KEY)
+    return object ? object.json<DatabasePointer>() : null
+  }
 }
 
 async function runBootProbe(phase: string): Promise<Response> {
