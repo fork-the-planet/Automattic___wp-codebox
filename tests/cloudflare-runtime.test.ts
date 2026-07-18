@@ -28,3 +28,11 @@ test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", asyn
   const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as { limits?: { cpu_ms?: number } }
   assert.equal(config.limits?.cpu_ms, 300_000)
 })
+
+test("Cloudflare runtime packages the disposable WordPress install seed", async () => {
+  const config = JSON.parse(await readFile(new URL("../packages/runtime-cloudflare/wrangler.jsonc", import.meta.url), "utf8")) as { rules?: Array<{ type?: string; globs?: string[] }> }
+  const seed = await readFile(new URL("../packages/runtime-cloudflare/assets/wordpress-install-seed.sqlite", import.meta.url))
+
+  assert.equal(seed.subarray(0, 16).toString(), "SQLite format 3\0")
+  assert.ok(config.rules?.some((rule) => rule.type === "Data" && rule.globs?.includes("**/*.sqlite")))
+})

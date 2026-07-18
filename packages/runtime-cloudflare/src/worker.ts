@@ -6,11 +6,13 @@ import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-p
 import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web-8-5/asyncify/php_8_5.js"
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
+import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 
 const PHP_VERSION = "8.5.8"
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
+const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 let bootPromise: Promise<{ php: PHP; wordpressVersion: string }> | undefined
 
 export default {
@@ -80,6 +82,27 @@ async function runBootProbe(phase: string): Promise<Response> {
     }
   }
 
+  if (phase === "seeded-wordpress") {
+    const runtime = await bootWordPressRuntime(
+      "install-from-existing-files-if-needed",
+      true,
+      true,
+      new Uint8Array(wordpressInstallSeed),
+    )
+    try {
+      const wordpress = (await runtime.php.run({
+        code: "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);",
+      })).text.trim()
+      try {
+        return probeResponse(phase, JSON.parse(wordpress) as Record<string, string>)
+      } catch {
+        throw new Error(`WordPress boot returned invalid JSON: ${wordpress}`)
+      }
+    } finally {
+      runtime.php.exit()
+    }
+  }
+
   if (phase === "wordpress-files" || phase === "sqlite" || phase === "full" || phase === "streamed-sqlite" || phase === "streamed-wordpress") {
     const runtime = await bootWordPressRuntime(
       phase === "full" || phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
@@ -101,10 +124,18 @@ async function bootWordPressRuntime(
   wordpressInstallMode: WordPressInstallMode = "install-from-existing-files",
   includeSqlite = true,
   streamWordPressFiles = false,
+  databaseSeed?: Uint8Array,
 ): Promise<{ php: PHP; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
-    hooks: streamWordPressFiles ? { beforeWordPressFiles: materializeWordPressServerFiles } : undefined,
+    dataSqlPath: DATABASE_PATH,
+    hooks: streamWordPressFiles || databaseSeed ? {
+      beforeWordPressFiles: streamWordPressFiles ? materializeWordPressServerFiles : undefined,
+      beforeDatabaseSetup: databaseSeed ? (php: PHP) => {
+        php.mkdir("/wordpress/wp-content/database")
+        php.writeFile(DATABASE_PATH, databaseSeed)
+      } : undefined,
+    } : undefined,
     maxPhpInstances: 1,
     phpVersion: "8.5",
     siteUrl: SITE_URL,
@@ -141,7 +172,9 @@ async function materializeWordPressServerFiles(php: PHP): Promise<{ materialized
 }
 
 function isWordPressServerFile(path: string): boolean {
-  return /\.(?:php|json|crt|html)$/.test(path) || path.endsWith("/style.css")
+  return /\.(?:php|json|crt|html)$/.test(path)
+    || path.endsWith("/style.css")
+    || path.endsWith("/wp-admin/css/view-transitions.min.css")
 }
 
 function createPhpRuntime() {
