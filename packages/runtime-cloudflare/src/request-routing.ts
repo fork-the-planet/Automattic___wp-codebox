@@ -1,0 +1,15 @@
+export type WorkerRequestRoute =
+  | { kind: "wordpress" }
+  | { kind: "health" }
+  | { kind: "r2-state" }
+  | { kind: "r2-mutate" }
+  | { kind: "probe"; phase: string }
+
+export function routeWorkerRequest(request: Request): WorkerRequestRoute {
+  const phase = new URL(request.url).searchParams.get("phase")
+  if (phase === null) return { kind: "wordpress" }
+  if (phase === "health") return { kind: "health" }
+  if (phase === "r2-state") return { kind: "r2-state" }
+  if (phase === "r2-mutate") return { kind: "r2-mutate" }
+  return { kind: "probe", phase }
+}
