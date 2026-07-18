@@ -1,4 +1,5 @@
 import { loadPHPRuntime, PHP } from "@php-wasm/universal"
+import { decodeZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
 // @ts-expect-error The adjacent Wasm declaration covers the compiled binary import.
@@ -68,10 +69,11 @@ async function runBootProbe(phase: string): Promise<Response> {
     }
   }
 
-  if (phase === "wordpress-files" || phase === "sqlite" || phase === "full") {
+  if (phase === "wordpress-files" || phase === "sqlite" || phase === "full" || phase === "streamed-wordpress") {
     const runtime = await bootWordPressRuntime(
-      phase === "full" ? "install-from-existing-files" : "do-not-attempt-installing",
+      phase === "full" || phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
       phase !== "wordpress-files",
+      phase === "streamed-wordpress",
     )
     try {
       const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
@@ -87,13 +89,15 @@ async function runBootProbe(phase: string): Promise<Response> {
 async function bootWordPressRuntime(
   wordpressInstallMode: WordPressInstallMode = "install-from-existing-files",
   includeSqlite = true,
+  streamWordPressFiles = false,
 ): Promise<{ php: PHP; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
+    hooks: streamWordPressFiles ? { beforeWordPressFiles: materializeWordPressServerFiles } : undefined,
     maxPhpInstances: 1,
     phpVersion: "8.5",
     siteUrl: SITE_URL,
-    wordPressZip: fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip"),
+    wordPressZip: streamWordPressFiles ? undefined : fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip"),
     sqliteIntegrationPluginZip: includeSqlite ? fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip") : undefined,
     wordpressInstallMode,
   })
@@ -101,6 +105,26 @@ async function bootWordPressRuntime(
   const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
   if (!wordpressVersion) throw new Error("WordPress boot completed without a detected version.")
   return { php, wordpressVersion }
+}
+
+async function materializeWordPressServerFiles(php: PHP): Promise<void> {
+  const response = await fetch(WORDPRESS_ARCHIVE_URL)
+  if (!response.ok || !response.body) throw new Error(`Unable to stream wordpress.zip: ${response.status}.`)
+
+  const reader = decodeZip(response.body).getReader()
+  while (true) {
+    const { done, value: file } = await reader.read()
+    if (done) break
+    if (!file.name.startsWith("wordpress/") || file.name.endsWith("/") || !isWordPressServerFile(file.name)) continue
+
+    const destination = `/${file.name}`
+    php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
+    php.writeFile(destination, new Uint8Array(await file.arrayBuffer()))
+  }
+}
+
+function isWordPressServerFile(path: string): boolean {
+  return /\.(?:php|json|crt|html)$/.test(path) || path.endsWith("/style.css")
 }
 
 function createPhpRuntime() {

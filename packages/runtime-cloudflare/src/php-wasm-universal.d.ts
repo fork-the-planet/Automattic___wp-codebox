@@ -2,6 +2,8 @@ declare module "@php-wasm/universal" {
   export class PHP {
     constructor(runtimeId: number)
     run(request: { code: string }): Promise<{ text: string }>
+    mkdir(path: string): void
+    writeFile(path: string, data: Uint8Array): void
     exit(code?: number): void
   }
 
