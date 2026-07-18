@@ -14,6 +14,10 @@ const execFileAsync = promisify(execFile)
 async function run(mode = "success") {
   const temp = await mkdtemp(join(tmpdir(), "wp-codebox-native-lifecycle-"))
   const workspace = join(temp, "workspace")
+  const targetRepo = mode === "canonical-casing" ? "automattic/build-with-wordpress" : "owner/repo"
+  const publicationRepo = mode === "canonical-casing"
+    ? "Automattic/build-with-wordpress"
+    : mode === "different-repo" ? "other/repo" : targetRepo
   await mkdir(join(workspace, ".codebox"), { recursive: true })
   await writeFile(join(workspace, "README.md"), "OPENAI_API_KEY\nbefore\n")
 
@@ -28,12 +32,12 @@ async function run(mode = "success") {
     },
     runtime_sources: [],
     workload: { id: "run-1", label: "Update" },
-    target_repo: "owner/repo",
+    target_repo: targetRepo,
     prompt: "Edit README using workspace_read and workspace_edit.",
     writable_paths: mode === "deny" ? "src/**" : "README.md",
     runner_workspace: {
       enabled: true,
-      repo: "owner/repo",
+      repo: targetRepo,
       base: "main",
       branch_prefix: "wp-codebox/agent-task/",
     },
@@ -44,9 +48,9 @@ async function run(mode = "success") {
     drift_checks: [{ command: "echo drift >> .codebox/order" }],
     success: { requires_pr: mode !== "no-op-maintenance" },
     access: {
-      caller_repo: "owner/repo",
-      allowed_repos: ["owner/repo"],
-      access_token_repos: ["owner/repo"],
+      caller_repo: targetRepo,
+      allowed_repos: [targetRepo],
+      access_token_repos: [targetRepo],
     },
     limits: { max_turns: 1, time_budget_ms: 1000 },
     artifacts: { expected: [], declarations: [] },
@@ -127,7 +131,7 @@ export async function publishRunnerWorkspace({ testHook }) {
     success: true,
     status: "published",
     backend: "fixture",
-    pull_request: { url: "https://github.com/owner/repo/pull/1", reused: false, opened: true },
+    pull_request: { url: ${JSON.stringify(`https://github.com/${publicationRepo}/pull/1`)}, reused: false, opened: true },
   }
 }
 `)
@@ -135,8 +139,8 @@ export async function publishRunnerWorkspace({ testHook }) {
   const gh = join(temp, "gh")
   await writeFile(gh, `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({
-  html_url: "https://github.com/owner/repo/pull/1",
-  base: { repo: { full_name: "owner/repo" } },
+  html_url: ${JSON.stringify(`https://github.com/${publicationRepo}/pull/1`)},
+  base: { repo: { full_name: ${JSON.stringify(publicationRepo)} } },
 }))
 `)
   await chmod(gh, 0o755)
@@ -189,6 +193,15 @@ assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_pa
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.prepared_paths.workspaces[0].mode, "readwrite")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.sandbox_workspace.mounts[0].target, "/workspace")
 assert.equal(success.result.runtime_result.agent_runtime_diagnostics.local_executor_root, "/workspace")
+
+const canonicalCasing = await run("canonical-casing")
+assert.equal(canonicalCasing.code, 0, `${canonicalCasing.stderr}\n${JSON.stringify(canonicalCasing.result)}`)
+assert.equal(canonicalCasing.result.publication_verification.valid, true)
+
+const differentRepository = await run("different-repo")
+assert.equal(differentRepository.code, 1)
+assert.equal(differentRepository.result.publication_verification.valid, false)
+assert.match(differentRepository.result.failure.message, /valid canonical pull-request result/)
 
 const failedVerification = await run("verify-fail")
 assert.equal(failedVerification.code, 1)

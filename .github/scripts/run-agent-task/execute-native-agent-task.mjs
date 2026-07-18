@@ -283,7 +283,7 @@ function validPublication(value, targetRepo) {
     && publication.success === true
     && publication.status === "published"
     && /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(url)
-    && url.startsWith(`https://github.com/${targetRepo}/pull/`)
+    && url.toLowerCase().startsWith(`https://github.com/${targetRepo.toLowerCase()}/pull/`)
 }
 
 async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
@@ -297,7 +297,7 @@ async function verifyPublishedPullRequest(publication, targetRepo, cwd) {
     const pullRequest = JSON.parse(response.stdout)
     return {
       valid: pullRequest?.html_url === record(publication).pull_request?.url
-        && pullRequest?.base?.repo?.full_name === targetRepo,
+        && string(pullRequest?.base?.repo?.full_name).toLowerCase() === targetRepo.toLowerCase(),
       error: "Published pull request did not resolve to the target repository.",
     }
   } catch {
