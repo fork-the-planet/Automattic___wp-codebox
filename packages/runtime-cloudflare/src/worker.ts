@@ -1,5 +1,5 @@
 import { loadPHPRuntime, PHP } from "@php-wasm/universal"
-import { decodeZip } from "@php-wasm/stream-compression"
+import { decodeRemoteZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
 // @ts-expect-error The adjacent Wasm declaration covers the compiled binary import.
@@ -119,19 +119,19 @@ async function bootWordPressRuntime(
 }
 
 async function materializeWordPressServerFiles(php: PHP): Promise<{ materializedFiles: number; materializedBytes: number }> {
-  const response = await fetch(WORDPRESS_ARCHIVE_URL)
-  if (!response.ok || !response.body) throw new Error(`Unable to stream wordpress.zip: ${response.status}.`)
-
+  const decoder = new TextDecoder()
   let materializedFiles = 0
   let materializedBytes = 0
-  const reader = decodeZip(response.body).getReader()
+  const stream = await decodeRemoteZip(WORDPRESS_ARCHIVE_URL, (entry: { path: Uint8Array }) => isWordPressServerFile(decoder.decode(entry.path)))
+  const reader = stream.getReader()
   while (true) {
-    const { done, value: file } = await reader.read()
+    const { done, value: entry } = await reader.read()
     if (done) break
-    if (!file.name.startsWith("wordpress/") || file.name.endsWith("/") || !isWordPressServerFile(file.name)) continue
+    const path = entry instanceof File ? entry.name : decoder.decode(entry.path)
+    if (!path.startsWith("wordpress/") || path.endsWith("/")) continue
 
-    const destination = `/${file.name}`
-    const bytes = new Uint8Array(await file.arrayBuffer())
+    const destination = `/${path}`
+    const bytes = entry instanceof File ? new Uint8Array(await entry.arrayBuffer()) : entry.bytes
     php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
     php.writeFile(destination, bytes)
     materializedFiles++
