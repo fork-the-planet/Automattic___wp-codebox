@@ -31,6 +31,13 @@ export default {
 }
 
 async function runBootProbe(phase: string): Promise<Response> {
+  if (phase === "wordpress-archive" || phase === "sqlite-archive") {
+    const archive = phase === "wordpress-archive"
+      ? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
+      : await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")
+    return probeResponse(phase, { archiveBytes: archive.size })
+  }
+
   if (phase === "archives") {
     const wordpressZip = await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
     const sqliteZip = await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")
