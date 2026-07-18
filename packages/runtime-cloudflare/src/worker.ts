@@ -69,11 +69,22 @@ async function runBootProbe(phase: string): Promise<Response> {
     }
   }
 
-  if (phase === "wordpress-files" || phase === "sqlite" || phase === "full" || phase === "streamed-wordpress") {
+  if (phase === "streamed-files") {
+    const php = new PHP(await createPhpRuntime())
+    try {
+      const evidence = await materializeWordPressServerFiles(php)
+      const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
+      return probeResponse(phase, { ...evidence, wordpressVersion })
+    } finally {
+      php.exit()
+    }
+  }
+
+  if (phase === "wordpress-files" || phase === "sqlite" || phase === "full" || phase === "streamed-sqlite" || phase === "streamed-wordpress") {
     const runtime = await bootWordPressRuntime(
       phase === "full" || phase === "streamed-wordpress" ? "install-from-existing-files" : "do-not-attempt-installing",
       phase !== "wordpress-files",
-      phase === "streamed-wordpress",
+      phase === "streamed-sqlite" || phase === "streamed-wordpress",
     )
     try {
       const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
@@ -107,10 +118,12 @@ async function bootWordPressRuntime(
   return { php, wordpressVersion }
 }
 
-async function materializeWordPressServerFiles(php: PHP): Promise<void> {
+async function materializeWordPressServerFiles(php: PHP): Promise<{ materializedFiles: number; materializedBytes: number }> {
   const response = await fetch(WORDPRESS_ARCHIVE_URL)
   if (!response.ok || !response.body) throw new Error(`Unable to stream wordpress.zip: ${response.status}.`)
 
+  let materializedFiles = 0
+  let materializedBytes = 0
   const reader = decodeZip(response.body).getReader()
   while (true) {
     const { done, value: file } = await reader.read()
@@ -118,9 +131,13 @@ async function materializeWordPressServerFiles(php: PHP): Promise<void> {
     if (!file.name.startsWith("wordpress/") || file.name.endsWith("/") || !isWordPressServerFile(file.name)) continue
 
     const destination = `/${file.name}`
+    const bytes = new Uint8Array(await file.arrayBuffer())
     php.mkdir(destination.slice(0, destination.lastIndexOf("/")))
-    php.writeFile(destination, new Uint8Array(await file.arrayBuffer()))
+    php.writeFile(destination, bytes)
+    materializedFiles++
+    materializedBytes += bytes.byteLength
   }
+  return { materializedFiles, materializedBytes }
 }
 
 function isWordPressServerFile(path: string): boolean {
