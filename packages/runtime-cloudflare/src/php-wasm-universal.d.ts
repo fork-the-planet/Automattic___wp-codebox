@@ -1,4 +1,19 @@
 declare module "@php-wasm/universal" {
+  export interface PHPRequest {
+    method?: string
+    url: string
+    headers?: Record<string, string>
+    body?: string | Uint8Array
+  }
+
+  export interface PHPResponseData {
+    readonly headers: Record<string, string[]>
+    readonly bytes: Uint8Array
+    readonly errors: string
+    readonly exitCode: number
+    readonly httpStatusCode: number
+  }
+
   export class PHP {
     constructor(runtimeId: number)
     run(request: { code: string }): Promise<{ bytes: Uint8Array; text: string }>
@@ -21,5 +36,6 @@ declare module "@php-wasm/universal" {
 
   export class PHPRequestHandler {
     getPrimaryPhp(): Promise<PHP>
+    request(request: PHPRequest): Promise<PHPResponseData>
   }
 }

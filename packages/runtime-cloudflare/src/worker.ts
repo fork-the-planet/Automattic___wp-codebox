@@ -1,4 +1,4 @@
-import { loadPHPRuntime, PHP } from "@php-wasm/universal"
+import { loadPHPRuntime, PHP, type PHPRequestHandler } from "@php-wasm/universal"
 import { decodeRemoteZip, decodeZip } from "@php-wasm/stream-compression"
 import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
@@ -6,6 +6,8 @@ import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-p
 import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web-8-5/asyncify/php_8_5.js"
 import phpWasmModule from "../../../node_modules/@php-wasm/web-8-5/asyncify/8_5_8/php_8_5.wasm"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "./health-envelope.js"
+import { routeWorkerRequest } from "./request-routing.js"
+import { toFetchResponse, toPHPRequest } from "./request-translation.js"
 import markdownDatabaseIntegrationRuntime from "../assets/markdown-database-integration-runtime.zip"
 import markdownPrimaryBootstrapIndex from "../assets/markdown-primary-bootstrap-index.sqlite"
 import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
@@ -60,7 +62,7 @@ if (empty($option_rows)) {
 }
 $changes = $runtime->flush();
 echo json_encode(['revisionValue' => $value, 'previousPostFound' => !empty($previous_rows), 'postId' => $post_id, 'wordpressVersion' => $wp_version, 'canonicalChanges' => $changes]);`
-let bootPromise: Promise<{ php: PHP; wordpressVersion: string }> | undefined
+let bootPromise: Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> | undefined
 
 interface Env {
   WORDPRESS_STATE: DurableObjectNamespace
@@ -69,25 +71,29 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const phase = new URL(request.url).searchParams.get("phase")
-    if (phase === "r2-state" || phase === "r2-mutate") {
-      const expectedMethod = phase === "r2-mutate" ? "POST" : "GET"
+    const route = routeWorkerRequest(request)
+    if (route.kind === "r2-state" || route.kind === "r2-mutate") {
+      const expectedMethod = route.kind === "r2-mutate" ? "POST" : "GET"
       if (request.method !== expectedMethod) {
-        return new Response(`WordPress state ${phase === "r2-mutate" ? "mutation" : "read"} requires ${expectedMethod}.`, { status: 405 })
+        return new Response(`WordPress state ${route.kind === "r2-mutate" ? "mutation" : "read"} requires ${expectedMethod}.`, { status: 405 })
       }
       const coordinator = env.WORDPRESS_STATE.getByName("default")
-      return phase === "r2-state"
+      return route.kind === "r2-state"
         ? coordinator.fetch(new Request("https://coordinator/state"))
         : runSerializedMarkdownMutation(env, coordinator)
     }
-    if (phase) return runBootProbe(phase)
+    if (route.kind === "probe") return runBootProbe(route.phase)
 
     const runtime = await (bootPromise ??= bootWordPressRuntime(
       "do-not-attempt-installing",
       true,
-      true,
+      false,
       new Uint8Array(wordpressInstallSeed),
+      undefined,
+      undefined,
+      new URL(request.url).origin,
     ))
+    if (route.kind === "wordpress") return toFetchResponse(request, await runtime.requestHandler.request(await toPHPRequest(request)))
     const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
     return cloudflareRuntimeHealthResponse({
       schema: CLOUDFLARE_RUNTIME_HEALTH_SCHEMA,
@@ -517,7 +523,8 @@ async function bootWordPressRuntime(
   databaseSeed?: Uint8Array,
   markdownFiles?: RuntimeFile[],
   markdownIndexSeed?: Uint8Array,
-): Promise<{ php: PHP; wordpressVersion: string }> {
+  siteUrl = SITE_URL,
+): Promise<{ php: PHP; requestHandler: PHPRequestHandler; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
     constants: {
@@ -550,7 +557,7 @@ async function bootWordPressRuntime(
     } : undefined,
     maxPhpInstances: 1,
     phpVersion: "8.5",
-    siteUrl: SITE_URL,
+    siteUrl,
     wordPressZip: streamWordPressFiles ? undefined : fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip"),
     sqliteIntegrationPluginZip: includeSqlite ? fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip") : undefined,
     wordpressInstallMode,
@@ -558,7 +565,7 @@ async function bootWordPressRuntime(
   const php = await requestHandler.getPrimaryPhp()
   const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
   if (!wordpressVersion) throw new Error("WordPress boot completed without a detected version.")
-  return { php, wordpressVersion }
+  return { php, requestHandler, wordpressVersion }
 }
 
 function initialMarkdownFiles(): RuntimeFile[] {

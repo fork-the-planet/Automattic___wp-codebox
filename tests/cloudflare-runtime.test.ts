@@ -4,6 +4,8 @@ import test from "node:test"
 import { decodeZip } from "@php-wasm/stream-compression"
 import { RUNTIME_COMMAND_RESULT_SCHEMA } from "../packages/runtime-core/src/runtime-contracts.js"
 import { CLOUDFLARE_RUNTIME_HEALTH_MARKER, CLOUDFLARE_RUNTIME_HEALTH_SCHEMA, cloudflareRuntimeHealthResponse } from "../packages/runtime-cloudflare/src/health-envelope.js"
+import { routeWorkerRequest } from "../packages/runtime-cloudflare/src/request-routing.js"
+import { toFetchResponse, toPHPRequest } from "../packages/runtime-cloudflare/src/request-translation.js"
 
 test("Cloudflare health response preserves the Codebox execution envelope", async () => {
   const health = {
@@ -23,6 +25,42 @@ test("Cloudflare health response preserves the Codebox execution envelope", asyn
   assert.equal(payload.execution.schema, RUNTIME_COMMAND_RESULT_SCHEMA)
   assert.equal(payload.execution.status, "ok")
   assert.deepEqual(payload.execution.json, health)
+})
+
+test("Cloudflare routing reserves phases while the phase-less route serves WordPress", () => {
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/")), { kind: "wordpress" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=health")), { kind: "health" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-state")), { kind: "r2-state" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=r2-mutate")), { kind: "r2-mutate" })
+  assert.deepEqual(routeWorkerRequest(new Request("https://worker.example/?phase=seeded-wordpress")), { kind: "probe", phase: "seeded-wordpress" })
+})
+
+test("Cloudflare translates Fetch requests and PHP responses without losing browser data", async () => {
+  const headers = new Headers({ "content-type": "application/octet-stream", "x-request-id": "first" })
+  headers.append("x-request-id", "second")
+  const request = new Request("https://worker.example/wp-admin/admin-ajax.php?action=save", {
+    method: "POST",
+    headers,
+    body: new Uint8Array([0, 1, 255]),
+  })
+  const phpRequest = await toPHPRequest(request)
+
+  assert.equal(phpRequest.method, "POST")
+  assert.equal(phpRequest.url, "/wp-admin/admin-ajax.php?action=save")
+  assert.equal(phpRequest.headers?.["x-request-id"], "first, second")
+  assert.deepEqual(Array.from(phpRequest.body as Uint8Array), [0, 1, 255])
+
+  const response = toFetchResponse(request, {
+    httpStatusCode: 201,
+    headers: { "content-type": ["application/octet-stream"], "set-cookie": ["first=1; Path=/", "second=2; Path=/"] },
+    bytes: new Uint8Array([255, 1, 0]),
+    errors: "",
+    exitCode: 0,
+  })
+  const responseHeaders = response.headers as Headers & { getSetCookie?: () => string[] }
+  assert.equal(response.status, 201)
+  assert.deepEqual(Array.from(new Uint8Array(await response.arrayBuffer())), [255, 1, 0])
+  assert.deepEqual(responseHeaders.getSetCookie?.() ?? [response.headers.get("set-cookie")], ["first=1; Path=/", "second=2; Path=/"])
 })
 
 test("Cloudflare runtime declares the paid-plan WordPress boot CPU budget", async () => {

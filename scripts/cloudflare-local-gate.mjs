@@ -13,9 +13,10 @@ child.stderr.on("data", (chunk) => { output += chunk })
 
 try {
   await waitForServer()
+  await assertWordPressPage(url, "front page")
   await assertHealthResponse()
-  await assertHealthResponse()
-  console.log("Cloudflare local runtime gate passed: two HTTP 200 health envelopes returned.")
+  await assertWordPressPage(`${url}wp-admin/`, "WordPress admin route")
+  console.log("Cloudflare local runtime gate passed: front page, explicit health envelope, and admin route returned.")
 } finally {
   child.kill("SIGTERM")
   await new Promise((resolve) => child.once("exit", resolve))
@@ -32,10 +33,18 @@ async function waitForServer() {
 }
 
 async function assertHealthResponse() {
-  const response = await fetch(url)
+  const response = await fetch(`${url}?phase=health`)
   if (response.status !== 200) throw new Error(`Expected HTTP 200, received ${response.status}: ${await response.text()}`)
   const body = await response.json()
   if (body.schema !== "wp-codebox/cloudflare-runtime-health/v1" || body.marker !== "wp-codebox-cloudflare-runtime-health" || body.phpVersion !== "8.5.8" || typeof body.wordpressVersion !== "string" || body.execution?.schema !== "wp-codebox/runtime-command-result/v1" || body.execution?.status !== "ok") {
     throw new Error(`Unexpected Cloudflare runtime health envelope: ${JSON.stringify(body)}`)
+  }
+}
+
+async function assertWordPressPage(target, label) {
+  const response = await fetch(target)
+  const body = await response.text()
+  if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/html") || !/<html[\s>]/i.test(body)) {
+    throw new Error(`Expected an HTML ${label}, received ${response.status}: ${body}`)
   }
 }
