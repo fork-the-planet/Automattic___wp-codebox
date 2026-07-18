@@ -20,7 +20,12 @@ export default {
     const phase = new URL(request.url).searchParams.get("phase")
     if (phase) return runBootProbe(phase)
 
-    const runtime = await (bootPromise ??= bootWordPressRuntime())
+    const runtime = await (bootPromise ??= bootWordPressRuntime(
+      "do-not-attempt-installing",
+      true,
+      true,
+      new Uint8Array(wordpressInstallSeed),
+    ))
     const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
     return cloudflareRuntimeHealthResponse({
       schema: CLOUDFLARE_RUNTIME_HEALTH_SCHEMA,
@@ -82,7 +87,7 @@ async function runBootProbe(phase: string): Promise<Response> {
     }
   }
 
-  if (phase === "seeded-shortinit" || phase === "seeded-wordpress") {
+  if (phase?.startsWith("seeded-")) {
     const runtime = await bootWordPressRuntime(
       "do-not-attempt-installing",
       true,
@@ -91,14 +96,17 @@ async function runBootProbe(phase: string): Promise<Response> {
     )
     try {
       const wordpress = (await runtime.php.run({
-        code: phase === "seeded-shortinit"
-          ? "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'shortInit' => true]);"
-          : "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);",
+        code: wordpressProbeCode(phase),
       })).text.trim()
       try {
         return probeResponse(phase, JSON.parse(wordpress) as Record<string, string>)
       } catch {
-        throw new Error(`WordPress boot returned invalid JSON: ${wordpress}`)
+        return Response.json({
+          schema: "wp-codebox/cloudflare-boot-probe/v1",
+          phase,
+          completed: false,
+          evidence: { rawPhpOutput: wordpress },
+        }, { status: 500 })
       }
     } finally {
       runtime.php.exit()
@@ -120,6 +128,41 @@ async function runBootProbe(phase: string): Promise<Response> {
   }
 
   return new Response(`Unknown boot probe phase: ${phase}`, { status: 400 })
+}
+
+function wordpressProbeCode(phase: string): string {
+  if (phase === "seeded-shortinit") {
+    return "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'shortInit' => true]);"
+  }
+  if (phase === "seeded-wordpress") {
+    return "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);"
+  }
+
+  const stops: Record<string, { needle: string; after?: boolean }> = {
+    "seeded-includes": { needle: "/**\n * @since 3.3.0" },
+    "seeded-muplugins": { needle: "if ( is_multisite() ) {\n\tms_cookie_constants();" },
+    "seeded-plugins": { needle: "// Define constants which affect functionality if not already defined." },
+    "seeded-theme": { needle: "// Create an instance of WP_Site_Health so that Cron events may fire." },
+    "seeded-site-health-class": { needle: "WP_Site_Health::get_instance();" },
+    "seeded-site-health": { needle: "// Set up current user." },
+    "seeded-current-user": { needle: "/**\n * Fires after WordPress has finished loading but before any headers are sent." },
+    "seeded-init": { needle: "// Check site status." },
+    "seeded-wp-loaded": { needle: "do_action( 'wp_loaded' );", after: true },
+  }
+  const stop = stops[phase]
+  if (!stop) throw new Error(`Unknown seeded WordPress probe phase: ${phase}`)
+
+  return `<?php
+$settings_path = '/wordpress/wp-settings.php';
+$settings = file_get_contents($settings_path);
+$needle = ${JSON.stringify(stop.needle)};
+if (strpos($settings, $needle) === false) {
+    throw new Exception('WordPress bootstrap probe needle not found.');
+}
+$stop = "echo json_encode(['wordpressVersion' => \\$wp_version, 'bootstrapPhase' => '${phase}']); return;\n";
+$replacement = ${stop.after ? "$needle . \"\\n\" . $stop" : "$stop . $needle"};
+file_put_contents($settings_path, str_replace($needle, $replacement, $settings));
+require '/wordpress/wp-load.php';`
 }
 
 async function bootWordPressRuntime(
