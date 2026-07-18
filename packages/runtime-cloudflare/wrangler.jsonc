@@ -17,6 +17,6 @@
 	],
 	"rules": [
 		{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false },
-		{ "type": "Data", "globs": ["**/*.sqlite"], "fallthrough": false }
+		{ "type": "Data", "globs": ["**/*.sqlite", "**/*-runtime.zip"], "fallthrough": false }
 	]
 }
