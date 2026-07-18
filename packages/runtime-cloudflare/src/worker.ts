@@ -128,6 +128,11 @@ async function bootWordPressRuntime(
 ): Promise<{ php: PHP; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
     createPhpRuntime,
+    constants: {
+      AUTOMATIC_UPDATER_DISABLED: true,
+      DISABLE_WP_CRON: true,
+      WP_HTTP_BLOCK_EXTERNAL: true,
+    },
     dataSqlPath: DATABASE_PATH,
     hooks: streamWordPressFiles || databaseSeed ? {
       beforeWordPressFiles: streamWordPressFiles ? materializeWordPressServerFiles : undefined,
