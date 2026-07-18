@@ -1573,6 +1573,10 @@ function recipeExtraPluginSourceRootContainsSource(plugin: WorkspaceRecipeExtraP
 }
 
 export function normalizeRecipeExtraPluginSourceSubpath(value: string): string {
+  const rootMarker = value.trim().replace(/\\/g, "/").replace(/\/+$/, "")
+  if (rootMarker === ".") {
+    return ""
+  }
   const normalized = normalizeReviewerSafePath(value)
   if (!normalized || normalized === "." || normalized.startsWith("../") || normalized.includes("/../") || isAbsolute(normalized)) {
     throw new Error(`Recipe extra_plugins sourceSubdir/sourceSubpath must be a safe relative directory: ${value}`)
