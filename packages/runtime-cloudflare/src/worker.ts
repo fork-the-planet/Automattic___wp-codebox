@@ -54,6 +54,20 @@ async function runBootProbe(phase: string): Promise<Response> {
     }
   }
 
+  if (phase === "php-wordpress-archive" || phase === "wordpress-archive-php") {
+    const archive = phase === "wordpress-archive-php"
+      ? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
+      : undefined
+    const php = new PHP(await createPhpRuntime())
+    try {
+      const wordpressZip = archive ?? await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
+      const phpVersion = (await php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
+      return probeResponse(phase, { phpVersion, archiveBytes: wordpressZip.size })
+    } finally {
+      php.exit()
+    }
+  }
+
   if (phase === "wordpress-files" || phase === "sqlite" || phase === "full") {
     const runtime = await bootWordPressRuntime(
       phase === "full" ? "install-from-existing-files" : "do-not-attempt-installing",
