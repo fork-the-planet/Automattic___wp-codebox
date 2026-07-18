@@ -82,7 +82,7 @@ async function runBootProbe(phase: string): Promise<Response> {
     }
   }
 
-  if (phase === "seeded-wordpress") {
+  if (phase === "seeded-shortinit" || phase === "seeded-wordpress") {
     const runtime = await bootWordPressRuntime(
       "do-not-attempt-installing",
       true,
@@ -91,7 +91,9 @@ async function runBootProbe(phase: string): Promise<Response> {
     )
     try {
       const wordpress = (await runtime.php.run({
-        code: "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);",
+        code: phase === "seeded-shortinit"
+          ? "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; echo json_encode(['wordpressVersion' => $wp_version, 'shortInit' => true]);"
+          : "<?php require '/wordpress/wp-load.php'; echo json_encode(['siteUrl' => get_option('siteurl'), 'wordpressVersion' => get_bloginfo('version')]);",
       })).text.trim()
       try {
         return probeResponse(phase, JSON.parse(wordpress) as Record<string, string>)
