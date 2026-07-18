@@ -1,5 +1,5 @@
 import { loadPHPRuntime, PHP } from "@php-wasm/universal"
-import { bootWordPressAndRequestHandler } from "@wp-playground/wordpress"
+import { bootWordPressAndRequestHandler, type WordPressInstallMode } from "@wp-playground/wordpress"
 // The PHP-WASM package publishes this Emscripten loader without TypeScript declarations.
 // @ts-expect-error The adjacent Wasm declaration covers the compiled binary import.
 import { dependenciesTotalSize, init } from "../../../node_modules/@php-wasm/web-8-5/asyncify/php_8_5.js"
@@ -13,7 +13,10 @@ const SITE_URL = "https://wp-codebox-runtime.invalid"
 let bootPromise: Promise<{ php: PHP; wordpressVersion: string }> | undefined
 
 export default {
-  async fetch(): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
+    const phase = new URL(request.url).searchParams.get("phase")
+    if (phase) return runBootProbe(phase)
+
     const runtime = await (bootPromise ??= bootWordPressRuntime())
     const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
     return cloudflareRuntimeHealthResponse({
@@ -27,20 +30,63 @@ export default {
   },
 }
 
-async function bootWordPressRuntime(): Promise<{ php: PHP; wordpressVersion: string }> {
+async function runBootProbe(phase: string): Promise<Response> {
+  if (phase === "archives") {
+    const wordpressZip = await fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip")
+    const sqliteZip = await fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip")
+    return probeResponse(phase, { wordpressArchiveBytes: wordpressZip.size, sqliteArchiveBytes: sqliteZip.size })
+  }
+
+  if (phase === "php") {
+    const php = new PHP(await createPhpRuntime())
+    try {
+      const phpVersion = (await php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
+      return probeResponse(phase, { phpVersion })
+    } finally {
+      php.exit()
+    }
+  }
+
+  if (phase === "wordpress-files" || phase === "sqlite" || phase === "full") {
+    const runtime = await bootWordPressRuntime(
+      phase === "full" ? "install-from-existing-files" : "do-not-attempt-installing",
+      phase !== "wordpress-files",
+    )
+    try {
+      const phpVersion = (await runtime.php.run({ code: "<?php echo PHP_VERSION;" })).text.trim()
+      return probeResponse(phase, { phpVersion, wordpressVersion: runtime.wordpressVersion })
+    } finally {
+      if (phase !== "full") runtime.php.exit()
+    }
+  }
+
+  return new Response(`Unknown boot probe phase: ${phase}`, { status: 400 })
+}
+
+async function bootWordPressRuntime(
+  wordpressInstallMode: WordPressInstallMode = "install-from-existing-files",
+  includeSqlite = true,
+): Promise<{ php: PHP; wordpressVersion: string }> {
   const requestHandler = await bootWordPressAndRequestHandler({
-    createPhpRuntime: () => loadPHPRuntime({ dependencyFilename: "php_8_5.wasm", dependenciesTotalSize, phpWasmAsyncMode: "asyncify", init }, { instantiateWasm: instantiatePrecompiledWasm(phpWasmModule) }),
+    createPhpRuntime,
     maxPhpInstances: 1,
     phpVersion: "8.5",
     siteUrl: SITE_URL,
     wordPressZip: fetchArchive(WORDPRESS_ARCHIVE_URL, "wordpress.zip"),
-    sqliteIntegrationPluginZip: fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip"),
-    wordpressInstallMode: "install-from-existing-files",
+    sqliteIntegrationPluginZip: includeSqlite ? fetchArchive(SQLITE_INTEGRATION_ARCHIVE_URL, "sqlite-database-integration.zip") : undefined,
+    wordpressInstallMode,
   })
   const php = await requestHandler.getPrimaryPhp()
   const wordpressVersion = (await php.run({ code: "<?php require '/wordpress/wp-includes/version.php'; echo $wp_version;" })).text.trim()
   if (!wordpressVersion) throw new Error("WordPress boot completed without a detected version.")
   return { php, wordpressVersion }
+}
+
+function createPhpRuntime() {
+  return loadPHPRuntime(
+    { dependencyFilename: "php_8_5.wasm", dependenciesTotalSize, phpWasmAsyncMode: "asyncify", init },
+    { instantiateWasm: instantiatePrecompiledWasm(phpWasmModule) },
+  )
 }
 
 async function fetchArchive(url: string, name: string): Promise<File> {
@@ -51,4 +97,8 @@ async function fetchArchive(url: string, name: string): Promise<File> {
 
 function instantiatePrecompiledWasm(module: WebAssembly.Module) {
   return (imports: WebAssembly.Imports, receiveInstance: (instance: WebAssembly.Instance, wasmModule: WebAssembly.Module) => void) => receiveInstance(new WebAssembly.Instance(module, imports), module)
+}
+
+function probeResponse(phase: string, evidence: Record<string, number | string>): Response {
+  return Response.json({ schema: "wp-codebox/cloudflare-boot-probe/v1", phase, completed: true, evidence })
 }
