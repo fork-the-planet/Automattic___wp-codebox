@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { stripUndefined } from "@automattic/wp-codebox-core/internals"
 import { benchRunCode } from "./bench-command-handlers.js"
+import { isBrowserCommandArtifactError } from "./browser-command-artifact-error.js"
+import { browserArtifactFileManifest, type BrowserArtifactFiles } from "./browser-artifacts.js"
 
 import {
   ArtifactBundleWriter,
@@ -24,6 +26,7 @@ import {
   renderWordPressBlock,
   exerciseWordPressBlock,
   RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES,
+  RuntimeActionExecutionError,
   WORDPRESS_DB_OPERATION_SCHEMA,
   planBrowserRandomWalk,
   runWordPressCrudOperation,
@@ -222,13 +225,20 @@ function suiteRequiresDestructiveSandboxProof(suite: FuzzSuiteContract): boolean
     if (mutation?.destructive === true || ["write", "delete", "destructive"].includes(stringValue(mutation?.intent) ?? "")) return true
     const target = fuzzCase.target ?? suite.target
     if (target?.kind !== "runtime-action") return false
-    const input = recordValue(fuzzCase.input)
-    const actionType = stringValue(input?.type)
-    if (actionType === "rest_request") return isRestMutationMethod(stringValue(input?.method) ?? "GET")
-    if (actionType === "db_operation") return !["inspect", "read", "query-summary"].includes(stringValue(input?.operation) ?? "")
-    if (actionType === "crud_operation") return stringValue(input?.operation) !== "read"
-    return false
+    return runtimeActionRequiresDestructiveSandboxProof(recordValue(fuzzCase.input))
   })
+}
+
+function runtimeActionRequiresDestructiveSandboxProof(action: Record<string, unknown> | undefined): boolean {
+  const actionType = stringValue(action?.type)
+  if (actionType === "sequence") {
+    return Array.isArray(action?.steps) && action.steps.some((step) => runtimeActionRequiresDestructiveSandboxProof(recordValue(step)))
+  }
+  if (actionType === "rest_request") return isRestMutationMethod(stringValue(action?.method) ?? "GET")
+  if (actionType === "db_operation") return !["inspect", "read", "query-summary"].includes(stringValue(action?.operation) ?? "")
+  if (actionType === "crud_operation") return stringValue(action?.operation) !== "read"
+  if (actionType === "editor_actions") return Array.isArray(action?.steps) && action.steps.some((step) => recordValue(step)?.kind === "savePost")
+  return false
 }
 
 async function createRuntimeDestructiveSandboxProof(episode: Pick<RuntimeEpisode, "reset">, suite: FuzzSuiteContract): Promise<DestructiveSandboxProof> {
@@ -416,6 +426,18 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       if (action.type === "editor_open") {
         return openWordPressEditor(episode, action)
       }
+      if (action.type === "editor_actions" || action.type === "editor_validate_blocks") {
+        const command = action.type === "editor_actions" ? "wordpress.editor-actions" : "wordpress.editor-validate-blocks"
+        const args = action.type === "editor_actions" ? runtimeEditorActionsArgs(action) : runtimeEditorValidateBlocksArgs(action)
+        let step: RuntimeEpisodeStepResult
+        try {
+          step = await episode.step({ kind: "browser", command, args, ...(action.timeout_ms !== undefined ? { timeoutMs: action.timeout_ms } : {}), operation: action.type }, { type: "browser-result" })
+        } catch (error) {
+          throw runtimeActionExecutionError(error)
+        }
+        const data = { mappedCommand: step.execution.command, args: step.execution.args, exitCode: step.execution.exitCode, stdout: parseJsonRecord(step.execution.stdout) ?? step.execution.stdout, stderr: step.execution.stderr, executionId: step.execution.id, stepId: step.id }
+        return { schema: "wp-codebox/runtime-action-observation/v1", type: action.type, status: "ok", action, data, observedAt: new Date().toISOString(), step, artifactRefs: step.observation?.artifactRefs, digest: digestRuntimeActionObservationData(data) }
+      }
       if (action.type === "admin_page") {
         return openWordPressAdminPage(episode, action)
       }
@@ -425,6 +447,44 @@ export function createWordPressFuzzSuiteRuntimeActionExecutor(episode: Pick<Runt
       throw new Error(`Unsupported WordPress fuzz runtime-action type: ${action.type}`)
     },
   }
+}
+
+function runtimeActionExecutionError(error: unknown): Error {
+  if (error instanceof RuntimeActionExecutionError) return error
+  if (!isBrowserCommandArtifactError(error)) return error instanceof Error ? error : new Error(String(error))
+  return new RuntimeActionExecutionError(error.message, browserArtifactTraceRefs(error.artifact, error.artifactRoot))
+}
+
+function browserArtifactTraceRefs(artifact: import("./browser-artifacts.js").BrowserArtifact, artifactRoot?: string): RuntimeEpisodeTraceRef[] {
+  return Object.entries(artifact.files).flatMap(([key, value]) => {
+    const manifest = browserArtifactFileManifest(key as keyof BrowserArtifactFiles)
+    return (Array.isArray(value) ? value : [value]).flatMap((path, index) => typeof path === "string" ? [{ kind: manifest.kind, id: `${artifact.artifactType}:${key}:${index}`, path, ...(artifactRoot ? { sourcePath: resolveArtifactPath(artifactRoot, path).absolutePath } : {}), contentType: manifest.contentType }] : [])
+  })
+}
+
+function runtimeEditorActionTargetArgs(action: { target?: string; post_id?: number; post_type?: string; url?: string; wait_selector?: string; capture?: string[]; timeout_ms?: number }): string[] {
+  return [
+    action.target ? `target=${action.target}` : undefined,
+    action.post_id !== undefined ? `post-id=${action.post_id}` : undefined,
+    action.post_type ? `post-type=${action.post_type}` : undefined,
+    action.url ? `url=${action.url}` : undefined,
+    action.wait_selector ? `wait-selector=${action.wait_selector}` : undefined,
+    action.timeout_ms !== undefined ? `wait-timeout=${action.timeout_ms}ms` : undefined,
+    action.capture?.length ? `capture=${action.capture.join(",")}` : undefined,
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function runtimeEditorActionsArgs(action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "editor_actions" }>): string[] {
+  return [...runtimeEditorActionTargetArgs(action), `steps-json=${JSON.stringify(action.steps)}`, ...(action.wait_timeout_ms !== undefined ? [`wait-timeout=${action.wait_timeout_ms}ms`] : []), ...(action.step_timeout_ms !== undefined ? [`step-timeout=${action.step_timeout_ms}ms`] : [])]
+}
+
+function runtimeEditorValidateBlocksArgs(action: Extract<FuzzSuiteRuntimeActionExecutionInput["action"], { type: "editor_validate_blocks" }>): string[] {
+  return [
+    ...(action.content !== undefined ? [`content=${action.content}`] : []),
+    ...(action.content_file ? [`content-file=${action.content_file}`] : []),
+    ...runtimeEditorActionTargetArgs(action),
+    ...(action.validation_provider ? [`validation-provider=${action.validation_provider}`] : []),
+  ]
 }
 
 async function executeDisposableSandboxDbMutation(
@@ -1279,13 +1339,11 @@ async function writeFuzzArtifactBundle(input: {
   const wordpressHotspots = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/wordpress-hotspots.json", "wordpress-hotspots", WORDPRESS_HOTSPOTS_SCHEMA, input.content, input.artifact)
   const fuzzObservationSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-observations.json", "fuzz-observation-set", "wp-codebox/fuzz-observation-set/v1", input.observationContent, input.observationSet)
   const fuzzHotspotSet = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/hotspots/fuzz-hotspots.json", "fuzz-hotspot-set", "wp-codebox/fuzz-hotspot-set/v1", input.hotspotContent, input.hotspotSet)
-  const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
-  const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
   const replayCaseRefs: FuzzReplayCaseRef[] = []
   const queryObservationArtifacts: Array<ReturnType<typeof queryObservationArtifactMetadata>> = []
   const restDbQueryProfileArtifacts: Array<ReturnType<typeof restDbQueryProfileArtifactMetadata>> = []
 
-  artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref, caseResultStream.ref)
+  artifactRefs.push(wordpressHotspots.ref, fuzzObservationSet.ref, fuzzHotspotSet.ref)
 
   for (const [index, observation] of input.queryObservations.entries()) {
     const path = `files/query-observations/${safeArtifactSegment(observation.caseId ?? "case")}-${index + 1}.json`
@@ -1309,7 +1367,9 @@ async function writeFuzzArtifactBundle(input: {
 
   for (const fuzzCase of input.result.cases) {
     const dbWriteSet = recordValue(fuzzCase.metadata?.dbWriteSet)
-    const caseArtifactRefs = [...(fuzzCase.artifactRefs ?? [])]
+    const caseArtifactRefs = await Promise.all((fuzzCase.artifactRefs ?? []).map((ref) => importFuzzCaseArtifactRef(writer, storage, bundlePath, ref)))
+    fuzzCase.artifactRefs = dedupeFuzzSuiteArtifactRefs(caseArtifactRefs)
+    artifactRefs.push(...caseArtifactRefs)
     if (dbWriteSet) {
       const path = `files/db-write-sets/${safeArtifactSegment(fuzzCase.id)}.json`
       const content = `${JSON.stringify({ ...dbWriteSet, artifactPath: path, persisted: true }, null, 2)}\n`
@@ -1341,6 +1401,13 @@ async function writeFuzzArtifactBundle(input: {
       metadata: { storage: "runtime-artifact-layout" },
     }))
   }
+  input.result.artifactRefs = dedupeFuzzSuiteArtifactRefs([
+    ...(input.result.artifactRefs ?? []).filter((ref) => !stringValue(ref.metadata?.sourcePath)),
+    ...input.result.cases.flatMap((fuzzCase) => fuzzCase.artifactRefs ?? []),
+  ])
+  const caseStreamContent = input.result.cases.map((item) => JSON.stringify(item)).join("\n") + (input.result.cases.length > 0 ? "\n" : "")
+  const caseResultStream = await writeFuzzJsonArtifact(writer, storage, bundlePath, "files/cases/case-results.ndjson", "fuzz-case-result-stream", "wp-codebox/fuzz-case-result-stream/v1", caseStreamContent, undefined, "application/x-ndjson")
+  artifactRefs.push(caseResultStream.ref)
 
   const createdAt = new Date().toISOString()
   const manifestInput: ArtifactManifest = {
@@ -1394,6 +1461,22 @@ async function writeFuzzArtifactBundle(input: {
       await writer.writeManifest(manifest)
       return written.metadata
     },
+  }
+}
+
+async function importFuzzCaseArtifactRef(writer: ArtifactBundleWriter, storage: RuntimeArtifactStorageDescriptor, bundlePath: string, ref: FuzzSuiteArtifactRef): Promise<FuzzSuiteArtifactRef> {
+  const sourcePath = stringValue(ref.metadata?.sourcePath)
+  if (!sourcePath) return ref
+  await writer.importFile(ref.path, sourcePath, {
+    kind: ref.kind,
+    contentType: ref.contentType ?? "application/octet-stream",
+    provenance: { source: "runtime-action", operation: "import-fuzz-case-artifact" },
+  })
+  const content = await readFile(writer.path(ref.path))
+  const digest = artifactFileDigest(content)
+  return {
+    ...fuzzArtifactRef(storage, bundlePath, ref.path, ref.kind, ref.contentType ?? "application/octet-stream", digest.value, content.byteLength),
+    metadata: stripUndefined({ ...(ref.metadata ?? {}), sourcePath: undefined, importedFrom: ref.path, storage: "runtime-artifact-layout" }),
   }
 }
 

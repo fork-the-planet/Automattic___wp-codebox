@@ -2,7 +2,7 @@ import { stripUndefined } from "./object-utils.js"
 import { planBrowserRandomWalk } from "./browser-interaction.js"
 import { FUZZ_RUNNER_CAPABILITIES_SCHEMA, RUNTIME_BACKED_FUZZ_SUITE_RUNNER_CAPABILITIES, fuzzRunnerCapabilitiesContract, fuzzSuiteCaseResetPolicy, fuzzSuiteRequiredRunnerCapabilities, fuzzSuiteResetPolicyDiagnostics, fuzzSuiteResultEnvelope, unsupportedRequiredFuzzRunnerCapabilities, type FuzzSuiteArtifactRef, type FuzzSuiteCase, type FuzzSuiteCaseResetResult, type FuzzSuiteCaseResult, type FuzzSuiteContract, type FuzzSuiteDiagnostic, type FuzzSuiteResetPolicy, type FuzzSuiteRunnerCapabilities, type FuzzSuiteTargetRef } from "./fuzz-suite-contracts.js"
 import { DELETE_BOUNDARY_ARTIFACT_KIND, DELETE_BOUNDARY_ARTIFACT_SCHEMA, MUTATION_ISOLATION_ARTIFACT_KIND, MUTATION_ISOLATION_ARTIFACT_SCHEMA, isRestMutationMethod } from "./mutation-isolation-contracts.js"
-import type { RuntimeAction, RuntimeActionObservation } from "./runtime-action-adapter.js"
+import { RuntimeActionExecutionError, type RuntimeAction, type RuntimeActionObservation } from "./runtime-action-adapter.js"
 import type { ExecutionResult, ExecutionSpec, RuntimeCommandDiagnosticsCaptureSpec, RuntimeEpisodeTraceRef, WorkspaceRecipeStep } from "./runtime-contracts.js"
 import { WORDPRESS_CRUD_OPERATION_SCHEMA, normalizeWordPressCrudOperation } from "./wordpress-crud-contracts.js"
 import { WORDPRESS_DB_OPERATION_SCHEMA, normalizeWordPressDbOperation } from "./wordpress-db-contracts.js"
@@ -249,7 +249,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
         } catch (error) {
           const diagnostic: FuzzSuiteDiagnostic = { severity: "error", code: "fuzz_suite_runtime_action_sequence_execution_error", caseId: fuzzCase.id, target, message: error instanceof Error ? error.message : String(error) }
           diagnostics.push(diagnostic)
-          cases.push({ id: fuzzCase.id, status: "error", success: false, target, reset, diagnostics: [diagnostic], metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: "sequence", executorKind: "episode" } }) })
+          cases.push({ id: fuzzCase.id, status: "error", success: false, target, reset, diagnostics: [diagnostic], artifactRefs: fuzzSuiteRuntimeActionErrorArtifactRefs(error), metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: "sequence", executorKind: "episode" } }) })
         }
         continue
       }
@@ -304,6 +304,7 @@ export async function runFuzzSuite(suite: FuzzSuiteContract, options: FuzzSuiteR
           target,
           reset,
           diagnostics: [diagnostic],
+          artifactRefs: fuzzSuiteRuntimeActionErrorArtifactRefs(error),
           metadata: stripUndefined({ replay: replayMetadata, adapter: { ...plan.metadata, adapterKind: "runtime-action", actionType: runtimeAction.action.type, executorKind: "episode" } }),
         })
       }
@@ -965,6 +966,25 @@ function runtimeActionFuzzSuiteTargetAdapter(): FuzzSuiteTargetAdapter {
         }
       }
 
+      if (input.payload.type === "editor_actions") {
+        if (!Array.isArray(input.payload.steps)) {
+          return unsupportedInputAdapterResolution(fuzzCase, target, "Expected editor_actions runtime-action input steps array.", { adapterKind: "runtime-action", actionType: input.payload.type })
+        }
+        return {
+          status: "supported",
+          spec: stripUndefined({ command: "wordpress.editor-actions", args: runtimeEditorActionsArgs(input.payload), timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs) }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.editor-actions" },
+        }
+      }
+
+      if (input.payload.type === "editor_validate_blocks") {
+        return {
+          status: "supported",
+          spec: stripUndefined({ command: "wordpress.editor-validate-blocks", args: runtimeEditorValidateBlocksArgs(input.payload), timeoutMs: runtimeActionTimeoutMs(input.payload, input.timeoutMs) }) as ExecutionSpec,
+          metadata: { adapterKind: "runtime-action", actionType: input.payload.type, mappedCommand: "wordpress.editor-validate-blocks" },
+        }
+      }
+
       if (input.payload.type === "admin_page" || input.payload.type === "page") {
         const command = input.payload.type === "admin_page" ? "wordpress.simulated-admin-page-load" : "wordpress.simulated-frontend-page-load"
         return {
@@ -1168,6 +1188,8 @@ function fuzzSuiteRuntimeActionMutationClassification(action: RuntimeAction): { 
   if (action.type === "browser") return { mutates: ["click", "fill", "press", "select"].includes(action.operation), metadata: { actionType: action.type, operation: action.operation } }
   if (action.type === "admin_page" || action.type === "page") return { mutates: false, metadata: { actionType: action.type } }
   if (action.type === "editor_open") return { mutates: false, metadata: { actionType: action.type } }
+  if (action.type === "editor_actions") return { mutates: action.steps.some((step) => step.kind === "savePost"), metadata: { actionType: action.type, steps: action.steps.length } }
+  if (action.type === "editor_validate_blocks") return { mutates: false, metadata: { actionType: action.type } }
   return { mutates: false, metadata: { actionType: action.type } }
 }
 
@@ -1357,6 +1379,24 @@ function runtimeEditorOpenArgs(input: Record<string, unknown>): string[] {
   ].filter((arg): arg is string => Boolean(arg))
 }
 
+function runtimeEditorActionsArgs(input: Record<string, unknown>): string[] {
+  return [
+    ...runtimeEditorOpenArgs(input),
+    `steps-json=${JSON.stringify(input.steps)}`,
+    durationMsArg("wait-timeout", input.wait_timeout_ms ?? input.waitTimeoutMs),
+    durationMsArg("step-timeout", input.step_timeout_ms ?? input.stepTimeoutMs),
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
+function runtimeEditorValidateBlocksArgs(input: Record<string, unknown>): string[] {
+  return [
+    optionalStringArg("content", input.content),
+    optionalStringArg("content-file", input.content_file ?? input.contentFile),
+    ...runtimeEditorOpenArgs(input),
+    optionalStringArg("validation-provider", input.validation_provider ?? input.validationProvider),
+  ].filter((arg): arg is string => Boolean(arg))
+}
+
 function durationMsArg(name: string, value: unknown): string | undefined {
   return typeof value === "number" && Number.isFinite(value) ? `${name}=${value}ms` : undefined
 }
@@ -1401,7 +1441,13 @@ function fuzzSuiteExecutionArtifactRefs(execution: ExecutionResult): FuzzSuiteAr
 }
 
 function fuzzSuiteRuntimeActionArtifactRefs(observation: RuntimeActionObservation): FuzzSuiteArtifactRef[] | undefined {
-  const refs = (observation.artifactRefs ?? []).map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
+  const refs = [...(observation.artifactRefs ?? []), ...(observation.step?.execution.artifactRefs ?? []), ...(observation.step?.execution.result?.artifactRefs ?? [])].map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
+  return refs.length > 0 ? refs : undefined
+}
+
+function fuzzSuiteRuntimeActionErrorArtifactRefs(error: unknown): FuzzSuiteArtifactRef[] | undefined {
+  if (!(error instanceof RuntimeActionExecutionError)) return undefined
+  const refs = error.artifactRefs.map(fuzzSuiteArtifactRefFromTrace).filter((ref): ref is FuzzSuiteArtifactRef => Boolean(ref))
   return refs.length > 0 ? refs : undefined
 }
 
@@ -1459,8 +1505,9 @@ function fuzzSuiteArtifactRefFromTrace(ref: RuntimeEpisodeTraceRef): FuzzSuiteAr
   return stripUndefined({
     path,
     kind: ref.kind,
+    contentType: ref.contentType,
     sha256: ref.digest?.algorithm === "sha256" ? ref.digest.value : undefined,
-    metadata: stripUndefined({ id: ref.id, artifactId: ref.artifactId, digest: ref.digest }),
+    metadata: stripUndefined({ id: ref.id, artifactId: ref.artifactId, digest: ref.digest, sourcePath: ref.sourcePath }),
   })
 }
 
