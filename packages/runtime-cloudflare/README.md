@@ -2,7 +2,9 @@
 
 This additive integration is the first acceptance gate for [wp-codebox#1838](https://github.com/Automattic/wp-codebox/issues/1838). It compiles the current PHP 8.5 Asyncify Wasm asset for workerd, boots WordPress through Playground with the current SQLite integration release, executes PHP, and returns a Codebox runtime-command-result envelope containing the stable `wp-codebox/cloudflare-runtime-health/v1` health payload.
 
-The Worker owns Cloudflare transport and isolate lifecycle. Full WordPress initialization requires the paid-plan five-minute CPU allowance, declared as `limits.cpu_ms: 300000`; Cloudflare's fixed 128 MB isolate memory limit remains unchanged. This gate uses one Playground PHP instance per isolate; Durable Objects will serialize site mutation in a later gate. The response identifies the generic `wordpress-playground` backend and `wordpress` environment; callers do not receive Cloudflare binding or limit details. Runtime snapshots, restore, R2, serialization, and cold restoration are deferred to later gates.
+The Worker owns Cloudflare transport, PHP-WASM execution, and the caller-owned disposable SQLite cache. [MDI PR #126](https://github.com/Automattic/markdown-database-integration/pull/126), pinned at `94b9f875ffb8402d5e8eb726893a12324e20f45c`, supplies the constrained public primary runtime: normal MDI driver SQL writes are explicitly flushed to deterministic relative Markdown/JSON paths. R2 stores immutable canonical revisions and the current pointer; the Durable Object owns only the persisted lease, base-revision validation, and CAS pointer promotion. SQLite is never uploaded. This preserves cold reconstruction from canonical R2 files and concurrent mutation serialization without expanding MDI's storage-only boundary.
+
+Existing evidence covers full WordPress initialization and canonical R2 revision behavior. This update changes the source relationship from ad hoc writes to MDI's public constrained runtime, adds source-level bundle and mutation guards, and supports local packaging verification. It does not claim a new remote deployment.
 
 ## Verification
 

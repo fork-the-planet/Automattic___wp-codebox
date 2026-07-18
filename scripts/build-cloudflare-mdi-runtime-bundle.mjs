@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises"
 import { decodeZip, encodeZip } from "@php-wasm/stream-compression"
 
-const revision = "af451895a9429895e3ad4d9b4e073bfd88873745"
+const revision = "94b9f875ffb8402d5e8eb726893a12324e20f45c"
 const archiveUrl = `https://codeload.github.com/Automattic/markdown-database-integration/zip/${revision}`
 const output = new URL("../packages/runtime-cloudflare/assets/markdown-database-integration-runtime.zip", import.meta.url)
 const response = await fetch(archiveUrl)
@@ -13,6 +13,7 @@ const runtimePaths = new Set([
   "inc/class-wp-markdown-driver.php",
   "inc/class-wp-markdown-frontmatter-profiles.php",
   "inc/class-wp-markdown-loader.php",
+  "inc/class-wp-markdown-primary-storage-runtime.php",
   "inc/class-wp-markdown-search.php",
   "inc/class-wp-markdown-storage.php",
   "inc/class-wp-markdown-write-engine.php",
@@ -26,6 +27,7 @@ for await (const entry of decodeZip(response.body)) {
 }
 if (runtimeFiles.length !== runtimePaths.size) throw new Error(`Expected ${runtimePaths.size} MDI runtime files, received ${runtimeFiles.length}.`)
 
+runtimeFiles.sort((left, right) => left.name.localeCompare(right.name))
 const archive = await new Response(encodeZip(runtimeFiles)).arrayBuffer()
 await writeFile(output, new Uint8Array(archive))
 console.log(`Bundled ${runtimeFiles.length} MDI runtime files from ${revision} (${archive.byteLength} bytes).`)

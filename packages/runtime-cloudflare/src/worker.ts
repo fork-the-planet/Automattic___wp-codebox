@@ -13,7 +13,7 @@ import wordpressInstallSeed from "../assets/wordpress-install-seed.sqlite"
 const PHP_VERSION = "8.5.8"
 const WORDPRESS_ARCHIVE_URL = "https://wordpress.org/latest.zip"
 const SQLITE_INTEGRATION_ARCHIVE_URL = "https://github.com/WordPress/sqlite-database-integration/releases/download/v2.2.23/plugin-sqlite-database-integration.zip"
-const MARKDOWN_DATABASE_INTEGRATION_REVISION = "af451895a9429895e3ad4d9b4e073bfd88873745"
+const MARKDOWN_DATABASE_INTEGRATION_REVISION = "94b9f875ffb8402d5e8eb726893a12324e20f45c"
 const SITE_URL = "https://wp-codebox-runtime.invalid"
 const DATABASE_PATH = "/wordpress/wp-content/database/.ht.sqlite"
 const MARKDOWN_ROOT = "/wordpress/wp-content/markdown"
@@ -23,6 +23,43 @@ const R2_MARKDOWN_POINTER_KEY = "sites/default/markdown/current.json"
 const R2_MARKDOWN_REVISION_PREFIX = "sites/default/markdown/revisions"
 const R2_MARKDOWN_OBJECT_PREFIX = "sites/default/markdown/objects"
 const MUTATION_LEASE_VERSION = "mdi-canonical-v1"
+const SERIALIZED_MARKDOWN_MUTATION_CODE = `<?php
+define('SHORTINIT', true);
+require '/wordpress/wp-load.php';
+require_once '/wordpress/wp-content/plugins/markdown-database-integration/inc/class-wp-markdown-primary-storage-runtime.php';
+if (!isset($GLOBALS['@pdo']) || !($GLOBALS['@pdo'] instanceof PDO)) {
+  throw new Exception('MDI disposable index connection is unavailable.');
+}
+$prefix = $wpdb->prefix;
+$connection = new WP_SQLite_Connection(['pdo' => $GLOBALS['@pdo'], 'path' => FQDB]);
+$runtime = WP_Markdown_Primary_Storage_Runtime::bootstrap(
+  ['content_root' => MARKDOWN_DB_CONTENT_DIR, 'state_root' => MARKDOWN_DB_STATE_DIR],
+  $connection,
+  defined('DB_NAME') && '' !== DB_NAME ? DB_NAME : 'database_name_here',
+  null,
+  true,
+  array_filter(array_map('trim', explode(',', MARKDOWN_DB_EXCLUDED_TYPES))),
+  $prefix
+);
+$driver = $runtime->get_driver();
+$option_rows = $driver->query("SELECT option_id, option_value FROM \`{\$prefix}options\` WHERE option_name = 'wp_codebox_mdi_revision'");
+$current = empty($option_rows) ? 0 : (int) $option_rows[0]->option_value;
+$previous_rows = 0 === $current ? [] : $driver->query("SELECT ID FROM \`{\$prefix}posts\` WHERE post_name = 'cloudflare-r2-proof-$current'");
+$value = $current + 1;
+$post_id_rows = $driver->query("SELECT COALESCE(MAX(ID), 0) + 1 AS post_id FROM \`{\$prefix}posts\`");
+$post_id = (int) $post_id_rows[0]->post_id;
+$now = gmdate('Y-m-d H:i:s');
+$slug = 'cloudflare-r2-proof-' . $value;
+$title = 'Cloudflare R2 Proof ' . $value;
+$content = 'Persisted by MDI primary mode in R2 revision ' . $value . '.';
+$driver->query("INSERT INTO \`{\$prefix}posts\` (ID, post_author, post_date, post_date_gmt, post_content, post_title, post_excerpt, post_status, comment_status, ping_status, post_password, post_name, to_ping, pinged, post_modified, post_modified_gmt, post_content_filtered, post_parent, guid, menu_order, post_type, post_mime_type, comment_count) VALUES ($post_id, 0, '$now', '$now', '$content', '$title', '', 'publish', 'closed', 'closed', '', '$slug', '', '', '$now', '$now', '', 0, '', 0, 'post', '', 0)");
+if (empty($option_rows)) {
+  $driver->query("INSERT INTO \`{\$prefix}options\` (option_name, option_value, autoload) VALUES ('wp_codebox_mdi_revision', '$value', 'off')");
+} else {
+  $driver->query("UPDATE \`{\$prefix}options\` SET option_value = '$value', autoload = 'off' WHERE option_name = 'wp_codebox_mdi_revision'");
+}
+$changes = $runtime->flush();
+echo json_encode(['revisionValue' => $value, 'previousPostFound' => !empty($previous_rows), 'postId' => $post_id, 'wordpressVersion' => $wp_version, 'canonicalChanges' => $changes]);`
 let bootPromise: Promise<{ php: PHP; wordpressVersion: string }> | undefined
 
 interface Env {
@@ -182,12 +219,13 @@ async function runSerializedMarkdownMutation(env: Env, coordinator: DurableObjec
       new Uint8Array(markdownPrimaryBootstrapIndex),
     )
     let canonicalFiles: RuntimeFile[]
-    let mutation: { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string }
+    let mutation: { revisionValue: number; previousPostFound: boolean; postId: number; wordpressVersion: string; canonicalChanges: MarkdownChanges }
     try {
       const mutationOutput = (await runtime.php.run({
-        code: "<?php define('SHORTINIT', true); require '/wordpress/wp-load.php'; $current = (int) $wpdb->get_var($wpdb->prepare(\"SELECT option_value FROM {$wpdb->options} WHERE option_name = %s\", 'wp_codebox_mdi_revision')); $previous_found = 0 === $current || null !== $wpdb->get_var($wpdb->prepare(\"SELECT ID FROM {$wpdb->posts} WHERE post_name = %s\", 'cloudflare-r2-proof-' . $current)); $value = $current + 1; $post_id = (int) $wpdb->get_var(\"SELECT COALESCE(MAX(ID), 0) + 1 FROM {$wpdb->posts}\"); $now = gmdate('Y-m-d H:i:s'); $post = (object) ['ID' => $post_id, 'post_author' => 0, 'post_date' => $now, 'post_date_gmt' => $now, 'post_content' => 'Persisted by MDI primary mode in R2 revision ' . $value . '.', 'post_title' => 'Cloudflare R2 Proof ' . $value, 'post_excerpt' => '', 'post_status' => 'publish', 'comment_status' => 'closed', 'ping_status' => 'closed', 'post_password' => '', 'post_name' => 'cloudflare-r2-proof-' . $value, 'to_ping' => '', 'pinged' => '', 'post_modified' => $now, 'post_modified_gmt' => $now, 'post_content_filtered' => '', 'post_parent' => 0, 'guid' => '', 'menu_order' => 0, 'post_type' => 'post', 'post_mime_type' => '', 'comment_count' => 0]; $excluded = array_filter(array_map('trim', explode(',', MARKDOWN_DB_EXCLUDED_TYPES))); $storage = new WP_Markdown_Storage(MARKDOWN_DB_CONTENT_DIR, $excluded); $path = $storage->write_post($post); if (false === $path) { throw new Exception('Canonical Markdown post write failed.'); } $options_dir = MARKDOWN_DB_STATE_DIR . '/_options'; if (!is_dir($options_dir)) { mkdir($options_dir, 0755, true); } $option = ['option_id' => 1000, 'option_name' => 'wp_codebox_mdi_revision', 'option_value' => (string) $value, 'autoload' => 'off']; file_put_contents($options_dir . '/wp_codebox_mdi_revision.json', json_encode($option, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); echo json_encode(['revisionValue' => $value, 'previousPostFound' => $previous_found, 'postId' => $post_id, 'wordpressVersion' => $wp_version]);",
+        code: SERIALIZED_MARKDOWN_MUTATION_CODE,
       })).text.trim()
       mutation = JSON.parse(mutationOutput) as typeof mutation
+      validateMarkdownChanges(mutation.canonicalChanges)
       canonicalFiles = collectRuntimeFiles(runtime.php, MARKDOWN_ROOT)
     } finally {
       runtime.php.exit()
@@ -215,6 +253,27 @@ async function runSerializedMarkdownMutation(env: Env, coordinator: DurableObjec
     }))
     throw error
   }
+}
+
+interface MarkdownChanges {
+  created: string[]
+  changed: string[]
+  deleted: string[]
+}
+
+function validateMarkdownChanges(changes: MarkdownChanges): void {
+  for (const group of [changes.created, changes.changed, changes.deleted]) {
+    if (!Array.isArray(group) || group.some((path) => !isCanonicalRelativePath(path))) {
+      throw new Error("MDI flush returned an invalid canonical path.")
+    }
+    if (group.some((path, index) => index > 0 && group[index - 1] >= path)) {
+      throw new Error("MDI flush returned non-deterministic canonical paths.")
+    }
+  }
+}
+
+function isCanonicalRelativePath(path: string): boolean {
+  return path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..")
 }
 
 async function acquireMutationLease(coordinator: DurableObjectStub): Promise<AcquiredLease> {
