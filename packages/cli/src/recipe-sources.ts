@@ -108,6 +108,7 @@ export interface PreparedRuntimeOverlay {
 export interface PreparedDependencyOverlay {
   source: string
   sourceRef: string
+  reference?: string
   target: string
   package: string
   consumer: string
@@ -428,14 +429,15 @@ function composerInstalledPackageClassmapPaths(pkg: ComposerInstalledPackage): s
 
 export async function prepareRecipeDependencyOverlays(recipe: WorkspaceRecipe, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[]): Promise<PreparedDependencyOverlay[]> {
   const overlays: PreparedDependencyOverlay[] = []
+  const stagedConsumers = new Set<PreparedExtraPlugin>()
   for (const [index, overlay] of (recipe.inputs?.dependency_overlays ?? []).entries()) {
-    overlays.push(await prepareRecipeDependencyOverlay(overlay, recipeDirectory, extraPlugins, index))
+    overlays.push(await prepareRecipeDependencyOverlay(overlay, recipeDirectory, extraPlugins, stagedConsumers, index))
   }
 
   return overlays
 }
 
-async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependencyOverlay, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[], index: number): Promise<PreparedDependencyOverlay> {
+async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependencyOverlay, recipeDirectory: string, extraPlugins: PreparedExtraPlugin[], stagedConsumers: Set<PreparedExtraPlugin>, index: number): Promise<PreparedDependencyOverlay> {
   if (overlay.kind !== "composer-package") {
     throw new Error(`Unsupported dependency overlay kind: ${overlay.kind}`)
   }
@@ -450,14 +452,20 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
 
   const source = resolve(recipeDirectory, overlay.source)
   await validateExistingDirectoryForOverlay(source, overlay.source)
+  const reference = await resolvedGitSourceReference(source)
   const stagingRoot = await mkdtemp(join(tmpdir(), "wp-codebox-dependency-overlay-"))
   const preparedSource = await prepareComposerBackedSource(source, stagingRoot, `dependency overlay ${overlay.package}`)
+  if (reference) {
+    await preserveComposerDependencyReference(consumer, overlay.package, reference, stagedConsumers)
+    await preserveComposerPackageReference(preparedSource, overlay.package, reference)
+  }
   const target = `${consumer.target}/vendor/${composerPackageVendorPath(overlay.package)}`
   const digest = await directoryContentDigest(preparedSource)
 
   return {
     source: preparedSource,
     sourceRef: overlay.source,
+    ...(reference ? { reference } : {}),
     target,
     package: overlay.package,
     consumer: overlay.consumer,
@@ -470,12 +478,165 @@ async function prepareRecipeDependencyOverlay(overlay: WorkspaceRecipeDependency
       overlayKind: overlay.kind,
       package: overlay.package,
       source: overlay.source,
+      ...(reference ? { reference } : {}),
       consumer: overlay.consumer,
       target,
       digest: { sha256: digest },
       ...(overlay.metadata ? { userMetadata: overlay.metadata } : {}),
     },
   }
+}
+
+/**
+ * Capture the clean checkout commit before Composer staging so runtime
+ * provenance remains tied to the source revision rather than its staged path.
+ */
+async function resolvedGitSourceReference(source: string): Promise<string | undefined> {
+  try {
+    const status = await executeManagedHostCommand({
+      command: "git",
+      args: ["status", "--porcelain", "--untracked-files=all"],
+      cwd: source,
+      allowedCwdRoots: [source],
+      timeoutMs: 10_000,
+      maxOutputBytes: 64 * 1024,
+      label: "inspect Composer overlay Git source",
+    })
+    if (status.stdout.trim()) {
+      return undefined
+    }
+
+    const revision = await executeManagedHostCommand({
+      command: "git",
+      args: ["rev-parse", "--verify", "HEAD"],
+      cwd: source,
+      allowedCwdRoots: [source],
+      timeoutMs: 10_000,
+      maxOutputBytes: 64 * 1024,
+      label: "resolve Composer overlay Git revision",
+    })
+    const reference = revision.stdout.trim()
+    return /^[a-f0-9]{40,64}$/i.test(reference) ? reference : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function preserveComposerDependencyReference(consumer: PreparedExtraPlugin, packageName: string, reference: string, stagedConsumers: Set<PreparedExtraPlugin>): Promise<void> {
+  const installedJson = join(consumer.source, "vendor", "composer", "installed.json")
+  if (!await composerInstalledJsonHasPackage(installedJson, packageName)) {
+    return
+  }
+
+  if (!stagedConsumers.has(consumer)) {
+    const stagingRoot = await mkdtemp(join(tmpdir(), `wp-codebox-dependency-consumer-${consumer.slug}-`))
+    const stagedSource = join(stagingRoot, basename(consumer.source))
+    await cp(consumer.source, stagedSource, { recursive: true })
+    consumer.source = stagedSource
+    consumer.cleanupPaths.push(stagingRoot)
+    stagedConsumers.add(consumer)
+  }
+
+  await writeComposerDependencyReference(join(consumer.source, "vendor", "composer", "installed.json"), packageName, reference)
+  await writeComposerInstalledPhpReference(join(consumer.source, "vendor", "composer", "installed.php"), packageName, reference)
+}
+
+async function preserveComposerPackageReference(source: string, packageName: string, reference: string): Promise<void> {
+  await writeComposerDependencyReference(join(source, "vendor", "composer", "installed.json"), packageName, reference)
+  await writeComposerInstalledPhpReference(join(source, "vendor", "composer", "installed.php"), packageName, reference)
+}
+
+async function composerInstalledJsonHasPackage(path: string, packageName: string): Promise<boolean> {
+  try {
+    return composerInstalledPackageRecords(JSON.parse(await readFile(path, "utf8"))).some((pkg) => pkg.name === packageName)
+  } catch {
+    return false
+  }
+}
+
+async function writeComposerDependencyReference(path: string, packageName: string, reference: string): Promise<void> {
+  const installed = JSON.parse(await readFile(path, "utf8")) as unknown
+  const pkg = composerInstalledPackageRecords(installed).find((candidate) => candidate.name === packageName)
+  if (!pkg) {
+    return
+  }
+  pkg.source = { ...(isRecord(pkg.source) ? pkg.source : {}), reference }
+  await writeFile(path, `${JSON.stringify(installed, null, 2)}\n`)
+}
+
+async function writeComposerInstalledPhpReference(path: string, packageName: string, reference: string): Promise<void> {
+  if (!await pathIsFile(path)) {
+    return
+  }
+  const contents = await readFile(path, "utf8")
+  const packageStart = contents.search(new RegExp(`['\"]${escapeRegExp(packageName)}['\"]\\s*=>\\s*array\\s*\\(`))
+  if (packageStart < 0) {
+    return
+  }
+  const before = contents.slice(0, packageStart)
+  const entry = contents.slice(packageStart)
+  const packageEntryEnd = composerInstalledPhpPackageEntryEnd(entry, packageName)
+  if (packageEntryEnd === undefined) {
+    return
+  }
+  const packageEntry = entry.slice(0, packageEntryEnd)
+  const remainingEntries = entry.slice(packageEntryEnd)
+  const updatedEntry = packageEntry.replace(/(['"]reference['"]\s*=>\s*)(?:NULL|null|'[^']*'|"[^"]*")/, `$1'${reference}'`)
+  if (updatedEntry !== packageEntry) {
+    await writeFile(path, before + updatedEntry + remainingEntries)
+    return
+  }
+
+  // Composer may omit an unavailable reference entirely. Add it to this
+  // package record so InstalledVersions exposes the clean overlay revision.
+  const entryWithReference = packageEntry.replace(
+    new RegExp(`((?:['"]${escapeRegExp(packageName)}['"]\\s*=>\\s*array\\s*\\(\\s*))`),
+    `$1'reference' => '${reference}',\n`,
+  )
+  if (entryWithReference !== packageEntry) {
+    await writeFile(path, before + entryWithReference + remainingEntries)
+  }
+}
+
+function composerInstalledPhpPackageEntryEnd(entry: string, packageName: string): number | undefined {
+  const header = new RegExp(`['"]${escapeRegExp(packageName)}['"]\\s*=>\\s*array\\s*\\(`).exec(entry)
+  if (!header || header.index === undefined) {
+    return undefined
+  }
+
+  const openingParenthesis = header.index + header[0].lastIndexOf("(")
+  let depth = 0
+  let quote = ""
+  for (let index = openingParenthesis; index < entry.length; index++) {
+    const character = entry[index]
+    if (quote) {
+      if (character === "\\") {
+        index++
+      } else if (character === quote) {
+        quote = ""
+      }
+      continue
+    }
+    if (character === "'" || character === '"') {
+      quote = character
+    } else if (character === "(") {
+      depth++
+    } else if (character === ")" && --depth === 0) {
+      return index + 1
+    }
+  }
+  return undefined
+}
+
+function composerInstalledPackageRecords(installed: unknown): Array<Record<string, unknown> & { name?: string }> {
+  if (Array.isArray(installed)) {
+    return installed.filter(isRecord)
+  }
+  return isRecord(installed) && Array.isArray(installed.packages) ? installed.packages.filter(isRecord) : []
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
 export async function prepareRecipeStagedFiles(recipe: WorkspaceRecipe, recipeDirectory: string): Promise<PreparedStagedFile[]> {
